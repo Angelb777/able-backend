@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Able 73</title>
+
+  <!-- Favicon y Open Graph -->
+  <link rel="icon" href="img/favicon.png" type="image/png">
+  <link rel="apple-touch-icon" href="img/favicon.png">
+  <meta property="og:title" content="Able73">
+  <meta property="og:description" content="Movilidad sostenible con recompensas y entretenimiento">
+  <meta property="og:image" content="https://able73.com/img/favicon.png">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://able73.com">
+
+  <link rel="stylesheet" href="css/style.css?v=3" />
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+
+  <!-- Detectar idioma -->
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const lang = navigator.language || navigator.userLanguage;
+      if (lang.startsWith("en") && window.location.pathname === "/index.html") {
+        window.location.href = "index-en.html"; // Asegúrate de tener esta versión
+      }
+    });
+  </script>
+</head>
+<body class="index-page">
+  <div class="overlay"></div>
+
+  <header>
+    <nav>
+      <div class="nav-container">
+        <img src="img/Logo Able 73.png" alt="Logo" class="navbar-logo" onclick="window.location.href='index.html'">
+        <ul class="nav-links">
+          <li><a href="usuarios.html" id="nav-usuarios">Usuarios</a></li>
+          <li><a href="empresas.html" id="nav-empresas">Empresas</a></li>
+          <li><a href="comercios.html" id="nav-comercios">Comercios</a></li>
+          <li><a href="taxistas.html" id="nav-taxistas">Taxistas</a></li>
+        </ul>
+        <button class="login-btn" onclick="window.location.href='login.html'" id="login-btn">Acceder</button>
+      </div>
+    </nav>
+  </header>
+
+  <main class="main-section">
+    <div class="hero-container">
+      <img src="img/Logo1.png" alt="Logo" class="main-logo">
+      <div class="hero-text">
+        <h1 id="hero-title">Impulsamos la movilidad sostenible con inmediatez,<br>recompensas y entretenimiento</h1>
+        <div class="app-links">
+          <a href="https://play.google.com/store" target="_blank">
+            <img src="img/google-play.png" alt="Disponible en Google Play" class="store-btn">
+          </a>
+          <a href="https://www.apple.com/app-store/" target="_blank">
+            <img src="img/app-store.png" alt="Disponible en App Store" class="store-btn">
+          </a>
+        </div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

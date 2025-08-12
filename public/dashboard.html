@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dashboard Able 73</title>
+  <link rel="stylesheet" href="css/dashboard.css" />
+    <link rel="icon" href="img/favicon.png" type="image/png">
+</head>
+<body>
+  <nav>
+    <img src="img/Logo%20Able%2073.png" alt="Logo Able 73" style="max-width: 140px; height: auto; margin-bottom: 20px;" />
+    <ul id="menu"></ul>
+  </nav>
+
+  <main id="content">
+    <!-- Sección de inicio -->
+    <section id="inicio" class="seccion" style="display:none;">
+      <h2>Inicio</h2>
+    </section>
+
+    <!-- Sección Lista de Usuarios -->
+    <section id="usuarios" class="seccion" style="display:none;"></section>
+
+    <!-- Sección Pagos -->
+    <section id="pagos" class="seccion" style="display:none;"></section>
+
+    <!-- Sección Pagos Comercio -->
+    <section id="pagosComercio" class="seccion" style="display:none;"></section>
+
+    <!-- 🏪 Sección Promoción local físico (comercio) -->
+    <section id="promoLocal" class="seccion" style="display:none;">
+    <h2>Promociones disponibles para tu negocio físico</h2>
+    <div id="contenedorPromosDisponibles"></div>
+    </section>
+
+    <!-- Sección Candados -->
+    <section id="candados" class="seccion" style="display:none;">
+    <!-- Este contenido lo va a inyectar la función `renderCandados()` -->
+    </section>
+
+    <!-- Sección Rankings -->
+    <section id="rankings" class="seccion" style="display:none;">
+    <h2>🏆 Ranking de Usuarios</h2>
+    <div id="contenedorRanking">
+    <p>Cargando ranking...</p>
+    </div>
+    </section>
+
+    <!-- Sección Crear Retos -->
+<section id="crearRetos" class="seccion" style="display:none;">
+  <h2>Crear Nuevo Reto</h2>
+
+  <form id="formCrearReto" enctype="multipart/form-data">
+    <label for="titulo">Título:</label>
+    <input type="text" id="titulo" name="titulo" required>
+
+    <label for="descripcion">Descripción:</label>
+    <textarea id="descripcion" name="descripcion" required></textarea>
+
+    <label for="premio">Premio:</label>
+    <input type="text" id="premio" name="premio" required>
+
+    <label for="imagenPremio">Imagen del premio:</label>
+    <input type="file" id="imagenPremio" name="imagenPremio" accept="image/*" required>
+
+    <label for="requisitosEspeciales">Requisitos especiales (opcional):</label>
+    <input type="text" id="requisitosEspeciales" name="requisitosEspeciales">
+
+    <label for="fechaInicio">Fecha de inicio:</label>
+    <input type="date" id="fechaInicio" name="fechaInicio" required>
+
+    <label for="fechaFin">Fecha de fin:</label>
+    <input type="date" id="fechaFin" name="fechaFin" required>
+
+    <button type="submit">Crear Reto</button>
+  </form>
+
+  <hr>
+
+  <h3>Retos existentes</h3>
+  <div id="listaRetos"></div>
+</section>
+
+    <!-- Sección Crea la Skin de tu comercio -->
+    <section id="creaSkinComercio" class="seccion" style="display: none;">
+    <h2>🎨 Crea la Skin de tu comercio</h2>
+    <p style="max-width: 700px; font-size: 18px; line-height: 1.6;">
+    ¿Te gustaría que tu negocio tenga presencia dentro del universo de Able 73?<br><br>
+    Podemos diseñar una skin personalizada que represente tu comercio dentro del juego. Ya sea una torre, una criatura o un objeto especial, tu marca podrá formar parte de la experiencia de los jugadores.<br><br>
+    <strong>Solicita tu presupuesto sin compromiso</strong> escribiendo a: <a href="mailto:info@able73.com">info@able73.com</a>
+    </p>
+    </section>
+
+    <!-- Sección Promociones del Comercio -->
+    <section id="promociones" class="seccion" style="display:none;">
+    <h2>Mis Promociones</h2>
+    <div id="contenedorPromociones">
+    <p>Cargando promociones...</p>
+    </div>
+
+    <!-- Botón para destacar -->
+<div style="margin-top: 10px;">
+  <label for="nivelDestacado-${r._id}">📌 Destacar como:</label>
+  <select id="nivelDestacado-${r._id}">
+    <option value="1">Top 5</option>
+    <option value="2">Top 10</option>
+    <option value="3">Top 20</option>
+  </select>
+  <button onclick="destacarReward('${r._id}')">Destacar</button>
+</div>
+    </section>
+
+    <!-- Sección Datos -->
+    <section id="datos" class="seccion" style="display:none;"></section>
+
+    <!-- Sección Añadir Descuentos o Premios -->
+    <section id="rewards" class="seccion" style="display:none;"></section>
+
+    <!-- Sección para validar rewards (admin) -->
+    <section id="validar" class="seccion" style="display:none;">
+      <h2>Validar (Empresas y Comercios)</h2>
+      <div id="listaValidarRewards" class="lista-rewards"></div>
+    </section>
+
+    <!-- Sección Mis Pagos (solo clientes) -->
+<section id="misPagos" class="seccion" style="display:none;">
+  <h2>Mis Pagos</h2>
+  <table id="tablaMisPagos">
+    <thead>
+      <tr>
+        <th>Fecha</th>
+        <th>Cantidad</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+    <!-- Sección de descuentos y premios para clientes -->
+    <section id="vistaClienteRewards" class="seccion" style="display:none;">
+      <h2>Descuentos y premios</h2>
+      <div id="rewardsDisponiblesCliente" class="lista-rewards"></div>
+    </section>
+
+    <!-- Sección de compradores (para admin y comercios) -->
+    <section id="compradores" class="seccion" style="display:none;">
+      <h2>Lista de compradores</h2>
+      <input type="text" id="buscadorCompradores" placeholder="Buscar por nombre o email..." />
+      <div id="listaCompradores" class="lista-rewards"></div>
+    </section>
+
+    <!-- 🔧 Sección Gestión de Juego (admin) -->
+    <section id="gestionJuego" class="seccion" style="display:none;">
+      <h2>Skins</h2>
+      <form id="formCrearSkin" enctype="multipart/form-data">
+        <label>Título:</label>
+        <input type="text" name="titulo" required><br><br>
+
+        <label>Descripción:</label>
+        <textarea name="descripcion" required></textarea><br><br>
+
+        <label>Precio en Stepcoins:</label>
+        <input type="number" name="precio" required><br><br>
+
+        <label>Portada:</label>
+        <input type="file" name="portada" accept="image/*" required><br><br>
+
+        <fieldset>
+          <legend>Imágenes de Scripts (máx 4 cada una)</legend>
+
+          <label>Muriendo:</label><br>
+          <input type="file" name="muriendo" accept="image/*" multiple><br><br>
+
+          <label>Moviéndose:</label><br>
+          <input type="file" name="moviendose" accept="image/*" multiple><br><br>
+
+          <label>Parado:</label><br>
+          <input type="file" name="parado" accept="image/*" multiple><br><br>
+
+          <label>Disparando:</label><br>
+          <input type="file" name="disparando" accept="image/*" multiple><br><br>
+
+          <label>Rápido (+12km/h):</label><br>
+          <input type="file" name="rapido" accept="image/*" multiple><br><br>
+        </fieldset>
+
+        <button type="submit">Crear Skin</button>
+      </form>
+
+      <hr>
+
+      <h3>Skins creadas</h3>
+      <div id="listaSkins"></div>
+
+      <hr>
+
+      <!-- 🎴 Sección Añadir Cartas -->
+<h2>Cartas</h2>
+<form id="formCarta" enctype="multipart/form-data">
+  <label>Tipo de carta:</label>
+  <select name="tipoArma" id="tipoArmaSelect" required>
+    <option value="">-- Elige un tipo --</option>
+    <option value="Proyectil">Proyectil</option>
+    <option value="Arrastre">Arrastre</option>
+    <option value="Trampa">Trampa</option>
+    <option value="Invocacion">Invocación</option>
+    <option value="Vida">Vida</option>
+    <option value="Defensa">Defensa</option>
+  </select><br><br>
+
+  <div id="comunCarta" style="display:none;">
+    <label>Título:</label>
+    <input type="text" name="titulo" required><br><br>
+
+    <label>Descripción:</label>
+    <textarea name="descripcion"></textarea><br><br>
+
+    <label>Imagen de portada:</label>
+    <input type="file" name="imagenPortada" accept="image/*" required><br><br>
+
+    <label>Dispositivo:</label>
+    <select name="dispositivo" required>
+      <option value="Ambos">Ambos</option>
+      <option value="Móvil">Solo Móvil</option>
+      <option value="Ordenador">Solo Ordenador</option>
+    </select><br><br>
+
+    <label>Tiempo de espera (segundos):</label>
+    <input type="number" name="tiempoEspera" min="0" value="0" required><br><br>
+
+    <label>¿Se puede esquivar saltando?:</label>
+    <select name="sePuedeSaltar">
+      <option value="false">No</option>
+      <option value="true">Sí</option>
+    </select><br><br>
+  </div>
+
+<!-- 🎯 Proyectil -->
+<div id="seccionProyectil" style="display:none;">
+  <label>Imágenes de arma (máx 4):</label>
+  <input type="file" id="imagenesArma" name="imagenesArma" accept="image/*" multiple><br>
+  <div id="previewImagenesArma"></div><br>
+
+  <label>Imágenes de explosión (máx 4):</label>
+  <input type="file" id="imagenesExplosion" name="imagenesExplosion" accept="image/*" multiple><br>
+  <div id="previewImagenesExplosion"></div><br>
+
+  <label>Alcance:</label>
+  <input type="number" name="alcance" required><br><br>
+
+  <label>Daño:</label>
+  <input type="number" name="dano" required><br><br>
+</div>
+
+<!-- 🛡️ Arrastre -->
+<div id="seccionArrastre" style="display:none;">
+  <label>Imágenes de movimiento (máx 4):</label>
+  <input type="file" id="imagenesMovimiento" name="imagenesMovimiento" accept="image/*" multiple><br>
+  <div id="previewImagenesMovimiento"></div><br>
+
+  <label>Imágenes de bala (opcional, máx 4):</label>
+  <input type="file" id="imagenesBala" name="imagenesDisparo" accept="image/*" multiple><br>
+  <div id="previewImagenesBala"></div><br>
+
+  <label>Alcance de la bala:</label>
+  <input type="number" name="alcance"><br><br>
+
+  <label>Vida:</label>
+  <input type="number" name="vidaQueDa"><br><br>
+
+  <label>Daño por disparo:</label>
+  <input type="number" name="dano"><br><br>
+
+  <label>Imágenes muriendo o explotando (máx 4):</label>
+  <input type="file" id="imagenesMuerte" name="imagenesMuerte" accept="image/*" multiple><br>
+  <div id="previewImagenesMuerte"></div><br>
+</div>
+
+  <!-- 💣 Trampa -->
+  <div id="seccionTrampa" style="display:none;">
+    <label>Imágenes de activación (máx 4):</label>
+    <input type="file" id="imagenesActivacion" name="imagenesActivacion" accept="image/*" multiple><br>
+    <div id="previewImagenesActivacion"></div><br>
+
+    <label>Radio de activación (metros):</label>
+    <input type="number" name="radioActivacion"><br><br>
+
+    <label>Daño:</label>
+    <input type="number" name="dano"><br><br>
+
+    <label>¿Uso único?:</label>
+    <select name="usoUnico">
+      <option value="true">Sí</option>
+      <option value="false">No</option>
+    </select><br><br>
+  </div>
+
+  <!-- 🪖 Invocación -->
+  <div id="seccionInvocacion" style="display:none;">
+    <label>Imágenes del refuerzo (máx 4):</label>
+    <input type="file" id="imagenesInvocacion" name="imagenesInvocacion" accept="image/*" multiple><br>
+    <div id="previewImagenesInvocacion"></div><br>
+
+    <label>Duración de la invocación (segundos):</label>
+    <input type="number" name="duracion"><br><br>
+
+    <label>¿Ataca enemigos?:</label>
+    <select name="ataca">
+      <option value="true">Sí</option>
+      <option value="false">No</option>
+    </select><br><br>
+  </div>
+
+  <!-- ❤️ Vida -->
+  <div id="seccionVida" style="display:none;">
+    <label>Imágenes del objeto de vida (máx 4):</label>
+    <input type="file" id="imagenesVida" name="imagenesVida" accept="image/*" multiple><br>
+    <div id="previewImagenesVida"></div><br>
+
+    <label>Cantidad de vida que otorga:</label>
+    <input type="number" name="vida"><br><br>
+  </div>
+
+  <!-- 🛡️ Defensa -->
+  <div id="seccionDefensa" style="display:none;">
+    <label>Imágenes del escudo/campo (máx 4):</label>
+    <input type="file" id="imagenesDefensa" name="imagenesDefensa" accept="image/*" multiple><br>
+    <div id="previewImagenesDefensa"></div><br>
+
+    <label>Duración del escudo (segundos):</label>
+    <input type="number" name="duracionDefensa"><br><br>
+  </div>
+
+  <button type="submit">Crear Carta</button>
+</form>
+
+<hr>
+<h3>Cartas creadas</h3>
+<div id="listaCartas"></div>
+
+<div id="ufoSection" style="margin-top: 30px;">
+  <h2>Gestión de OVNIs</h2>
+
+  <form id="crearUfoForm" enctype="multipart/form-data" autocomplete="off">
+  <input type="text" name="nombre" placeholder="Nombre del OVNI" required>
+
+  <label for="imagenOvni">Imagen OVNI (PNG)</label>
+  <input type="file" name="imagenOvni" id="imagenOvni" accept="image/png" required>
+
+  <input type="number" name="vida" placeholder="Vida" required>
+
+  <label for="imagenBala">Imagen Bala (PNG)</label>
+  <input type="file" name="imagenBala" id="imagenBala" accept="image/png" required>
+
+  <input type="number" name="velocidadBala" placeholder="Velocidad bala" required>
+  <input type="number" name="velocidadMovimiento" placeholder="Velocidad OVNI" required>
+  <input type="number" name="tiempoAparicion" placeholder="Tiempo hasta que aparece (seg)" required>
+  <input type="number" name="duracionPantalla" placeholder="Tiempo que dura en pantalla (seg)" required>
+
+  <!-- Nuevos -->
+  <input type="number" name="stepcoinsPremio" placeholder="Stepcoins al destruirlo" required>
+  <input type="number" name="segundosEntreDisparos" placeholder="Frecuencia de disparo (seg)" required>
+  <input type="number" name="danoBala" placeholder="Daño de la bala" required>
+
+  <button type="submit">Crear OVNI</button>
+</form>
+
+  <ul id="listaUfos"></ul>
+</div>
+<hr>
+<h2>Promociones de locales físicos</h2>
+
+<form id="formCrearPromocion" enctype="multipart/form-data">
+  <label>Título del diseño:</label><br>
+  <input type="text" name="titulo" required><br><br>
+
+  <label>Descripción:</label><br>
+  <textarea name="descripcion"></textarea><br><br>
+
+  <label>Imagen PNG del diseño (ej: cafetería, tienda):</label><br>
+  <input type="file" name="imagen" accept="image/png" required><br><br>
+
+  <label>Opciones de duración y precio:</label><br>
+  <small>Introduce una por línea con el formato: meses,precio (ej: 1,10)</small><br>
+  <textarea name="opcionesDuracion" required rows="4" placeholder="1,10&#10;3,20&#10;12,50"></textarea><br><br>
+
+  <label>Fecha máxima para contratar (AAAA-MM-DD):</label><br>
+  <input type="date" name="fechaExpiracionMaxima" required><br><br>
+
+  <button type="submit">Crear promoción</button>
+</form>
+
+<div id="listaPromocionesCreadas" style="margin-top:20px;"></div>
+
+    </section>
+
+    <!-- 🎮 Sección CSR (Cartas, Skins y Ruleta) -->
+    <section id="csr" class="seccion" style="display:none;">
+      <h2>CSR (Cartas, Skins y Ruleta)</h2>
+
+      <h3>🎰 Ruleta de la suerte</h3>
+      <div class="ruleta-container">
+  <div class="flecha-indicador"></div>
+  <div class="ruleta" id="roulette"></div>
+  <button id="spinButton">Girar (500 Stepcoins)</button>
+  <div id="resultDisplay"></div>
+</div>
+
+<h3>🃏 Mis cartas</h3>
+      <div id="misCartasContainer" class="cartas-container"></div>
+
+      <h3>🎨 Mis Skins</h3>
+      <div id="misSkinsCliente" class="lista-skins"></div>
+
+      <h3>Skins disponibles</h3>
+      <div id="skinsDisponiblesCliente" class="lista-skins"></div>
+    </section>
+
+<!-- Sección Visión Dios -->
+<section id="visionDios" class="seccion" style="display:none;">
+
+  <!-- 🔁 CONTENEDOR RELATIVO para mapa + botón + popup -->
+  <div style="position: relative; width: 100%; height: 600px;">
+    <!-- Mapa -->
+    <div id="mapaUsuario" style="width: 100%; height: 100%;"></div>
+
+    <!-- Botón flotante 🃏 -->
+    <img id="botonCartas" src="/img/cofre.png" style="
+  position: absolute;
+  bottom: 20px;
+  right: 10px;
+  z-index: 999;
+  width: 75px;
+  height: 75px;
+  cursor: pointer;
+  display: none;
+  border: none;
+  outline: none;
+  background: none;
+" />
+
+    <!-- Popup de cartas -->
+    <div id="contenedorMazo" style="
+      position: absolute;
+      bottom: 90px;
+      right: 20px;
+      z-index: 999;
+      display: none;
+      flex-direction: row;
+      gap: 10px;
+      background: rgba(0,0,0,0.9);
+      padding: 10px;
+      border-radius: 12px;
+      box-shadow: 0 0 10px #000;
+    ">
+      <!-- Aquí se mostrarán las 4 cartas activas -->
+    </div>
+
+    <!-- 🔥 OVERLAY CENTRAL PARA MODO DISPARO -->
+    <div id="overlayDisparo" style="
+      position: absolute;
+      width: 200px;
+      height: 200px;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 9999;
+      display: none;
+      cursor: crosshair;
+    ">
+      <img id="arrowDisparo" src="/img/arrow.png" style="
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 80px;
+        transform: translate(-50%, -50%) rotate(0deg);
+        pointer-events: none;
+      ">
+    </div>
+  </div>
+
+  <!-- Flecha para apuntar (ya no necesaria si se usa arrowDisparo, pero se mantiene por compatibilidad) -->
+  <img id="flechaDireccion" src="img/arrow.png" style="
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) rotate(0deg);
+    pointer-events: none;
+    display: none;
+    z-index: 998;
+  ">
+
+  <!-- Botón activar visibilidad -->
+  <div style="text-align: center; margin-top: 10px;">
+    <button id="btnVisibilidad" class="btn-invisible">
+      Hacerme visible
+    </button>
+  </div>
+
+  <h3 style="color:lime">🃏 Cartas activas</h3>
+  <div id="mazoActivo" class="cartas-container"></div>
+
+  <h3 style="color:lime">🎒 Mochila (cartas ganadas)</h3>
+  <div id="mochilaCartas" class="cartas-container"></div>
+</section>
+
+<!-- Google Maps Script SIN callback -->
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAFLRh9gA1r9Ggp-5Rv7jiQr5HCmc8H7g4&libraries=geometry" async defer></script>
+
+</main>
+
+<script src="js/dashboard.js"></script>
+
+</body>
+</html>

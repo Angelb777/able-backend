@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Juego de Cultura</title>
+  <style>
+    body {
+      background-color: #111;
+      color: white;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 20px;
+    }
+    .pregunta {
+      font-size: 22px;
+      margin: 20px 0;
+    }
+    .opcion {
+      background-color: #2ecc71;
+      color: black;
+      border: none;
+      padding: 12px;
+      margin: 8px;
+      font-size: 18px;
+      cursor: pointer;
+      border-radius: 8px;
+      width: 80%;
+    }
+    .timer {
+      color: #e74c3c;
+      font-size: 20px;
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Juego de Cultura</h1>
+  <div id="nivel"></div>
+  <div id="timer" class="timer"></div>
+  <div id="pregunta" class="pregunta"></div>
+  <div id="opciones"></div>
+  <div id="estado"></div>
+
+  <script>
+    const userId = new URLSearchParams(window.location.search).get("userId");
+    if (!userId) {
+      alert("❌ No se proporcionó el ID del usuario");
+      window.close();
+    }
+
+    const preguntas = [
+  // Nivel 1
+  { nivel: 1, pregunta: "¿Cuál es la capital de Francia?", opciones: ["A) Berlín", "B) Madrid", "C) París"], correcta: "C) París" },
+  { nivel: 1, pregunta: "¿Quién es el autor de 'Don Quijote'?", opciones: ["A) Cervantes", "B) Shakespeare", "C) Homero"], correcta: "A) Cervantes" },
+  { nivel: 1, pregunta: "¿En qué continente está Egipto?", opciones: ["A) Asia", "B) Europa", "C) África"], correcta: "C) África" },
+  { nivel: 1, pregunta: "¿Cuál es el océano más grande del mundo?", opciones: ["A) Atlántico", "B) Índico", "C) Pacífico"], correcta: "C) Pacífico" },
+  { nivel: 1, pregunta: "¿Qué planeta es conocido como el Planeta Rojo?", opciones: ["A) Marte", "B) Júpiter", "C) Venus"], correcta: "A) Marte" },
+
+  // Nivel 2
+  { nivel: 2, pregunta: "¿Cuál es la moneda oficial de Japón?", opciones: ["A) Yuan", "B) Yen", "C) Won"], correcta: "B) Yen" },
+  { nivel: 2, pregunta: "¿Qué instrumento mide la presión atmosférica?", opciones: ["A) Barómetro", "B) Termómetro", "C) Higrómetro"], correcta: "A) Barómetro" },
+  { nivel: 2, pregunta: "¿Cuál es la capital de Italia?", opciones: ["A) Roma", "B) Milán", "C) Venecia"], correcta: "A) Roma" },
+  { nivel: 2, pregunta: "¿Qué animal es conocido como el rey de la selva?", opciones: ["A) Tigre", "B) Elefante", "C) León"], correcta: "C) León" },
+  { nivel: 2, pregunta: "¿Quién escribió 'Cien años de soledad'?", opciones: ["A) Gabriel García Márquez", "B) Julio Cortázar", "C) Jorge Luis Borges"], correcta: "A) Gabriel García Márquez" },
+
+  // Nivel 3
+  { nivel: 3, pregunta: "¿Cuál es la capital de Australia?", opciones: ["A) Sídney", "B) Canberra", "C) Melbourne"], correcta: "B) Canberra" },
+  { nivel: 3, pregunta: "¿Cuál es el río más largo del mundo?", opciones: ["A) Amazonas", "B) Nilo", "C) Yangtsé"], correcta: "A) Amazonas" },
+  { nivel: 3, pregunta: "¿Quién propuso la teoría de la relatividad?", opciones: ["A) Newton", "B) Einstein", "C) Galileo"], correcta: "B) Einstein" },
+  { nivel: 3, pregunta: "¿Dónde está el desierto del Sahara?", opciones: ["A) América", "B) Australia", "C) África"], correcta: "C) África" },
+  { nivel: 3, pregunta: "¿Qué elemento tiene el símbolo 'Na'?", opciones: ["A) Nitrógeno", "B) Sodio", "C) Neón"], correcta: "B) Sodio" },
+
+  // Nivel 4
+  { nivel: 4, pregunta: "¿Cuál es la unidad básica de la vida?", opciones: ["A) Tejido", "B) Célula", "C) Órgano"], correcta: "B) Célula" },
+  { nivel: 4, pregunta: "¿Qué país es conocido por los canguros?", opciones: ["A) Nueva Zelanda", "B) Australia", "C) Sudáfrica"], correcta: "B) Australia" },
+  { nivel: 4, pregunta: "¿Quién formuló las tres leyes del movimiento?", opciones: ["A) Galileo", "B) Newton", "C) Einstein"], correcta: "B) Newton" },
+  { nivel: 4, pregunta: "¿Dónde se encuentra Marruecos?", opciones: ["A) Asia", "B) Europa", "C) África"], correcta: "C) África" },
+  { nivel: 4, pregunta: "¿Dónde está la lengua?", opciones: ["A) Estómago", "B) Boca", "C) Nariz"], correcta: "B) Boca" },
+
+  // Nivel 5
+  { nivel: 5, pregunta: "¿Primera mujer en el espacio?", opciones: ["A) Tereshkova", "B) Jemison", "C) Ride"], correcta: "A) Tereshkova" },
+  { nivel: 5, pregunta: "¿Quién descubrió la penicilina?", opciones: ["A) Pasteur", "B) Fleming", "C) Curie"], correcta: "B) Fleming" },
+  { nivel: 5, pregunta: "¿Gas que causa el cambio climático?", opciones: ["A) Helio", "B) Oxígeno", "C) CO2"], correcta: "C) CO2" },
+  { nivel: 5, pregunta: "¿Científico del ADN?", opciones: ["A) Watson y Crick", "B) Mendel", "C) Lamarck"], correcta: "A) Watson y Crick" },
+  { nivel: 5, pregunta: "¿Océano más pequeño?", opciones: ["A) Ártico", "B) Atlántico", "C) Índico"], correcta: "A) Ártico" },
+
+  // Nivel 6
+  { nivel: 6, pregunta: "¿Animal más grande?", opciones: ["A) Elefante", "B) Ballena azul", "C) Jirafa"], correcta: "B) Ballena azul" },
+  { nivel: 6, pregunta: "¿Qué forma el 90% del Sol?", opciones: ["A) Helio", "B) Hidrógeno", "C) Oxígeno"], correcta: "B) Hidrógeno" },
+  { nivel: 6, pregunta: "¿Cuántos planetas hay?", opciones: ["A) 8", "B) 9", "C) 7"], correcta: "A) 8" },
+  { nivel: 6, pregunta: "¿Océano que rodea Australia?", opciones: ["A) Atlántico", "B) Índico", "C) Pacífico"], correcta: "C) Pacífico" },
+  { nivel: 6, pregunta: "¿Fuerza de caída libre?", opciones: ["A) Magnetismo", "B) Gravedad", "C) Fricción"], correcta: "B) Gravedad" },
+
+  // Nivel 7
+  { nivel: 7, pregunta: "¿Capital de Canadá?", opciones: ["A) Toronto", "B) Vancouver", "C) Ottawa"], correcta: "C) Ottawa" },
+  { nivel: 7, pregunta: "¿Continente con más países?", opciones: ["A) África", "B) Asia", "C) Europa"], correcta: "A) África" },
+  { nivel: 7, pregunta: "¿Símbolo del oro?", opciones: ["A) Ag", "B) Au", "C) Pb"], correcta: "B) Au" },
+  { nivel: 7, pregunta: "¿Dominio de partido único?", opciones: ["A) Democracia", "B) Totalitarismo", "C) Monarquía"], correcta: "B) Totalitarismo" },
+  { nivel: 7, pregunta: "¿Parte del ojo para ver color?", opciones: ["A) Retina", "B) Córnea", "C) Iris"], correcta: "A) Retina" },
+
+  // Nivel 8
+  { nivel: 8, pregunta: "¿Autor de Hamlet?", opciones: ["A) Dickens", "B) Shakespeare", "C) Twain"], correcta: "B) Shakespeare" },
+  { nivel: 8, pregunta: "¿Pico más alto?", opciones: ["A) Everest", "B) K2", "C) Kilimanjaro"], correcta: "A) Everest" },
+  { nivel: 8, pregunta: "¿Obra famosa del Louvre?", opciones: ["A) Noche estrellada", "B) Última cena", "C) Mona Lisa"], correcta: "C) Mona Lisa" },
+  { nivel: 8, pregunta: "¿Qué inventó Edison?", opciones: ["A) Bombilla", "B) Radio", "C) Teléfono"], correcta: "A) Bombilla" },
+  { nivel: 8, pregunta: "¿Qué es el Wi-Fi?", opciones: ["A) Carne", "B) Conexión inalámbrica", "C) Navegador"], correcta: "B) Conexión inalámbrica" },
+
+  // Nivel 9
+  { nivel: 9, pregunta: "¿Planeta con grandes tormentas?", opciones: ["A) Neptuno", "B) Júpiter", "C) Saturno"], correcta: "B) Júpiter" },
+  { nivel: 9, pregunta: "¿Padre de la electricidad?", opciones: ["A) Franklin", "B) Tesla", "C) Edison"], correcta: "B) Tesla" },
+  { nivel: 9, pregunta: "¿Dónde está el Coliseo?", opciones: ["A) Roma", "B) Atenas", "C) Estambul"], correcta: "A) Roma" },
+  { nivel: 9, pregunta: "¿Qué causa el SIDA?", opciones: ["A) Cáncer", "B) VIH", "C) Diabetes"], correcta: "B) VIH" },
+  { nivel: 9, pregunta: "¿Capa de la Tierra de rocas?", opciones: ["A) Núcleo", "B) Corteza", "C) Manto"], correcta: "B) Corteza" },
+
+  // Nivel 10
+  { nivel: 10, pregunta: "¿Teoría de la evolución?", opciones: ["A) Darwin", "B) Newton", "C) Einstein"], correcta: "A) Darwin" },
+  { nivel: 10, pregunta: "¿País más poblado?", opciones: ["A) India", "B) China", "C) EEUU"], correcta: "B) China" },
+  { nivel: 10, pregunta: "¿Qué es un agujero negro?", opciones: ["A) Fenómeno espacial", "B) Estrella", "C) Galaxia"], correcta: "A) Fenómeno espacial" },
+  { nivel: 10, pregunta: "¿Cuánto dura un año?", opciones: ["A) 365 días", "B) 400 días", "C) 320 días"], correcta: "A) 365 días" },
+  { nivel: 10, pregunta: "¿Sonido de un perro?", opciones: ["A) Miau", "B) Guau", "C) Pío"], correcta: "B) Guau" }
+];
+
+preguntas.sort(() => Math.random() - 0.5); // Mezclar preguntas
+
+
+    let nivelActual = 1;
+    let timer;
+    let tiempo = 15;
+
+    function obtenerPreguntaAleatoria(nivel) {
+      const filtradas = preguntas.filter(p => p.nivel === nivel);
+      return filtradas[Math.floor(Math.random() * filtradas.length)];
+    }
+
+    function mostrarPregunta() {
+      if (nivelActual > 10) {
+        alert("🎉 Has completado el juego!");
+        window.close();
+        return;
+      }
+
+      const pregunta = obtenerPreguntaAleatoria(nivelActual);
+
+      document.getElementById("nivel").textContent = `Nivel ${nivelActual} de 10`;
+      document.getElementById("pregunta").textContent = pregunta.pregunta;
+      document.getElementById("opciones").innerHTML = "";
+      document.getElementById("estado").textContent = "";
+
+      tiempo = 15;
+      document.getElementById("timer").textContent = `⏱️ Tiempo: ${tiempo}s`;
+      clearInterval(timer);
+      timer = setInterval(() => {
+        tiempo--;
+        document.getElementById("timer").textContent = `⏱️ Tiempo: ${tiempo}s`;
+        if (tiempo <= 0) {
+          clearInterval(timer);
+          alert("❌ Tiempo agotado");
+          window.close();
+        }
+      }, 1000);
+
+      pregunta.opciones.forEach(op => {
+        const btn = document.createElement("button");
+        btn.className = "opcion";
+        btn.textContent = op;
+        btn.onclick = () => verificarRespuesta(op, pregunta.correcta);
+        document.getElementById("opciones").appendChild(btn);
+      });
+    }
+
+    async function verificarRespuesta(seleccionada, correcta) {
+      clearInterval(timer);
+      if (seleccionada === correcta) {
+        document.getElementById("estado").textContent = "✅ ¡Correcto! +100 Stepcoins";
+        try {
+          const res = await fetch("/api/stepcoins/adjust", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId,
+              cantidad: 100,
+              tipo: "cultura",
+              descripcion: `Pregunta acertada en nivel ${nivelActual}`
+            })
+          });
+          if (!res.ok) {
+            const data = await res.json();
+            console.error("❌ Error al sumar Stepcoins:", data);
+          }
+        } catch (err) {
+          console.error("❌ Error de red:", err);
+        }
+        setTimeout(() => {
+          nivelActual++;
+          mostrarPregunta();
+        }, 1000);
+      } else {
+        alert(`❌ Incorrecto. La respuesta correcta era: ${correcta}`);
+        window.close();
+      }
+    }
+
+    mostrarPregunta();
+  </script>
+</body>
+</html>

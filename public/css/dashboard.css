@@ -1,0 +1,757 @@
+body {
+  margin: 0;
+  background: url('/img/background-city.png') no-repeat center center fixed;
+  background-size: cover;
+  position: relative;
+  color: #fff;
+  display: flex;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #2C9C52;
+  z-index: -1;
+}
+
+@font-face {
+  font-family: 'FutureEarth';
+  src: url('/fonts/FutureEarth.ttf') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+}
+
+/* Solo aplicar la fuente al menú lateral */
+nav, nav * {
+  font-family: 'FutureEarth', sans-serif !important;
+  font-size: 12px; /* Ajusta aquí el tamaño que quieras */
+}
+
+/* Aplicar otra fuente al contenido principal */
+main, main * {
+  font-family: 'Segoe UI', sans-serif !important;
+}
+
+/* === NAVBAR LATERAL === */
+nav {
+  width: 250px;
+  background: #434345;
+  color: white;
+  height: 100vh;
+  padding-top: 20px;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.4);
+  position: fixed;
+  top: 0;
+  left: 0;
+  overflow-y: auto;
+}
+
+nav h2 {
+  text-align: center;
+  margin-bottom: 20px;
+  font-size: 22px;
+}
+
+nav ul {
+  list-style: none;
+  padding: 0;
+  text-align: center;
+}
+
+nav li {
+  padding: 16px 20px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  letter-spacing: 1px;
+  font-size: 17px;
+}
+
+nav img {
+  display: block;
+  margin: 0 auto 30px auto;
+}
+
+nav li:hover {
+  background-color: #2C9C52;
+}
+
+main {
+  flex-grow: 1;
+  padding: 40px;
+  overflow-y: auto;
+  color: black;
+
+  /* 👇 Estas dos líneas resuelven el solapamiento con el menú lateral fijo */
+  margin-left: 250px;               /* igual al width del <nav> */
+  width: calc(100% - 250px);        /* ocupa el resto del espacio */
+  box-sizing: border-box;           /* para que el padding no rompa el layout */
+}
+
+/* === BOTONES GENERALES === */
+button {
+  padding: 10px 16px;
+  background-color: #ece537;
+  border: none;
+  border-radius: 6px;
+  font-weight: bold;
+  color: black;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+button:hover {
+  background-color: #d9d02e;
+}
+
+/* === INPUTS === */
+input, select {
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  margin-bottom: 10px;
+  width: 100%;
+  max-width: 300px;
+}
+
+/* === TABLAS === */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 20px;
+  background-color: white;
+  color: black;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+table th, table td {
+  padding: 10px;
+  border: 1px solid #ccc;
+}
+
+table th {
+  background-color: #f2f2f2;
+}
+
+/* === ETIQUETAS === */
+.stepcoins {
+  font-size: 24px;
+  color: #00ff88;
+  font-weight: bold;
+}
+
+/* === TARJETAS DE STEPCOINS === */
+.stepcoin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.stepcoin-card {
+  background-color: #1b5e20;
+  color: white;
+  border-radius: 10px;
+  padding: 20px;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.stepcoin-card button {
+  background-color: #00c8a0;
+}
+
+.stepcoin-card button:hover {
+  background-color: #00e0b0;
+}
+
+/* === TARJETAS GENÉRICAS === */
+.reward-card, .carta-item {
+  background-color: rgba(255, 255, 255, 0.95);
+  color: black;
+  border-radius: 10px;
+  padding: 10px;
+  text-align: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  width: 220px;
+}
+
+.reward-card img,
+.carta-item img {
+  width: 100%;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+/* === RUEDA DE LA SUERTE === */
+.ruleta-container {
+  text-align: center;
+  margin-top: 40px;
+}
+
+.ruleta {
+  width: 300px;
+  height: 300px;
+  border-radius: 50%;
+  border: 10px solid #444;
+  margin: 0 auto;
+  transition: transform 5s ease-out;
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+  background: conic-gradient(
+    #2a752a 0deg 60deg,
+    #3c9f3c 60deg 120deg,
+    #2a752a 120deg 180deg,
+    #3c9f3c 180deg 240deg,
+    #2a752a 240deg 300deg,
+    #3c9f3c 300deg 360deg
+  );
+}
+
+.flecha-indicador {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 12px solid transparent;
+  border-right: 12px solid transparent;
+  border-bottom: 20px solid red;
+  z-index: 10;
+}
+
+/* === MAPA Y CARTAS DE VISIÓN DIOS === */
+#mapaUsuario {
+  position: relative;           /* 👈 NECESARIO PARA POSICIONAR HIJOS ABSOLUTOS */
+  width: 100%;
+  height: 100vh;
+  max-width: 1200px;
+  margin: 0 auto;
+  border: 3px solid limegreen;
+  border-radius: 16px;
+  display: block;
+  box-sizing: border-box;
+}
+
+.cartas-container {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+/* === LISTAS DESLIZABLES === */
+#listaSkins {
+  display: flex;
+  overflow-x: auto;        /* Scroll horizontal */
+  gap: 20px;
+  scroll-snap-type: x mandatory;
+  padding: 20px;
+}
+
+#listaSkins .skin-card {
+  flex: 0 0 auto;           /* No se achican */
+  width: 200px;
+  background: #111;
+  color: white;
+  padding: 15px;
+  border-radius: 10px;
+  scroll-snap-align: start;
+  text-align: center;
+  box-shadow: 0 0 10px rgba(0,0,0,0.3);
+}
+
+/* === LISTAS CARTAS === */
+
+#listaCartas {
+  display: flex;
+  overflow-x: auto;           /* Scroll horizontal */
+  gap: 20px;                  /* Espacio entre cartas */
+  scroll-snap-type: x mandatory;
+  padding: 20px;
+}
+
+#listaCartas .carta-item {
+  flex: 0 0 auto;             /* Evita que se achiquen */
+  width: 200px;
+  background: #fff;
+  color: #000;
+  padding: 15px;
+  border-radius: 10px;
+  scroll-snap-align: start;
+  text-align: center;
+  box-shadow: 0 0 10px rgba(0,0,0,0.2);
+}
+
+/* === BOTÓN DE VISIBILIDAD === */
+#btnVisibilidad {
+  padding: 10px 20px;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+#btnVisibilidad.btn-invisible {
+  background-color: #4CAF50;
+}
+
+#btnVisibilidad.btn-visible {
+  background-color: #e53935;
+}
+
+@keyframes parpadeo {
+  0% { opacity: 1; }
+  50% { opacity: 0.2; }
+  100% { opacity: 1; }
+}
+
+.ruleta-container {
+  text-align: center;
+  margin-top: 40px;
+  position: relative;
+}
+
+.ruleta {
+  width: 300px;
+  height: 300px;
+  border-radius: 50%;
+  border: 10px solid #444;
+  margin: 0 auto;
+  transition: transform 5s ease-out;
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+  background: conic-gradient(
+    #2a752a 0deg 60deg,
+    #3c9f3c 60deg 120deg,
+    #2a752a 120deg 180deg,
+    #3c9f3c 180deg 240deg,
+    #2a752a 240deg 300deg,
+    #3c9f3c 300deg 360deg
+  );
+  position: relative;
+}
+
+.etiqueta-sector {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: center center;
+  font-size: 12px;
+  font-weight: bold;
+  color: white;
+  text-shadow: 1px 1px 2px black;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+button {
+  margin-top: 20px;
+  background: #ece537;
+  border: none;
+  padding: 10px 20px;
+  font-weight: bold;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+#resultado {
+  margin-top: 20px;
+  font-weight: bold;
+  font-size: 18px;
+}
+
+.cartas-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.carta {
+  border: 2px solid #ccc;
+  padding: 5px;
+  border-radius: 10px;
+  background: white;
+  box-shadow: 2px 2px 6px rgba(0,0,0,0.2);
+  width: 120px;
+  text-align: center;
+}
+.carta img {
+  width: 100%;
+  border-radius: 8px;
+}
+
+.carta-ganada {
+  border: 2px solid #ccc;
+  border-radius: 10px;
+  padding: 5px;
+  text-align: center;
+  width: 100px;
+  background-color: #f9f9f9;
+}
+.carta-imagen {
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+
+.carta {
+  background: #fff;
+  color: black;
+  font-family: sans-serif;
+  box-shadow: 0 0 5px rgba(0,0,0,0.2);
+  transition: transform 0.2s;
+}
+.carta:hover {
+  transform: scale(1.05);
+}
+
+.btn-visible {
+  background-color: red;
+  color: white;
+}
+.btn-invisible {
+  background-color: green;
+  color: white;
+}
+
+#overlayDisparo {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 9999;
+  cursor: crosshair;
+}
+
+.overlay-usuario {
+  text-align: center;
+  font-family: sans-serif;
+  color: white;
+  font-weight: bold;
+}
+
+.nombre-usuario {
+  background: rgba(0, 0, 0, 0.6);
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.barra-vida {
+  width: 60px;
+  height: 8px;
+  background: #cb1515;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid black; /* ✅ Contorno negro */
+  box-sizing: border-box;
+}
+
+.vida-inner {
+  height: 100%;
+  background: limegreen;
+  width: 100%;
+}
+
+.zona-clic-skin {
+  position: absolute;
+  width: 80px;
+  height: 80px;
+  top: 30px;  /* Ajusta según posición sobre skin */
+  left: -15px;
+  background: rgba(255, 0, 0, 0.0); /* transparente pero clicable */
+  cursor: crosshair;
+  z-index: 10;
+}
+
+#flechaApuntado {
+    position: absolute;
+    z-index: 9999;
+    width: 60px;
+    height: 60px;
+    pointer-events: none;
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+
+/* Fondo oscuro difuminado detrás del popup */
+#overlayFondoSkins {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 9998;
+}
+
+/* Contenedor del popup */
+#popupSkins {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: #1e1e1e;
+  padding: 20px;
+  border: 2px solid #444;
+  border-radius: 12px;
+  z-index: 9999;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 0 20px #000;
+  color: white;
+  width: 90%;
+  max-width: 600px;
+}
+
+/* Título centrado */
+#popupSkins h3 {
+  text-align: center;
+  margin-bottom: 15px;
+}
+
+/* Grid de skins */
+#gridSkins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: center;
+}
+
+/* Cada skin individual */
+.skinOpcion {
+  cursor: pointer;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  padding: 5px;
+  transition: transform 0.2s, border 0.2s, box-shadow 0.2s;
+}
+
+.skinOpcion img {
+  width: 110px;
+  border-radius: 8px;
+}
+
+.skinOpcion:hover {
+  transform: scale(1.05);
+  border-color: #ece537;
+}
+
+/* Skin seleccionada actualmente */
+.skinOpcion.seleccionada {
+  border: 3px solid #ece537;
+  box-shadow: 0 0 10px #ece537;
+}
+
+/* Botón cerrar */
+#cerrarPopupSkins {
+  margin-top: 20px;
+  background: #333;
+  color: white;
+  padding: 8px 16px;
+  border: 1px solid #555;
+  border-radius: 8px;
+  cursor: pointer;
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+#cerrarPopupSkins:hover {
+  background: #444;
+}  
+
+#skinsDisponiblesCliente {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 10px 0;
+  overflow-x: auto;
+}
+
+#misSkinsCliente {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 10px 0;
+  overflow-x: auto;
+}
+
+.tarjeta-skin {
+  background: white;
+  border: 2px solid #ddd;
+  border-radius: 12px;
+  padding: 10px;
+  width: 140px;
+  text-align: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+}
+
+.tarjeta-skin img {
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+.tarjeta-skin h4 {
+  font-size: 14px;
+  margin: 8px 0 4px;
+  font-weight: bold;
+}
+
+.tarjeta-skin p {
+  font-size: 12px;
+  margin: 4px 0;
+  color: #555;
+}
+
+.tarjeta-skin button {
+  margin-top: 6px;
+  padding: 4px 8px;
+  background-color: #ece537;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.tablaRanking {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: white;
+  color: black;
+  margin-top: 20px;
+}
+
+.tablaRanking th,
+.tablaRanking td {
+  padding: 12px;
+  border: 1px solid #ccc;
+  text-align: center;
+  font-family: 'FutureEarth', sans-serif;
+  font-size: 16px;
+}
+
+.tablaRanking tr:nth-child(even) {
+  background-color: #f2f2f2;
+}
+
+.tablaRanking tr:first-child {
+  background-color: #ece537;
+  color: #222;
+  font-weight: bold;
+}
+
+/* Tarjetas de promociones para comercios */
+#promoLocal .card-promo {
+  width: 300px;
+  border: 1px solid #ccc;
+  border-radius: 10px;
+  padding: 15px;
+  background: #fff;
+  box-shadow: 2px 2px 10px rgba(0,0,0,0.1);
+  color: #000;
+  overflow: hidden;              /* 👈 evita que nada se salga */
+  box-sizing: border-box;
+}
+
+#promoLocal .card-promo img {
+  width: 100%;
+  border-radius: 8px;
+}
+
+#promoLocal .card-promo input[type="file"],
+#promoLocal .card-promo input[type="text"],
+#promoLocal .card-promo select,
+#promoLocal .card-promo button {
+  width: 100%;                   /* 👈 ocupa 100% del ancho interno */
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+#promoLocal .card-promo form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.logo-comercio {
+  position: absolute;
+  bottom: 12px;               /* ajústalo para moverlo */
+  left: 50%;
+  transform: translateX(-50%);
+  width: 55px;               /* aumenta este valor si lo quieres más grande */
+  height: 55px;
+  border: none;              /* elimina borde circular */
+  border-radius: 0;          /* sin forma redonda */
+  box-shadow: none;          /* sin sombra */
+  z-index: 10;               /* asegura que esté por encima */
+}
+
+.reto,
+.reto-cliente {
+  border: 1px solid #ccc;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+  background-color: #1e1e1e;
+  color: #fff;
+  box-shadow: 0 0 10px rgba(0, 255, 170, 0.2);
+}
+
+.reto img,
+.reto-cliente img {
+  display: block;
+  margin-top: 10px;
+  margin-bottom: 10px;
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+.reto h4,
+.reto-cliente h3 {
+  margin-top: 0;
+  color: #00ffaa;
+}
+
+.reto button,
+.reto-cliente button {
+  margin-top: 10px;
+  padding: 8px 14px;
+  border: none;
+  background-color: #00ffaa;
+  color: #000;
+  font-weight: bold;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s ease-in-out;
+}
+
+.reto button:hover,
+.reto-cliente button:hover {
+  background-color: #00cc88;
+}
+
+section {
+  background-color: rgba(255, 255, 255, 0.95);
+  padding: 20px;
+  border-radius: 12px;
+  color: black;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+  margin: 0px auto 30px auto; /* aún más ajustado arriba */
+  max-width: 1200px;
+  overflow: auto;
+}
