@@ -105,6 +105,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       "Crear Retos",
       "Lista de compradores",
       "Candados",
+      "Pedidos"
     ]
   };
 
@@ -162,7 +163,10 @@ function renderSection(section) {
       break;
     case "Retos":
       if (role === "cliente") renderRetosCliente();
-      break;  
+      break;
+    case "Pedidos":
+      if (role === "admin") renderPedidosAdmin();
+      break;    
     case "Validar":
       if (role === "admin") renderValidarRewards();
       break;
@@ -4497,61 +4501,460 @@ async function eliminarReto(id) {
 
 async function renderRetosCliente() {
   const content = document.getElementById("content");
-  const seccionAnterior = document.getElementById("retosClienteSeccion");
+  const seccionAnterior = document.getElementById("retosCliente"); // usa un id fijo
 
-  if (seccionAnterior) {
-    seccionAnterior.remove(); // limpia sección previa
-  }
+  if (seccionAnterior) seccionAnterior.remove(); // limpia sección previa
 
   const nuevaSeccion = document.createElement("section");
-  nuevaSeccion.id = "retosClienteSeccion";
+  nuevaSeccion.id = "retosCliente";      // id fijo coherente con la sección
+  nuevaSeccion.className = "seccion";    // ← CLAVE: para que renderSection la oculte
+  nuevaSeccion.style.display = "block";  // la mostramos cuando se entra en Retos
 
-  const res = await fetch("/api/retos/activos");
-  const retos = await res.json();
+  try {
+    const res = await fetch("/api/retos/activos");
+    if (!res.ok) {
+      const t = await res.text().catch(()=> "");
+      console.error("retos/activos", res.status, t);
+      nuevaSeccion.innerHTML = "<p>Error al cargar retos.</p>";
+    } else {
+      const retos = await res.json();
 
-  if (!Array.isArray(retos) || retos.length === 0) {
-    nuevaSeccion.innerHTML = "<p>No hay retos activos actualmente.</p>";
-  } else {
-    retos.forEach((r) => {
-      const yaInscrito = r.participantes?.some(p => p.userId === usuarioActual._id);
+      if (!Array.isArray(retos) || retos.length === 0) {
+        nuevaSeccion.innerHTML = "<p>No hay retos activos actualmente.</p>";
+      } else {
+        retos.forEach((r) => {
+          const yaInscrito = r.participantes?.some(p => p.userId === usuarioActual._id);
+          const retoDiv = document.createElement("div");
+          retoDiv.className = "reto-cliente";
+          retoDiv.innerHTML = `
+            <h3>${r.titulo}</h3>
+            ${r.imagenPremioUrl ? `<img src="${r.imagenPremioUrl}" alt="Premio" style="max-width:200px;">` : ""}
+            <p>${r.descripcion ?? ""}</p>
+            <p><strong>Premio:</strong> ${r.premio ?? ""}</p>
+            <p><strong>Fechas:</strong> ${new Date(r.fechaInicio).toLocaleDateString()} - ${new Date(r.fechaFin).toLocaleDateString()}</p>
+            <button ${yaInscrito ? "disabled" : ""}>
+              ${yaInscrito ? "Inscrito" : "Inscribirse"}
+            </button>
+          `;
 
-      const retoDiv = document.createElement("div");
-      retoDiv.className = "reto-cliente";
-      retoDiv.innerHTML = `
-        <h3>${r.titulo}</h3>
-        <img src="${r.imagenPremioUrl}" alt="Premio" style="max-width: 200px;">
-        <p>${r.descripcion}</p>
-        <p><strong>Premio:</strong> ${r.premio}</p>
-        <p><strong>Fechas:</strong> ${new Date(r.fechaInicio).toLocaleDateString()} - ${new Date(r.fechaFin).toLocaleDateString()}</p>
-        <button ${yaInscrito ? "disabled" : ""}>
-          ${yaInscrito ? "Inscrito" : "Inscribirse"}
-        </button>
-      `;
-
-      const boton = retoDiv.querySelector("button");
-
-      if (!yaInscrito) {
-        boton.onclick = async () => {
-          const res = await fetch(`/api/retos/${r._id}/inscribirse`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId: usuarioActual._id }),
-          });
-
-          if (res.ok) {
-            alert("✅ Te has inscrito al reto");
-            boton.disabled = true;
-            boton.innerText = "Inscrito";
-          } else {
-            const json = await res.json();
-            alert("❌ " + (json.error || "Error al inscribirte"));
+          const boton = retoDiv.querySelector("button");
+          if (!yaInscrito && boton) {
+            boton.onclick = async () => {
+              const r2 = await fetch(`/api/retos/${r._id}/inscribirse`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ userId: usuarioActual._id }),
+              });
+              if (r2.ok) {
+                alert("✅ Te has inscrito al reto");
+                boton.disabled = true;
+                boton.textContent = "Inscrito";
+              } else {
+                const j = await r2.json().catch(()=> ({}));
+                alert("❌ " + (j.error || "Error al inscribirte"));
+              }
+            };
           }
-        };
-      }
 
-      nuevaSeccion.appendChild(retoDiv);
-    });
+          nuevaSeccion.appendChild(retoDiv);
+        });
+      }
+    }
+  } catch (e) {
+    console.error(e);
+    nuevaSeccion.innerHTML = "<p>Error al cargar retos.</p>";
   }
 
   content.appendChild(nuevaSeccion);
+}
+
+
+//PEDIDOSSSSS SSSS
+
+
+// ===============================
+// Pedidos (ADMIN)
+// ===============================
+const _pedidosState = {
+  inited: false,
+  page: 1,
+  pages: 1,
+  limit: 20,
+  q: "",
+  paid: true,
+  sort: "-createdAt",
+  loading: false,
+  ship: "", // "", "true" o "false"
+};
+
+function renderPedidosAdmin() {
+  // mostrar sección
+  const sec = document.getElementById("pedidosAdmin");
+  if (sec) sec.style.display = "block";
+
+  // one-time init de listeners
+  if (!_pedidosState.inited) {
+    // Navegación desde el menú (si existe el item)
+    document.getElementById("menuPedidos")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      mostrarSoloSeccion("pedidosAdmin");
+      renderPedidosAdmin();
+    });
+
+    // Filtros
+    document.getElementById("filtroPedidosQ")?.addEventListener(
+      "input",
+      (_maybeDebounce())(() => {
+        _pedidosState.page = 1;
+        _pedidosFetchAndRender();
+      }, 350)
+    );
+    document
+      .getElementById("filtroPedidosPaid")
+      ?.addEventListener("change", () => {
+        _pedidosState.page = 1;
+        _pedidosFetchAndRender();
+      });
+    document
+      .getElementById("filtroPedidosSort")
+      ?.addEventListener("change", () => {
+        _pedidosState.page = 1;
+        _pedidosFetchAndRender();
+      });
+    document
+      .getElementById("filtroPedidosLimit")
+      ?.addEventListener("change", () => {
+        _pedidosState.page = 1;
+        _pedidosFetchAndRender();
+      });
+
+    // Paginación
+    document.getElementById("pedidosPrev")?.addEventListener("click", () => {
+      if (_pedidosState.page > 1) {
+        _pedidosState.page -= 1;
+        _pedidosFetchAndRender();
+      }
+    });
+    document.getElementById("pedidosNext")?.addEventListener("click", () => {
+      if (_pedidosState.page < _pedidosState.pages) {
+        _pedidosState.page += 1;
+        _pedidosFetchAndRender();
+      }
+    });
+
+    // Botones acciones
+    document
+      .getElementById("btnRefrescarPedidos")
+      ?.addEventListener("click", () => _pedidosFetchAndRender());
+    document
+      .getElementById("btnExportarPedidos")
+      ?.addEventListener("click", _pedidosExportCsv);
+
+    // Filtro por envío (opcional si añadiste el <select id="filtroPedidosShip"> en HTML)
+    document
+      .getElementById("filtroPedidosShip")
+      ?.addEventListener("change", () => {
+      _pedidosState.page = 1;
+      _pedidosFetchAndRender();
+    });
+  
+
+    _pedidosState.inited = true;
+  }
+
+  // Cargar UI->estado y pintar
+  _pedidosReadFiltersFromUI();
+  _pedidosFetchAndRender();
+}
+
+// --- helpers internos ---
+function _pedidosReadFiltersFromUI() {
+  const qEl = document.getElementById("filtroPedidosQ");
+  const paidEl = document.getElementById("filtroPedidosPaid");
+  const sortEl = document.getElementById("filtroPedidosSort");
+  const limitEl = document.getElementById("filtroPedidosLimit");
+  const shipEl = document.getElementById("filtroPedidosShip");
+
+  _pedidosState.q = (qEl?.value || "").trim();
+  _pedidosState.paid = !!paidEl?.checked;
+  _pedidosState.sort = sortEl?.value || "-createdAt";
+  _pedidosState.limit = parseInt(limitEl?.value || "20", 10) || 20;
+  _pedidosState.ship = (shipEl?.value ?? "").trim(); // "", "true", "false"
+}
+
+async function _pedidosFetchAndRender() {
+  if (_pedidosState.loading) return;
+  _pedidosState.loading = true;
+
+  const tbody = document.querySelector("#tablaPedidos tbody");
+  const pageLabel = document.getElementById("pedidosPaginaLabel");
+  if (tbody) tbody.innerHTML = `<tr><td colspan="6">Cargando...</td></tr>`;
+
+  try {
+    const params = new URLSearchParams({
+      page: String(_pedidosState.page),
+      limit: String(_pedidosState.limit),
+      sort: _pedidosState.sort,
+      paid: String(_pedidosState.paid),
+    });
+    if (_pedidosState.q) params.set("q", _pedidosState.q);
+    if (_pedidosState.ship) params.set("ship", _pedidosState.ship);
+
+    const token = localStorage.getItem("token") || "";
+    const resp = await fetch(`/api/admin/orders?${params.toString()}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+
+    _pedidosState.page = data.page || 1;
+    _pedidosState.pages = data.pages || 1;
+
+    if (!Array.isArray(data.items) || data.items.length === 0) {
+      if (tbody) tbody.innerHTML = `<tr><td colspan="6">Sin resultados</td></tr>`;
+    } else {
+  if (tbody) tbody.innerHTML = data.items.map(_pedidoRowHtml).join("");
+
+  // Bind botones "Ver"
+  document.querySelectorAll(".btnVerPedidoAdmin").forEach((btn) => {
+    btn.addEventListener("click", () => _pedidosOpenDetail(btn.dataset.id));
+  });
+
+  // Bind "Marcar enviado / Desmarcar"
+  document.querySelectorAll(".btnShip").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      const isShipped = btn.dataset.shipped === "1";
+      let trackingNumber = "";
+      if (!isShipped) {
+        trackingNumber = prompt("Número de seguimiento (opcional):") || "";
+      }
+      try {
+        await _pedidosToggleShip(id, !isShipped, trackingNumber);
+        _pedidosFetchAndRender();
+      } catch (e) {
+        console.error("Marcar envío error:", e);
+        alert("No se pudo actualizar el estado de envío");
+      }
+    });
+  });
+}
+
+    if (pageLabel) pageLabel.textContent = `${_pedidosState.page} / ${_pedidosState.pages}`;
+  } catch (err) {
+    console.error("PedidosAdmin error:", err);
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6">Error al cargar</td></tr>`;
+  } finally {
+    _pedidosState.loading = false;
+  }
+}
+
+function _pedidoRowHtml(o) {
+  const fecha = o.createdAt
+    ? new Date(o.createdAt).toLocaleString("es-ES", { dateStyle: "short", timeStyle: "medium" })
+    : "-";
+  const pedido = o.providerOrderId || o._id;
+  const cliente =
+    (o.shipping && o.shipping.name) || (o.billing && o.billing.name) || "-";
+  const total =
+    o.total != null && o.currency
+      ? `${o.total} ${o.currency}`
+      : o.total ?? "-";
+  const estadoPago = o.paid
+    ? o.providerStatus
+      ? `Pagado · ${o.providerStatus}`
+      : "Pagado"
+    : o.providerStatus || "Pendiente";
+
+  const enviado = !!(o.fulfillment && o.fulfillment.shipped);
+  const shippedLabel = enviado ? "ENVIADO" : "PENDIENTE ENVÍO";
+  const shippedBadgeClass = enviado ? "badge--green" : "badge--yellow";
+  const btnShipText = enviado ? "Desmarcar envío" : "Marcar enviado";
+
+  const shippedAt =
+    o.fulfillment && o.fulfillment.shippedAt
+      ? new Date(o.fulfillment.shippedAt).toLocaleString("es-ES", {
+          dateStyle: "short",
+          timeStyle: "short",
+        })
+      : "";
+
+  return `
+    <tr class="${enviado ? "row--shipped" : ""}">
+      <td>${fecha}</td>
+      <td>${pedido}</td>
+      <td>${cliente}</td>
+      <td>${total}</td>
+      <td>
+        ${estadoPago}
+        <div class="badge ${shippedBadgeClass}" title="${shippedAt}">
+          ${shippedLabel}
+        </div>
+      </td>
+      <td>
+        <button class="btn btn-small btnShip" data-id="${o._id}" data-shipped="${
+    enviado ? "1" : "0"
+  }">${btnShipText}</button>
+        <button class="btn btn-small btnVerPedidoAdmin" data-id="${o._id}">Ver</button>
+      </td>
+    </tr>
+  `;
+}
+
+async function _pedidosOpenDetail(id) {
+  try {
+    const token = localStorage.getItem("token") || "";
+    const resp = await fetch(`/api/admin/orders/${id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const o = await resp.json();
+
+    const itemsHtml = (o.items || [])
+      .map(
+        (it) => `
+      <tr>
+        <td>${it.name}</td>
+        <td>${it.qty}</td>
+        <td>${it.unitPrice}</td>
+        <td>${it.subtotal}</td>
+      </tr>`
+      )
+      .join("");
+
+    const html = `
+      <div class="modal" id="modalPedidoAdmin" style="display:block;">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>Pedido ${o.providerOrderId || o._id}</h3>
+            <button id="modalPedidoAdminClose" class="modal-close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p><strong>Fecha:</strong> ${o.createdAt ? new Date(o.createdAt).toLocaleString() : "-"}</p>
+            <p><strong>Estado:</strong> ${o.paid ? "Pagado" : "Pendiente"} · ${o.providerStatus || "-"}</p>
+            <p><strong>Total:</strong> ${o.total} ${o.currency || ""}</p>
+
+            <h4>Envío</h4>
+            <p>${o.shipping?.name || "-"} ${o.shipping?.phone ? "· " + o.shipping.phone : ""}</p>
+            <p>${[
+              o.shipping?.address1,
+              o.shipping?.city,
+              o.shipping?.state,
+              o.shipping?.zip,
+              o.shipping?.country,
+            ].filter(Boolean).join(", ")}</p>
+
+            <h4>Facturación</h4>
+            <p>${o.billing?.name || "-"} ${o.billing?.taxId ? "· " + o.billing.taxId : ""}</p>
+            <p>${[
+              o.billing?.address1,
+              o.billing?.city,
+              o.billing?.state,
+              o.billing?.zip,
+              o.billing?.country,
+            ].filter(Boolean).join(", ")}</p>
+
+            <h4>Artículos</h4>
+            <table class="tabla">
+              <thead><tr><th>Producto</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr></thead>
+              <tbody>${itemsHtml}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+
+    _showModal(html, "modalPedidoAdmin", "modalPedidoAdminClose");
+  } catch (e) {
+    console.error("Detalle pedido error:", e);
+    alert("No se pudo cargar el detalle del pedido");
+  }
+}
+
+async function _pedidosExportCsv() {
+  try {
+    // refrescar filtros actuales
+    _pedidosReadFiltersFromUI();
+
+    const params = new URLSearchParams({
+      sort: _pedidosState.sort,
+      paid: String(_pedidosState.paid),
+    });
+    if (_pedidosState.q) params.set("q", _pedidosState.q);
+    if (_pedidosState.ship) params.set("ship", _pedidosState.ship);
+
+    const token = localStorage.getItem("token") || "";
+    const resp = await fetch(`/api/admin/orders/export.csv?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+    const blob = await resp.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "orders.csv";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } catch (e) {
+    console.error("Export CSV error:", e);
+    alert("Error al exportar CSV");
+  }
+}
+
+// Utilidad para mostrar solo una sección (si no tienes función global)
+function mostrarSoloSeccion(id) {
+  document.querySelectorAll(".seccion").forEach((s) => (s.style.display = "none"));
+  const el = document.getElementById(id);
+  if (el) el.style.display = "block";
+}
+
+// Debounce (solo define si no existe)
+function _maybeDebounce() {
+  if (typeof debounce === "function") return debounce;
+  return function (fn, ms) {
+    let t;
+    return (...args) => {
+      clearTimeout(t);
+      t = setTimeout(() => fn(...args), ms);
+    };
+  };
+}
+
+// Modal mínimo (usa tus estilos/clases si ya tienes uno)
+function _showModal(html, wrapId, closeId) {
+  // eliminar modal anterior si existe
+  document.getElementById(wrapId)?.remove();
+
+  const wrap = document.createElement("div");
+  wrap.id = wrapId;
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap);
+
+  document.getElementById(closeId)?.addEventListener("click", () => {
+    wrap.remove();
+  });
+
+  // cerrar al click fuera del contenido
+  wrap.addEventListener("click", (e) => {
+    if (e.target.id === wrapId) wrap.remove();
+  });
+}
+
+async function _pedidosToggleShip(id, shipped, trackingNumber) {
+  const token = localStorage.getItem("token") || "";
+  const resp = await fetch(`/api/admin/orders/${id}/ship`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ shipped, trackingNumber }),
+  });
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status}`);
+  }
+  return resp.json();
 }

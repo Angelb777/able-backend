@@ -33,6 +33,70 @@
     <div id="contenedorPromosDisponibles"></div>
     </section>
 
+        <!-- 🛒 Sección Pedidos (solo admins) -->
+    <section id="pedidosAdmin" class="seccion" style="display:none;">
+  <h2>Pedidos</h2>
+
+  <div class="acciones">
+    <button id="btnExportarPedidos">Exportar CSV</button>
+    <button id="btnRefrescarPedidos">Refrescar</button>
+  </div>
+
+  <div class="filtros">
+    <input type="search" id="filtroPedidosQ" placeholder="Buscar (cliente, pedido, item...)" />
+    <label>
+      <input type="checkbox" id="filtroPedidosPaid" checked />
+      Solo pagados
+    </label>
+    <!-- Filtro de envío (opcional) -->
+    <label>
+      <select id="filtroPedidosShip">
+        <option value="">Envío: Todos</option>
+        <option value="true">Solo enviados</option>
+        <option value="false">Solo pendientes</option>
+      </select>
+    </label>
+    <select id="filtroPedidosSort">
+      <option value="-createdAt">Fecha ↓ (recientes)</option>
+      <option value="createdAt">Fecha ↑ (antiguos)</option>
+      <option value="-total">Total ↓</option>
+      <option value="total">Total ↑</option>
+      <option value="providerStatus">Estado A→Z</option>
+      <option value="-providerStatus">Estado Z→A</option>
+    </select>
+    <select id="filtroPedidosLimit">
+      <option value="20">20</option>
+      <option value="50">50</option>
+      <option value="100">100</option>
+    </select>
+  </div>
+
+  <div class="tabla-wrapper">
+    <table id="tablaPedidos" class="tabla">
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Pedido</th>
+          <th>Cliente</th>
+          <th>Total</th>
+          <th>Estado</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- Filas dinámicas desde dashboard.js -->
+      </tbody>
+    </table>
+  </div>
+
+  <div class="paginacion">
+    <button id="pedidosPrev">&laquo;</button>
+    <span id="pedidosPaginaLabel">1 / 1</span>
+    <button id="pedidosNext">&raquo;</button>
+  </div>
+</section>
+
+
     <!-- Sección Candados -->
     <section id="candados" class="seccion" style="display:none;">
     <!-- Este contenido lo va a inyectar la función `renderCandados()` -->
@@ -79,6 +143,12 @@
 
   <h3>Retos existentes</h3>
   <div id="listaRetos"></div>
+</section>
+
+<!-- Sección Retos (cliente) -->
+<section id="retosCliente" class="seccion" style="display:none;">
+  <h2>Retos activos</h2>
+  <div id="listaRetosCliente"></div>
 </section>
 
     <!-- Sección Crea la Skin de tu comercio -->

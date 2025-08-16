@@ -14,8 +14,31 @@ const app = express();
 // Render/Proxies
 app.set('trust proxy', 1);
 
-// Middlewares globales
-app.use(cors()); // en prod puedes restringir con { origin: ['https://able73.com'] }
+/* =========================
+   CORS con whitelist (.env: ALLOWED_ORIGINS=...)
+========================= */
+const rawOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+const corsOptions = rawOrigins.length
+  ? {
+      origin: (origin, cb) => {
+        // Permitir apps móviles sin cabecera Origin (fetch nativo)
+        if (!origin) return cb(null, true);
+        if (rawOrigins.includes(origin)) return cb(null, true);
+        return cb(new Error(`Origen no permitido por CORS: ${origin}`));
+      },
+      credentials: true,
+    }
+  : { origin: true, credentials: true };
+
+app.use(cors(corsOptions));
+
+/* =========================
+   Middlewares globales
+========================= */
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -49,7 +72,19 @@ app.get('/', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Rutas API (no sensibles)
+// [NUEVO] Página pública de catálogo de candados
+app.get('/candados', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'candados.html'));
+});
+
+// [NUEVO] Página admin de pedidos (opcional; también servirá /public/admin/pedidos.html directo)
+app.get('/admin/pedidos', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin', 'pedidos.html'));
+});
+
+/* =========================
+   Rutas API
+========================= */
 app.use('/api/auth', require('./api/routes/auth'));
 app.use('/api/discounts', require('./api/routes/discounts'));
 app.use('/api/admin', require('./api/routes/admin'));
@@ -69,19 +104,33 @@ app.use('/api/promo-contratada', require('./api/routes/promoContratada'));
 app.use('/api/projectiles', require('./api/routes/projectiles'));
 app.use('/api/retos', require('./api/routes/challenges'));
 
-// 🔐 Candados: proteger TODO el grupo con verifyToken,
-// dejando públicas solo las rutas bajo /publico/*
+// 🔐 Candados: públicas solo /publico/*
 const { verifyToken } = require('./api/middlewares/authMiddleware');
 app.use(
   '/api/candados',
   (req, res, next) => {
-    if (req.path.startsWith('/publico/')) return next(); // públicas
-    return verifyToken(req, res, next); // resto requieren token
+    if (req.path.startsWith('/publico/')) return next();
+    return verifyToken(req, res, next);
   },
   require('./api/routes/candados')
 );
 
-// === Conexión MongoDB + inicio del servidor ===
+// [NUEVO] Catálogo de productos (candados)
+app.use('/api/products', require('./api/routes/products'));
+
+// [NUEVO] Pedidos (incluye /api/orders/paid para admin)
+app.use('/api/orders', require('./api/routes/orders'));
+
+// [NUEVO] Pagos PayPal (config, create-order, capture-order)
+app.use('/api/paypal', require('./api/routes/paypal'));
+
+// [NUEVO] Admin Orders (endpoints seguros /api/admin/orders, /:id, /export.csv)
+const adminOrdersRoutes = require('./api/routes/adminOrders');
+app.use('/api/admin', adminOrdersRoutes);
+
+/* =========================
+   MongoDB + Start
+========================= */
 const PORT = process.env.PORT || 3000;
 const uriRaw = process.env.MONGO_URI || '';
 const uri = uriRaw.trim();
@@ -90,13 +139,10 @@ const uri = uriRaw.trim();
 console.log('🔧 NODE_ENV:', process.env.NODE_ENV);
 console.log('🔧 PORT:', PORT);
 console.log('🔧 MONGO_URI presente:', !!uri);
-if (uri) {
-  console.log('🔧 MONGO_URI inicio:', uri.slice(0, 40) + '...');
-}
+if (uri) console.log('🔧 MONGO_URI inicio:', uri.slice(0, 40) + '...');
 if (!process.env.JWT_SECRET) {
   console.warn('⚠️  JWT_SECRET no está definida. Algunas rutas podrían fallar.');
 }
-
 if (!uri || (!uri.startsWith('mongodb://') && !uri.startsWith('mongodb+srv://'))) {
   console.error('❌ MONGO_URI inválida. Debe empezar por mongodb:// o mongodb+srv://');
   process.exit(1);
@@ -105,9 +151,18 @@ if (!uri || (!uri.startsWith('mongodb://') && !uri.startsWith('mongodb+srv://'))
 // Conectar usando la URI
 mongoose.connect(uri)
   .then(() => {
+    const conn = mongoose.connection;
     console.log('🟢 Conectado a MongoDB');
+    console.log(`   Host: ${conn.host}`);
+    console.log(`   DB:   ${conn.name}`);
+
     app.listen(PORT, () => {
       console.log(`🚀 Servidor escuchando en puerto ${PORT}`);
+      if (rawOrigins.length) {
+        console.log(`🔐 CORS whitelist: ${rawOrigins.join(' , ')}`);
+      } else {
+        console.log('⚠️  CORS abierto (ALLOWED_ORIGINS vacío). Define ALLOWED_ORIGINS en .env para restringir.');
+      }
     });
   })
   .catch(err => {

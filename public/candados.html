@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Candados - Able73</title>
+
+  <!-- mismos assets que tus otras páginas -->
+  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="icon" href="img/favicon.png" type="image/png">
+  <meta name="description" content="Candados inteligentes Able73: keyless por Bluetooth, carga solar y DC. Compra online.">
+  <meta property="og:title" content="Able73 - Candados">
+  <meta property="og:description" content="Compra candados inteligentes con desbloqueo por Bluetooth y carga solar.">
+  <meta property="og:image" content="img/Logo Able 73.png">
+  <meta property="og:type" content="website">
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+  <script src="lang.js" defer></script>
+
+  <style>
+    /* === hereda tu look & feel === */
+    body{
+      background: url('img/background-city.png') no-repeat center center fixed;
+      background-size: cover;
+      position: relative; font-family:'Roboto',sans-serif;
+      margin:0; padding:0; color:#fff;
+    }
+    .overlay{position:fixed; inset:0; background:rgba(35,31,32,.45); z-index:-1}
+    nav{
+      background:rgba(0,0,0,.4); padding:30px 60px;
+      backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+      border-bottom:1px solid rgba(255,255,255,.05);
+    }
+    .nav-container{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:30px}
+    .navbar-logo{width:180px;height:auto;cursor:pointer}
+    .nav-links{display:flex;list-style:none;gap:30px;flex-wrap:wrap;justify-content:center;padding:0;margin:0}
+    .nav-links a{color:#fff;text-decoration:none;font-weight:700;font-size:1.2rem;text-transform:uppercase}
+    .login-btn{background:#2c9c52;color:#fff;padding:12px 24px;font-size:1rem;font-weight:600;border:none;border-radius:10px;cursor:pointer;transition:background .3s;box-shadow:0 4px 10px rgba(0,0,0,.3)}
+    .login-btn:hover{background:#248646}
+
+    /* === layout producto estilo Amazon === */
+    .content{max-width:1200px;margin:0 auto; padding:48px 20px 80px}
+    .hero{margin-bottom:26px}
+    .subtitle{color:#cfcfcf;margin-top:6px}
+
+    .product-grid{display:grid; grid-template-columns: 1.2fr .8fr; gap:28px}
+    .gallery{display:grid; grid-template-columns: 96px 1fr; gap:16px; align-items:start}
+    .thumbs{display:flex; flex-direction:column; gap:12px}
+    .thumbs img{width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid #2a2a2a;background:#0e0e0e;cursor:pointer;opacity:.85;transition:opacity .2s,transform .2s}
+    .thumbs img:hover{opacity:1; transform: translateY(-2px)}
+    .mainimg{width:100%; aspect-ratio:1/1; object-fit:cover;border-radius:14px;border:1px solid #2a2a2a;background:#0e0e0e}
+
+    .buybox{background:#111;border:1px solid #222;border-radius:16px;padding:20px;position:sticky;top:24px;align-self:start}
+    .price{font-size:1.8rem;font-weight:800;margin:4px 0 12px}
+    .muted{color:#b6b6b6}
+    .qty{width:120px}
+    .btn{padding:12px 16px;border-radius:10px;border:none;background:#2c9c52;color:#fff;font-weight:700;cursor:pointer}
+    .btn.secondary{background:#222;color:#ddd}
+    .features{margin-top:26px;background:#0f1012;border:1px solid #222;border-radius:16px;padding:20px}
+    .features ul{margin:0;padding-left:18px;line-height:1.8}
+
+    /* modal */
+    .modal{position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center; justify-content:center; padding:24px; z-index:999}
+    .modal.active{display:flex}
+    .modal .box{background:#0f1012; border:1px solid #222; border-radius:16px; max-width:760px; width:100%; padding:22px}
+    .row{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+    label{font-size:.9rem;color:#aaa}
+    input,select,textarea{width:100%; padding:10px; border-radius:8px; border:1px solid #333; background:#0b0d0f; color:#eee}
+    .right{display:flex; gap:10px; justify-content:flex-end}
+
+    /* bloque distribuidor */
+    .dist{margin-top:32px;background:#111;border:1px solid #222;border-radius:16px;padding:20px}
+    .dist a{color:#2c9c52;font-weight:700;text-decoration:none}
+
+    @media (max-width: 900px){
+      .product-grid{grid-template-columns: 1fr}
+      .gallery{grid-template-columns: 1fr}
+      .thumbs{flex-direction:row}
+      .thumbs img{width:80px;height:80px}
+      .row{grid-template-columns:1fr}
+    }
+    /* Ajuste de espacio entre el nav y el título */
+  .content {
+    padding-top: 20px; /* antes era más grande */
+  }
+
+  .hero {
+    margin-bottom: 20px; /* reduce separación hacia abajo si quieres */
+  }
+
+  .hero h1 {
+    margin-top: 0; /* elimina margen extra superior */
+  }
+  .modal .box {
+  max-width: 720px;
+  padding: 10px;
+  font-size: 0.8rem;
+}
+
+.modal .row {
+  grid-template-columns: repeat(3, 1fr); /* 3 columnas */
+  gap: 4px;
+}
+
+.modal input {
+  padding: 4px 6px;
+  font-size: 0.75rem;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.7);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 999;
+}
+
+.modal.active {
+  display: flex;
+}
+
+.modal .box {
+  background: #0f1012;
+  border: 1px solid #222;
+  border-radius: 16px;
+  max-width: 760px;
+  width: 100%;
+  max-height: 90vh;     /* ⬅️ límite de alto */
+  overflow-y: auto;     /* ⬅️ permite scroll interno */
+  padding: 22px;
+}
+  </style>
+</head>
+<body>
+  <div class="overlay"></div>
+
+  <!-- NAV -->
+  <nav>
+    <div class="nav-container">
+      <img src="img/Logo Able 73.png" alt="Able73 Logo" class="navbar-logo" onclick="window.location.href='index.html'">
+      <ul class="nav-links">
+        <li><a href="usuarios.html" id="nav-usuarios">Usuarios</a></li>
+        <li><a href="candados.html" id="nav-candados" class="active">Candados</a></li>
+        <li><a href="empresas.html" id="nav-empresas">Empresas</a></li>
+        <li><a href="comercios.html" id="nav-comercios">Comercios</a></li>
+        <li><a href="taxistas.html" id="nav-taxistas">Taxistas</a></li>
+      </ul>
+      <button class="login-btn" onclick="window.location.href='login.html'" id="login-btn">Acceder</button>
+    </div>
+  </nav>
+
+  <!-- CONTENIDO -->
+  <div class="content">
+    <div class="hero">
+      <h1>Candados inteligentes Able73</h1>
+    </div>
+
+    <div class="product-grid">
+      <!-- Galería -->
+      <section class="gallery">
+        <div class="thumbs">
+          <img src="img/candado1.png" alt="Candado 1" data-big="img/candado1.png">
+          <img src="img/candado2.png" alt="Candado 2" data-big="img/candado2.png">
+          <img src="img/candado3.png" alt="Candado 3" data-big="img/candado3.png">
+          <img src="img/candado4.png" alt="Candado 4" data-big="img/candado4.png">
+        </div>
+        <img class="mainimg" id="mainimg" src="img/candado1.png" alt="Candado Able73">
+      </section>
+
+      <!-- Buy Box -->
+      <aside class="buybox">
+        <h2 id="pname">Candado Able73</h2>
+        <div class="price" id="pprice">$—</div>
+
+        <div style="display:flex;gap:12px;align-items:center;margin:10px 0 16px">
+          <label for="qty" class="muted">Cantidad</label>
+          <input class="qty" id="qty" type="number" min="1" value="1">
+        </div>
+
+        <button class="btn" id="buyBtn">Comprar ahora</button>
+        <div id="stocknote" class="muted" style="margin-top:10px"></div>
+
+        <div class="features">
+          <h3 style="margin:0 0 8px">Características</h3>
+          <ul>
+            <li>Keyless con desbloqueo vía Bluetooth</li>
+            <li>Tamaño: 99 × 85 × 25 mm</li>
+            <li>Longitud de cable: 1000 mm</li>
+            <li>Peso: 350 g</li>
+            <li>Carcasa: ABS + PC</li>
+            <li>Base: aleación de aluminio</li>
+            <li>Métodos de carga: DC y panel solar</li>
+            <li>Resistencia al agua: IPX6</li>
+          </ul>
+        </div>
+
+        <div class="dist">
+          <strong>¿Eres distribuidor?</strong><br>
+          Escríbenos para precios por volumen y soporte técnico:
+          <br><a href="mailto:contact@able73.com?subject=Distribuidor%20candados%20Able73">contact@able73.com</a>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- MODAL COMPRA -->
+  <div class="modal" id="buyModal">
+    <div class="box">
+      <h2>Finalizar compra</h2>
+      <p class="muted" id="modalProductName"></p>
+
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>Cantidad</label>
+          <input class="qty" id="m_qty" type="number" min="1" value="1" />
+        </div>
+        <div>
+          <label>Notas (opcional)</label>
+          <input id="notes" type="text" placeholder="Instrucciones de entrega..." />
+        </div>
+      </div>
+
+      <h3 style="margin:16px 0 8px">Dirección de envío</h3>
+      <div class="row">
+        <div><label>Nombre</label><input id="ship_name" required></div>
+        <div><label>Teléfono</label><input id="ship_phone" required></div>
+        <div><label>Dirección</label><input id="ship_addr1" required></div>
+        <div><label>Ciudad</label><input id="ship_city" required></div>
+        <div><label>Provincia/Estado</label><input id="ship_state" required></div>
+        <div><label>CP</label><input id="ship_zip" required></div>
+        <div><label>País</label><input id="ship_country" value="Panamá" required></div>
+      </div>
+
+      <h3 style="margin:16px 0 8px">Facturación</h3>
+      <div class="row">
+        <div><label>Nombre / Empresa</label><input id="bill_name" required></div>
+        <div><label>Identificación fiscal</label><input id="bill_taxid"></div>
+        <div><label>Dirección</label><input id="bill_addr1" required></div>
+        <div><label>Ciudad</label><input id="bill_city" required></div>
+        <div><label>Provincia/Estado</label><input id="bill_state" required></div>
+        <div><label>CP</label><input id="bill_zip" required></div>
+        <div><label>País</label><input id="bill_country" value="Panamá" required></div>
+      </div>
+
+      <div class="right" style="margin-top:16px">
+        <button class="btn" id="payBtn">Pagar con tarjeta / PayPal</button>
+        <button class="btn secondary" id="closeBtn">Cancelar</button>
+      </div>
+      <div id="paypal-placeholder" class="muted" style="margin-top:12px;display:none">
+      Cargando pasarela de pago...
+      </div>
+
+      <div id="paypal-buttons" style="margin-top:12px"></div>
+    </div>
+  </div>
+
+  <script>
+  /* ====== Galería ====== */
+  const mainimg = document.getElementById('mainimg');
+  document.querySelectorAll('.thumbs img').forEach(t=>{
+    t.addEventListener('click',()=>{ mainimg.src = t.dataset.big; });
+  });
+
+  /* ====== Carga de producto ====== */
+  const pname = document.getElementById('pname');
+  const pprice = document.getElementById('pprice');
+  const stocknote = document.getElementById('stocknote');
+  const buyBtn = document.getElementById('buyBtn');
+
+  let selectedProduct = null;
+
+  fetch('/api/products?category=locks')
+    .then(r=>r.json())
+    .then(items=>{
+      if(!items.length){
+        pprice.textContent = 'No disponible';
+        stocknote.textContent = 'Producto temporalmente no disponible.';
+        buyBtn.disabled = true;
+        return;
+      }
+      selectedProduct = items[0];
+      pname.textContent = selectedProduct.name || 'Candado Able73';
+      pprice.textContent = `$${(selectedProduct.price/100).toFixed(2)} USD`;
+      if (selectedProduct.stock <= 0) {
+        stocknote.textContent = 'Sin stock (puedes reservar por email).';
+        buyBtn.disabled = true;
+      }
+    })
+    .catch(err=>{
+      console.error('Error cargando productos:', err);
+      pprice.textContent='—';
+    });
+
+  /* ====== Modal ====== */
+  const buyModal = document.getElementById('buyModal');
+  const modalProductName = document.getElementById('modalProductName');
+  const closeBtn = document.getElementById('closeBtn');
+  const payBtn = document.getElementById('payBtn');
+  const ppContainer = document.getElementById('paypal-buttons');
+  const ppPlaceholder = document.getElementById('paypal-placeholder');
+
+  buyBtn.addEventListener('click', async ()=>{
+    if(!selectedProduct){ alert('Producto no disponible.'); return; }
+    modalProductName.textContent = selectedProduct.name;
+    document.getElementById('m_qty').value = document.getElementById('qty').value || 1;
+    buyModal.classList.add('active');
+    await ensurePayPalButtons(); // <- carga el SDK y renderiza los botones
+  });
+
+  closeBtn.addEventListener('click', ()=> buyModal.classList.remove('active'));
+
+  // Al pulsar "Pagar…" hacemos scroll y nos aseguramos de que los botones estén listos
+  payBtn.addEventListener('click', async ()=>{
+    const ok = await ensurePayPalButtons();
+    if (ok) ppContainer.scrollIntoView({behavior:'smooth', block:'center'});
+  });
+
+  /* ====== PayPal ====== */
+  let paypalSDKLoaded = false;
+  let paypalButtonsRendered = false;
+
+  async function ensurePayPalButtons(){
+    if (paypalButtonsRendered) return true;
+    try {
+      // muestra placeholder mientras carga
+      ppPlaceholder.style.display = 'block';
+
+      // 1) trae clientId desde el backend
+      const cfgRes = await fetch('/api/paypal/config');
+      const cfg = await cfgRes.json();
+      if (!cfgRes.ok || !cfg?.clientId) {
+        throw new Error('No clientId desde /api/paypal/config');
+      }
+
+      // 2) carga SDK si hace falta
+      if (!paypalSDKLoaded) {
+        await loadPayPalSDK(cfg.clientId, cfg.currency || 'USD');
+        paypalSDKLoaded = true;
+      }
+
+      // 3) renderiza botones
+      if (!paypalButtonsRendered) {
+        await renderButtons();
+        paypalButtonsRendered = true;
+      }
+
+      // oculta placeholder
+      ppPlaceholder.style.display = 'none';
+      return true;
+    } catch (e) {
+      console.error('PayPal init error:', e);
+      ppPlaceholder.textContent = 'No se pudo cargar la pasarela de pago. Revisa la consola.';
+      return false;
+    }
+  }
+
+  function loadPayPalSDK(clientId, currency){
+    return new Promise((resolve, reject)=>{
+      if (document.getElementById('pp-sdk')) return resolve(); // ya cargado
+      const s = document.createElement('script');
+      s.id = 'pp-sdk';
+      s.src = `https://www.paypal.com/sdk/js?client-id=${clientId}&currency=${currency}&disable-funding=paylater,venmo`;
+      s.onload = ()=> resolve();
+      s.onerror = ()=> reject(new Error('Fallo cargando el SDK de PayPal'));
+      document.body.appendChild(s);
+    });
+  }
+
+  function payloadFromForm(){
+    const val = id => document.getElementById(id).value.trim();
+    return {
+      productId: selectedProduct._id,
+      qty: parseInt(document.getElementById('m_qty').value || '1'),
+      notes: val('notes'),
+      shipping: {
+        name: val('ship_name'), phone: val('ship_phone'),
+        address1: val('ship_addr1'), city: val('ship_city'),
+        state: val('ship_state'), zip: val('ship_zip'), country: val('ship_country')
+      },
+      billing: {
+        name: val('bill_name'), taxId: val('bill_taxid'),
+        address1: val('bill_addr1'), city: val('bill_city'),
+        state: val('bill_state'), zip: val('bill_zip'), country: val('bill_country')
+      }
+    };
+  }
+
+  function renderButtons(){
+    return new Promise((resolve, reject)=>{
+      if (!window.paypal || !window.paypal.Buttons) {
+        return reject(new Error('SDK no disponible (window.paypal vacío)'));
+      }
+      window.paypal.Buttons({
+        style: { shape:"rect", layout:"vertical" },
+        createOrder: async () => {
+          const body = payloadFromForm();
+          const res = await fetch('/api/paypal/create-order', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify(body)
+          });
+          const data = await res.json();
+          if (!res.ok || !data?.id) {
+            console.error('Create-order backend error:', data);
+            throw new Error('Error creando order');
+          }
+          return data.id;
+        },
+        onApprove: async (data) => {
+          const res = await fetch('/api/paypal/capture-order', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ orderId: data.orderID })
+          });
+          const out = await res.json();
+          if(out.status==='COMPLETED'){
+            alert('✅ Pago realizado. ¡Gracias!');
+            buyModal.classList.remove('active');
+          } else {
+            alert('Pago no completado. Intenta de nuevo.');
+          }
+        },
+        onError: (err) => {
+          console.error('PayPal Buttons error:', err);
+          alert('Error en el pago.');
+        }
+      }).render('#paypal-buttons')
+        .then(()=> resolve())
+        .catch(reject);
+    });
+  }
+
+  </script>
+</body>
+</html>
