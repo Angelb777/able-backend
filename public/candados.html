@@ -131,6 +131,79 @@
   overflow-y: auto;     /* ⬅️ permite scroll interno */
   padding: 22px;
 }
+/* === Paridad móvil con comercios + fixes de layout producto === */
+@media (max-width: 768px) {
+  /* Nav igual que en comercios */
+  .nav-container { 
+    flex-direction: column; 
+    gap: 20px; 
+  }
+  .nav-links { 
+    flex-direction: column; 
+    gap: 20px; 
+    align-items: center; 
+  }
+  .nav-links a { 
+    font-size: 1rem; 
+  }
+  .login-btn { 
+    font-size: 1rem; 
+    padding: 10px 20px; 
+  }
+
+  /* Candados: grid a una columna y sin sticky para evitar solapes */
+  .content { 
+    padding: 24px 16px 60px; 
+  }
+  .product-grid { 
+    grid-template-columns: 1fr; 
+    gap: 20px; 
+  }
+  .buybox { 
+    position: static;   /* antes: sticky */
+    top: auto; 
+    margin-top: 8px; 
+  }
+
+  /* Galería: thumbs en fila con scroll horizontal */
+  .gallery { 
+    grid-template-columns: 1fr; 
+    gap: 12px; 
+  }
+  .thumbs { 
+    flex-direction: row; 
+    gap: 10px; 
+    overflow-x: auto; 
+    -webkit-overflow-scrolling: touch; 
+  }
+  .thumbs img { 
+    width: 80px; 
+    height: 80px; 
+    flex: 0 0 auto; 
+  }
+  .mainimg { 
+    width: 100%; 
+    height: auto; 
+    aspect-ratio: auto; 
+  }
+
+  /* Formularios del modal un poco más cómodos */
+  .modal .row { 
+    grid-template-columns: 1fr; 
+    gap: 8px; 
+  }
+  .modal .box { 
+    max-width: 100%; 
+    padding: 16px; 
+    font-size: 0.9rem; 
+  }
+
+  /* Tipografía */
+  .hero h1 { 
+    font-size: 1.6rem; 
+    margin: 0; 
+  }
+}
   </style>
 </head>
 <body>
