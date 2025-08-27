@@ -1,14 +1,24 @@
+// api/routes/rewards.js
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
 const path = require("path");
+const fs = require("fs");
+const mongoose = require("mongoose");
+
 const Reward = require("../models/Reward");
 const User = require("../models/User");
 
-// Configuración de Multer para subir imágenes localmente
+// --- Asegurar carpeta de uploads ---
+const UPLOAD_DIR = path.join(process.cwd(), "uploads", "rewards");
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
+
+// --- Multer: subir imágenes localmente ---
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, "uploads/rewards");
+    cb(null, UPLOAD_DIR);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
@@ -17,7 +27,10 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Crear nuevo descuento o premio
+// =========================
+//     CREATE / READ
+// =========================
+
 // Crear nuevo descuento o premio
 router.post("/", upload.array("imagenes", 3), async (req, res) => {
   try {
@@ -29,10 +42,14 @@ router.post("/", upload.array("imagenes", 3), async (req, res) => {
       porcentaje,
       cantidadEuros,
       stepcoins,
-      comercioId
+      comercioId,
     } = req.body;
 
-    const imagenes = req.files.map((file) => file.path);
+    const imagenes = (req.files || []).map((file) => {
+      // devolver ruta pública relativa
+      const rel = path.relative(process.cwd(), file.path).replace(/\\/g, "/");
+      return `/${rel}`;
+    });
 
     const nuevo = new Reward({
       tipo,
@@ -45,7 +62,7 @@ router.post("/", upload.array("imagenes", 3), async (req, res) => {
       imagenes,
       comercioId: comercioId || null,
       validado: false,
-      creadoPorAdmin: !comercioId // ✅ si no hay comercioId => creado por admin
+      creadoPorAdmin: !comercioId, // si no hay comercio => creado por admin
     });
 
     await nuevo.save();
@@ -57,14 +74,12 @@ router.post("/", upload.array("imagenes", 3), async (req, res) => {
 });
 
 // Obtener rewards validados y ordenados por prioridad
-// Obtener rewards validados y ordenados por prioridad
 router.get("/validados", async (req, res) => {
   try {
-    const rewards = await Reward.find({ validado: true });
+    const rewards = await Reward.find({ validado: true }).lean();
 
-    const conPrioridad = rewards.map(r => {
+    const conPrioridad = rewards.map((r) => {
       let prioridad = 0;
-
       if (r.creadoPorAdmin) prioridad = 100;
       else if (r.destacado) {
         if (r.nivelDestacado === 1) prioridad = 90;
@@ -84,8 +99,8 @@ router.get("/validados", async (req, res) => {
         stepcoins: r.stepcoins,
         imagenes: r.imagenes,
         prioridad,
-        fechaCreacion: r.fechaCreacion || new Date(0), // fallback
-        creadoPorAdmin: r.creadoPorAdmin
+        fechaCreacion: r.fechaCreacion || new Date(0),
+        creadoPorAdmin: r.creadoPorAdmin,
       };
     });
 
@@ -101,10 +116,35 @@ router.get("/validados", async (req, res) => {
   }
 });
 
-// Marcar un reward como destacado (nivel 1, 2, 3)
+// Obtener todos los rewards validados (listado simple para clientes)
+router.get("/", async (req, res) => {
+  try {
+    const rewards = await Reward.find({ validado: true }).sort({ fechaCreacion: -1 });
+    res.json(rewards);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error al obtener rewards" });
+  }
+});
+
+// Obtener rewards de un comercio específico
+router.get("/mis/:comercioId", async (req, res) => {
+  try {
+    const rewards = await Reward.find({ comercioId: req.params.comercioId });
+    res.json(rewards);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error al obtener tus rewards" });
+  }
+});
+
+// =========================
+//      DESTACAR / CRUD
+// =========================
+
+// Marcar un reward como destacado (nivel 1, 2, 3) – versión A
 router.put("/destacar/:id", async (req, res) => {
   const { nivel } = req.body; // 1 = top5, 2 = top10, 3 = top20
-
   try {
     const reward = await Reward.findById(req.params.id);
     if (!reward) return res.status(404).json({ error: "Reward no encontrado" });
@@ -120,32 +160,31 @@ router.put("/destacar/:id", async (req, res) => {
   }
 });
 
-// Obtener todos los rewards validados (para clientes)
-router.get("/", async (req, res) => {
+// Marcar un reward como destacado (nivel 1, 2, 3) – versión B (compat)
+router.patch("/:id/destacar", async (req, res) => {
+  const { nivel } = req.body; // 1, 2, 3
   try {
-    const rewards = await Reward.find({ validado: true }).sort({ fechaCreacion: -1 });
-    res.json(rewards);
+    const reward = await Reward.findById(req.params.id);
+    if (!reward) return res.status(404).json({ error: "Reward no encontrado" });
+
+    reward.destacado = true;
+    reward.nivelDestacado = nivel;
+    await reward.save();
+
+    res.json({ message: "✅ Reward destacado correctamente" });
   } catch (err) {
-    res.status(500).json({ error: "Error al obtener rewards" });
+    console.error(err);
+    res.status(500).json({ error: "Error al destacar reward" });
   }
 });
 
-// Obtener rewards de un comercio específico
-router.get("/mis/:comercioId", async (req, res) => {
-  try {
-    const rewards = await Reward.find({ comercioId: req.params.comercioId });
-    res.json(rewards);
-  } catch (err) {
-    res.status(500).json({ error: "Error al obtener tus rewards" });
-  }
-});
-
-// Validar un reward (solo admin)
+// Validar (publicar) un reward (solo admin)
 router.patch("/:id/validar", async (req, res) => {
   try {
     await Reward.findByIdAndUpdate(req.params.id, { validado: true });
     res.json({ message: "✅ Validado correctamente" });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Error al validar reward" });
   }
 });
@@ -159,11 +198,16 @@ router.delete("/:id", async (req, res) => {
     await Reward.findByIdAndDelete(req.params.id);
     res.json({ message: "Reward eliminado" });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Error al eliminar" });
   }
 });
 
-// Comprar un reward (cliente)
+// =========================
+//       COMPRAS (USER)
+// =========================
+
+// Comprar un reward (cliente) -> descuenta stepcoins y añade a compradores {userId, validado:false}
 router.post("/:id/comprar", async (req, res) => {
   console.log("📥 Body recibido en el backend:", req.body);
   const { userId } = req.body;
@@ -174,6 +218,13 @@ router.post("/:id/comprar", async (req, res) => {
   if (!userId || !rewardId) {
     console.warn("❌ Faltan datos obligatorios");
     return res.status(400).json({ error: "Faltan datos obligatorios (userId o rewardId)" });
+  }
+
+  if (!mongoose.Types.ObjectId.isValid(rewardId)) {
+    return res.status(400).json({ error: "RewardId inválido" });
+  }
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    return res.status(400).json({ error: "UserId inválido" });
   }
 
   try {
@@ -190,16 +241,24 @@ router.post("/:id/comprar", async (req, res) => {
       return res.status(404).json({ error: "Usuario no encontrado" });
     }
 
-    if (user.stepcoins < reward.stepcoins) {
+    // Evita duplicados pendientes del mismo reward
+    const yaPendiente = (reward.compradores || []).some(
+      (c) => String(c.userId) === String(userId) && c.validado === false
+    );
+    if (yaPendiente) {
+      return res.status(400).json({ error: "Ya tienes este descuento pendiente de validar" });
+    }
+
+    if ((user.stepcoins || 0) < (reward.stepcoins || 0)) {
       console.warn("❌ Stepcoins insuficientes:", user.stepcoins, "<", reward.stepcoins);
       return res.status(400).json({ error: "No tienes suficientes stepcoins" });
     }
 
-    // Descontar y guardar
-    user.stepcoins -= reward.stepcoins;
+    // Descontar y guardar usuario
+    user.stepcoins = (user.stepcoins || 0) - (reward.stepcoins || 0);
     await user.save();
 
-    // Guardar la compra
+    // Guardar la compra en el reward
     if (!reward.compradores) reward.compradores = [];
     reward.compradores.push({ userId, validado: false });
     await reward.save();
@@ -212,35 +271,87 @@ router.post("/:id/comprar", async (req, res) => {
   }
 });
 
-// Obtener rewards pendientes de validación (solo admin)
-router.get("/pendientes", async (req, res) => {
+// >>> NUEVO: Mis compras pendientes de validar (para el pop-up del cliente)
+// GET /api/rewards/mis-compras?userId=...
+router.get("/mis-compras", async (req, res) => {
   try {
-    const pendientes = await Reward.find({ validado: false }).sort({ createdAt: -1 });
-    res.json(pendientes);
+    const userId = String(req.query.userId || "").trim();
+    if (!userId) return res.status(400).json({ error: "Falta userId" });
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ error: "UserId inválido" });
+    }
+
+    // Rewards donde el usuario aparece en compradores con validado:false
+    const rewards = await Reward.find({
+      "compradores.userId": userId,
+      "compradores.validado": false,
+    })
+      .select(
+        "tipo titulo descripcion direccion porcentaje cantidadEuros stepcoins imagenes compradores fechaCreacion"
+      )
+      .lean();
+
+    // Normalizar: devolver solo la "compra" del user y campos útiles para el front
+    const out = [];
+    for (const r of rewards) {
+      const compra = (r.compradores || []).find(
+        (c) => String(c.userId) === userId && c.validado === false
+      );
+      if (!compra) continue;
+
+      out.push({
+        rewardId: r._id,
+        purchaseId: compra._id, // útil si luego validáis por purchaseId
+        validado: !!compra.validado, // false aquí por filtro
+        tipo: r.tipo,
+        titulo: r.titulo,
+        descripcion: r.descripcion,
+        direccion: r.direccion,
+        porcentaje: r.porcentaje,
+        cantidadEuros: r.cantidadEuros,
+        stepcoins: r.stepcoins,
+        imagenes: r.imagenes || [],
+        createdAt: r.fechaCreacion || new Date(0),
+      });
+    }
+
+    // Orden: más recientes primero
+    out.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    return res.json(out);
   } catch (err) {
-    res.status(500).json({ error: "Error al obtener promociones pendientes" });
+    console.error("mis-compras error:", err);
+    return res.status(500).json({ error: "Error al obtener tus compras" });
   }
 });
+
+// =========================
+//     VALIDACIONES
+// =========================
 
 // Ver compradores (para comercio)
 router.get("/:id/compradores", async (req, res) => {
   try {
-    const reward = await Reward.findById(req.params.id).populate("compradores.userId", "nombre email");
+    const reward = await Reward.findById(req.params.id).populate(
+      "compradores.userId",
+      "nombre email"
+    );
     if (!reward) return res.status(404).json({ error: "Reward no encontrado" });
 
     res.json(reward.compradores || []);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Error al obtener compradores" });
   }
 });
 
-// Validar compra (por el comercio)
+// Validar compra (por el comercio) usando userId
 router.patch("/:id/validar-compra/:userId", async (req, res) => {
   try {
     const reward = await Reward.findById(req.params.id);
     if (!reward || !reward.compradores) return res.status(404).json({ error: "No encontrado" });
 
-    const comprador = reward.compradores.find(c => c.userId.toString() === req.params.userId);
+    const comprador = reward.compradores.find((c) => c.userId.toString() === req.params.userId);
     if (comprador) {
       comprador.validado = true;
       await reward.save();
@@ -249,43 +360,29 @@ router.patch("/:id/validar-compra/:userId", async (req, res) => {
       res.status(404).json({ error: "Comprador no encontrado" });
     }
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Error al validar compra" });
   }
 });
 
-// /api/rewards/compras/:comercioId
-router.get("/compras/:comercioId", async (req, res) => {
-  try {
-    const rewards = await Reward.find({ comercioId: req.params.comercioId })
-      .populate("compradores.userId", "nombre email")
-      .select("titulo compradores");
-
-    const compradores = rewards.flatMap(reward =>
-      reward.compradores
-        .filter(c => !c.validado)
-        .map(c => ({
-          rewardId: reward._id,
-          rewardTitulo: reward.titulo,
-          compradorId: c.userId._id,
-          compradorNombre: c.userId.nombre,
-          compradorEmail: c.userId.email
-        }))
-    );
-
-    res.json(compradores);
-  } catch (err) {
-    console.error("❌ Error al cargar compradores:", err);
-    res.status(500).json({ error: "Error interno" });
-  }
-});
-
-// /api/rewards/validar-compra
+// /api/rewards/validar-compra (opción POST con body { rewardId, compradorId })
 router.post("/validar-compra", async (req, res) => {
   const { rewardId, compradorId } = req.body;
 
   try {
+    if (!mongoose.Types.ObjectId.isValid(rewardId)) {
+      return res.status(400).json({ error: "RewardId inválido" });
+    }
+    if (!mongoose.Types.ObjectId.isValid(compradorId)) {
+      return res.status(400).json({ error: "compradorId inválido" });
+    }
+
     const reward = await Reward.findById(rewardId);
-    const comprador = reward.compradores.find(c => c.userId.toString() === compradorId);
+    if (!reward) return res.status(404).json({ error: "Reward no encontrado" });
+
+    const comprador = (reward.compradores || []).find(
+      (c) => String(c.userId) === String(compradorId)
+    );
     if (!comprador) return res.status(404).json({ error: "Comprador no encontrado" });
 
     comprador.validado = true;
@@ -298,23 +395,63 @@ router.post("/validar-compra", async (req, res) => {
   }
 });
 
-// Obtener todas las compras si es admin
-// Obtener todas las compras si es admin
+// =========================
+//    VISTAS AUXILIARES
+// =========================
+
+// Obtener rewards pendientes de validación (admin / panel)
+router.get("/pendientes", async (req, res) => {
+  try {
+    const pendientes = await Reward.find({ validado: false }).sort({ fechaCreacion: -1 });
+    res.json(pendientes);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error al obtener promociones pendientes" });
+  }
+});
+
+// Compras agrupadas por comercio (pendientes)
+router.get("/compras/:comercioId", async (req, res) => {
+  try {
+    const rewards = await Reward.find({ comercioId: req.params.comercioId })
+      .populate("compradores.userId", "nombre email")
+      .select("titulo compradores");
+
+    const compradores = rewards.flatMap((reward) =>
+      (reward.compradores || [])
+        .filter((c) => !c.validado && c.userId)
+        .map((c) => ({
+          rewardId: reward._id,
+          rewardTitulo: reward.titulo,
+          compradorId: c.userId._id,
+          compradorNombre: c.userId.nombre,
+          compradorEmail: c.userId.email,
+        }))
+    );
+
+    res.json(compradores);
+  } catch (err) {
+    console.error("❌ Error al cargar compradores:", err);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// Todas las compras (pendientes) – modo admin
 router.get("/compras", async (req, res) => {
   try {
     const rewards = await Reward.find()
       .populate("compradores.userId", "nombre email")
       .select("titulo compradores");
 
-    const compradores = rewards.flatMap(reward =>
-      reward.compradores
-        .filter(c => !c.validado && c.userId) // solo los no validados y con user válido
-        .map(c => ({
+    const compradores = rewards.flatMap((reward) =>
+      (reward.compradores || [])
+        .filter((c) => !c.validado && c.userId)
+        .map((c) => ({
           rewardId: reward._id,
           rewardTitulo: reward.titulo,
           compradorId: c.userId._id,
           compradorNombre: c.userId.nombre,
-          compradorEmail: c.userId.email
+          compradorEmail: c.userId.email,
         }))
     );
 
@@ -322,22 +459,6 @@ router.get("/compras", async (req, res) => {
   } catch (err) {
     console.error("❌ Error al obtener compras (admin):", err);
     res.status(500).json({ error: "Error al obtener compras" });
-  }
-});
-
-router.patch("/:id/destacar", async (req, res) => {
-  const { nivel } = req.body; // 1, 2, 3
-  try {
-    const reward = await Reward.findById(req.params.id);
-    if (!reward) return res.status(404).json({ error: "Reward no encontrado" });
-
-    reward.destacado = true;
-    reward.nivelDestacado = nivel;
-    await reward.save();
-
-    res.json({ message: "✅ Reward destacado correctamente" });
-  } catch (err) {
-    res.status(500).json({ error: "Error al destacar reward" });
   }
 });
 
