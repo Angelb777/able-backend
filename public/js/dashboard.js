@@ -3176,53 +3176,54 @@ async function renderMisSkinsCliente() {
 
   contenedor.innerHTML = "<p>Cargando tus skins...</p>";
 
-  let misSkins = []; // ✅ Para poder usar fuera del try
+  let misSkins = [];
 
   try {
-    // 1. Obtener usuario
+    // 1) Trae el usuario con skins pobladas
     const res = await fetch(`/api/users/${user._id}`);
     const data = await res.json();
 
-    if (!data.skinsCompradas || !data.skinsCompradas.length) {
+    const compradas = Array.isArray(data.skinsCompradas) ? data.skinsCompradas : [];
+
+    if (compradas.length === 0) {
       contenedor.innerHTML = "<p>No has comprado ninguna skin todavía.</p>";
       return;
     }
 
-    // 2. Obtener todas las skins creadas por el admin
-    const skinsRes = await fetch("/api/skins");
-    const todasLasSkins = await skinsRes.json();
-
-    // 3. Filtrar las que el usuario ha comprado
-    misSkins = todasLasSkins.filter(skin =>
-      data.skinsCompradas.includes(skin._id)
-    );
-
-    if (!misSkins.length) {
-      contenedor.innerHTML = "<p>No has comprado ninguna skin todavía.</p>";
-      return;
+    // 2) Si ya vienen pobladas, úsalo directo. Si vinieran como IDs, hacemos fallback.
+    if (typeof compradas[0] === "object" && compradas[0] !== null && "_id" in compradas[0]) {
+      // ✅ pobladas
+      misSkins = compradas;
+    } else {
+      // 🔁 fallback (por si algún día no hay populate)
+      const ids = new Set(compradas.map(String));
+      const skinsRes = await fetch("/api/skins");
+      const todas = await skinsRes.json();
+      misSkins = todas.filter(s => ids.has(String(s._id)));
     }
 
-    // ✅ 4. Aplicar mismo formato tipo carta
+    // 3) Render
     contenedor.innerHTML = misSkins.map(skin => `
       <div class="tarjeta-skin">
         <img src="${skin.portada}" alt="${skin.titulo}" />
         <h4>${skin.titulo}</h4>
-        <p>${skin.descripcion}</p>
+        <p>${skin.descripcion ?? ""}</p>
       </div>
     `).join("");
 
   } catch (err) {
     console.error("❌ Error al cargar tus skins:", err);
     contenedor.innerHTML = "<p>❌ Error al cargar tus skins</p>";
+    return;
   }
 
-  // ✅ 5. Guardar en localStorage el user actualizado con skins completas
+  // 4) Guarda en localStorage (evita sombrear la variable global 'user')
   const userRaw = localStorage.getItem("user");
   if (userRaw) {
     try {
-      const user = JSON.parse(userRaw);
-      user.skinsCompradas = misSkins; // ahora sí contiene imagenParado
-      localStorage.setItem("user", JSON.stringify(user));
+      const userLS = JSON.parse(userRaw);
+      userLS.skinsCompradas = misSkins; // ahora son objetos completos
+      localStorage.setItem("user", JSON.stringify(userLS));
     } catch (e) {
       console.error("❌ Error al guardar skins en localStorage:", e);
     }

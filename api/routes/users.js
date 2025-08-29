@@ -90,31 +90,58 @@ const Skin = require('../models/Skin'); // ✅ necesario para .populate()
 
 // 🆕 Obtener la URL de la skin seleccionada del usuario
 // 🧪 DEBUG: ver datos crudos de skinSeleccionada
+// 🆕 Obtener la skin activa del usuario con fallback aleatorio que persiste y se añade a Mis Skins
 router.get('/:id/skin', async (req, res) => {
   try {
     const userId = req.params.id;
 
+    // Trae user + skinSeleccionada
     const user = await User.findById(userId).populate('skinSeleccionada');
-    if (!user) {
-      return res.status(404).json({ error: 'Usuario no encontrado' });
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    // 1) Si ya tiene seleccionada con imagen, úsala
+    if (user.skinSeleccionada) {
+      const parada0 = user.skinSeleccionada?.scripts?.parado?.[0];
+      const portada = user.skinSeleccionada?.portada;
+      const skinUrl = parada0 || portada;
+      if (skinUrl) {
+        return res.json({
+          skinUrl,
+          skinId: user.skinSeleccionada._id,
+          isFallback: false
+        });
+      }
+      // si no tiene imagen utilizable, seguimos al fallback
     }
 
-    console.log('🧪 User.skinSeleccionada:', user.skinSeleccionada);
+    // 2) Fallback: una skin validada aleatoria (si no usas 'validada', cambia el $match a {})
+    const fallbackAgg = await Skin.aggregate([
+      { $match: { validada: true } },
+      { $sample: { size: 1 } }
+    ]);
 
-    if (!user.skinSeleccionada) {
-      return res.status(404).json({ error: 'El usuario no tiene skinSeleccionada' });
+    const fallback = fallbackAgg[0];
+    if (!fallback) {
+      return res.status(404).json({ error: 'No hay skins disponibles para fallback' });
     }
 
-    if (
-      !user.skinSeleccionada.scripts ||
-      !Array.isArray(user.skinSeleccionada.scripts.parado) ||
-      user.skinSeleccionada.scripts.parado.length === 0
-    ) {
-      return res.status(404).json({ error: 'La skin no tiene imagen parada' });
+    // 3) Persistir como seleccionada
+    user.skinSeleccionada = fallback._id;
+
+    // 4) Añadir a 'Mis Skins' sin duplicar
+    if (!user.skinsCompradas?.some(id => id.equals(fallback._id))) {
+      user.skinsCompradas.push(fallback._id); // o addToSet en un update si prefieres atómico
     }
 
-    const skinUrl = user.skinSeleccionada.scripts.parado[0];
-    res.json({ skinUrl });
+    await user.save();
+
+    const skinUrl = (fallback.scripts?.parado?.[0]) || fallback.portada;
+
+    return res.json({
+      skinUrl,
+      skinId: fallback._id,
+      isFallback: true  // útil para que el front sepa que vino por asignación automática
+    });
 
   } catch (err) {
     console.error('❌ Error al obtener skin del usuario:', err);
