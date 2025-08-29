@@ -373,4 +373,25 @@ router.patch("/:id/destacar", async (req, res) => {
   }
 });
 
+// Pendientes de validación (para admin): rewards aún no publicados
+router.get("/pendientes", async (req, res) => {
+  try {
+    const rewards = await Reward.find({
+      validado: false,
+      $or: [
+        { creadoPorAdmin: false },
+        { creadoPorAdmin: { $exists: false } }
+      ]
+    })
+      .select("_id tipo titulo descripcion direccion porcentaje cantidadEuros stepcoins imagenes comercioId fechaCreacion creadoPorAdmin")
+      .sort({ fechaCreacion: -1 })
+      .lean();
+
+    res.json(rewards);
+  } catch (err) {
+    console.error("❌ Error al obtener rewards pendientes:", err);
+    res.status(500).json({ error: "Error al obtener pendientes" });
+  }
+});
+
 module.exports = router;
