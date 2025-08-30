@@ -42,27 +42,37 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Asegurar carpetas de subidas
-const uploadsDir = path.join(__dirname, 'uploads');
-const cardsDir = path.join(uploadsDir, 'cards');
-try {
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir);
-    console.log("📁 Carpeta 'uploads' creada");
+/* =========================
+   Uploads: base única (local vs prod)
+   - Local:  <repo>/uploads
+   - Producción (Render): /data/uploads   (define UPLOAD_BASE_DIR=/data/uploads y usa Persistent Disk)
+========================= */
+const UPLOAD_BASE_DIR =
+  process.env.UPLOAD_BASE_DIR || path.join(__dirname, 'uploads');
+
+// Asegura carpetas que usas en el proyecto
+const ensureDirs = [
+  UPLOAD_BASE_DIR,
+  path.join(UPLOAD_BASE_DIR, 'skins'),
+  path.join(UPLOAD_BASE_DIR, 'cards'),
+];
+for (const d of ensureDirs) {
+  try {
+    if (!fs.existsSync(d)) {
+      fs.mkdirSync(d, { recursive: true });
+      console.log('📁 Carpeta creada:', d);
+    }
+  } catch (e) {
+    console.warn('⚠️  No se pudo crear', d, e.message);
   }
-  if (!fs.existsSync(cardsDir)) {
-    fs.mkdirSync(cardsDir, { recursive: true });
-    console.log("📁 Carpeta 'uploads/cards' creada");
-  }
-} catch (e) {
-  console.warn('⚠️  No se pudo crear alguna carpeta de uploads:', e.message);
 }
 
 // 👉 Servir archivos estáticos desde 'public' (HTML, CSS, JS, imágenes)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 👉 Servir archivos subidos desde '/uploads'
-app.use('/uploads', express.static(uploadsDir));
+// 👉 Servir archivos subidos (mismo path en local y prod)
+//    - En prod, si UPLOAD_BASE_DIR=/data/uploads, esto sirve /uploads/* desde /data/uploads/*
+app.use('/uploads', express.static(UPLOAD_BASE_DIR, { fallthrough: false }));
 
 // 🔎 Ruta de salud
 app.get('/health', (_req, res) => res.json({ ok: true }));
@@ -163,6 +173,7 @@ mongoose.connect(uri)
       } else {
         console.log('⚠️  CORS abierto (ALLOWED_ORIGINS vacío). Define ALLOWED_ORIGINS en .env para restringir.');
       }
+      console.log('📂 UPLOAD_BASE_DIR:', UPLOAD_BASE_DIR);
     });
   })
   .catch(err => {
