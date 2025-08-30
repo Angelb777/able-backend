@@ -1441,6 +1441,14 @@ async function cargarSkins() {
   const contenedor = document.getElementById("listaSkins");
   contenedor.innerHTML = "<p>Cargando skins...</p>";
 
+  // ✅ Helper para asegurar que siempre se use la ruta correcta
+  const toSrc = (u) => {
+    if (!u) return "/img/placeholder.png"; // imagen por defecto
+    if (u.startsWith("http")) return u;     // URLs absolutas externas
+    if (u.startsWith("/uploads/")) return u; // caso normal en Mongo
+    return `/uploads/skins/${u}`;           // fallback si solo guardaste el nombre
+  };
+
   try {
     const res = await fetch("/api/skins");
     const skins = await res.json();
@@ -1454,7 +1462,7 @@ async function cargarSkins() {
       <div class="reward-card">
         <h4>${s.titulo}</h4>
         <p>${s.descripcion}</p>
-        <img src="${s.portada}" alt="Portada" style="width: 150px; display:block; margin:5px 0;">
+        <img src="${toSrc(s.portada)}" alt="Portada" style="width: 150px; display:block; margin:5px 0;">
         <p>🎯 Precio: ${s.precio} Stepcoins</p>
         <p><strong>Scripts:</strong></p>
         <ul>
@@ -1473,6 +1481,7 @@ async function cargarSkins() {
     contenedor.innerHTML = "<p>❌ Error al cargar las skins</p>";
   }
 }
+
 
 async function eliminarSkin(id) {
   if (!confirm("¿Estás seguro de que quieres eliminar esta skin?")) return;
