@@ -107,63 +107,141 @@ router.post("/comprar-skin", async (req, res) => {
 });
 
 router.post("/ruleta", async (req, res) => {
-  const { userId, resultado } = req.body;
-
-  if (!userId || !resultado) {
-    return res.status(400).json({ error: "Faltan datos" });
-  }
-
   try {
+    const { userId, resultado } = req.body;
+    if (!userId || !resultado) {
+      return res.status(400).json({ error: "Faltan datos" });
+    }
+
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
 
-    if (typeof user.stepcoins !== "number" || user.stepcoins < 500) {
+    const SPIN_COST = 500;
+    const MIN_BALANCE_BIG_LOSS = 30000;
+
+    // Normaliza etiquetas que pueden venir del cliente
+    const normalize = (s) => {
+      const r = String(s || "").trim().toLowerCase();
+      if (r === "tira de nuevo" || r === "500 stepcoins para volver a tirar") return "Tirar otra vez";
+      if (r === "carta aleatoria" || r === "armas") return "Carta aleatoria";
+      if (r === "gana 20000 stepcoins" || r === "20000 stepcoins") return "Gana 20000 Stepcoins";
+      if (r === "pierde 20000 stepcoins") return "Pierde 20000 Stepcoins";
+      if (r === "juego de cultura") return "Juego de Cultura";
+      if (r === "juego nave espacial") return "Juego Nave Espacial";
+      if (r === "nada") return "Nada";
+      // Cualquier cosa desconocida la tratamos como "Nada"
+      return "Nada";
+    };
+
+    const saldoInicial = typeof user.stepcoins === "number" ? user.stepcoins : 0;
+    if (saldoInicial < SPIN_COST) {
       return res.status(400).json({ error: "Saldo insuficiente" });
     }
 
-    user.stepcoins -= 500;
+    let applied = normalize(resultado);
+
+    // Regla anti-pérdida: si no llega a 30k, convertir a "Nada"
+    if (applied === "Pierde 20000 Stepcoins" && saldoInicial < MIN_BALANCE_BIG_LOSS) {
+      applied = "Nada";
+    }
+
+    // Caso especial: si es Carta y NO hay cartas disponibles, no cobramos y devolvemos yaTienesTodas
+    if (applied === "Carta aleatoria") {
+      const todas = await Card.find().select("_id titulo imagenPortada");
+      const tiene = new Set((user.cartas || []).map((id) => String(id)));
+      const candidatas = todas.filter((c) => !tiene.has(String(c._id)));
+
+      if (candidatas.length === 0) {
+        return res.json({
+          resultado: "Carta aleatoria",
+          yaTienesTodas: true,
+          nuevosStepcoins: saldoInicial, // no cobramos
+        });
+      }
+    }
+
+    // 1) Cobrar tirada
+    user.stepcoins = saldoInicial - SPIN_COST;
+
     let nuevaCarta = null;
 
-    if (resultado === "20000 Stepcoins") {
-      user.stepcoins += 20000;
-    } else if (resultado === "500 Stepcoins para volver a tirar") {
-      user.stepcoins += 500;
-    } else if (resultado === "Carta aleatoria") {
-  const todasCartas = await Card.find();
-  const cartasQueNoTiene = todasCartas.filter(carta => !user.cartas.includes(carta._id));
+    // 2) Aplicar efecto del resultado
+    switch (applied) {
+      case "Tirar otra vez":
+        user.stepcoins += SPIN_COST; // reintegro (neto 0)
+        break;
 
-  if (cartasQueNoTiene.length === 0) {
-    return res.status(400).json({ error: "Ya tienes todas las cartas disponibles" });
-  }
+      case "Gana 20000 Stepcoins":
+        user.stepcoins += 20000;
+        break;
 
-  const randomCarta = cartasQueNoTiene[Math.floor(Math.random() * cartasQueNoTiene.length)];
+      case "Pierde 20000 Stepcoins":
+        user.stepcoins = Math.max(0, user.stepcoins - 20000);
+        break;
 
-  user.cartas.push(randomCarta._id);
-  nuevaCarta = {
-    titulo: randomCarta.titulo,
-    imagen: randomCarta.imagenPortada
-  };
-}
+      case "Carta aleatoria": {
+        const todas = await Card.find().select("_id titulo imagenPortada");
+        const tiene = new Set((user.cartas || []).map((id) => String(id)));
+        const candidatas = todas.filter((c) => !tiene.has(String(c._id)));
+
+        if (candidatas.length === 0) {
+          // Si entre medias se quedó sin cartas, revertimos el cobro para ser amables
+          user.stepcoins = saldoInicial;
+          await user.save();
+          await StepcoinTransaction.create({
+            userId,
+            cantidad: 0,
+            tipo: "ruleta",
+            descripcion: `Resultado ruleta: Carta aleatoria (ya tenía todas)`,
+          });
+          return res.json({
+            resultado: "Carta aleatoria",
+            yaTienesTodas: true,
+            nuevosStepcoins: user.stepcoins,
+          });
+        }
+
+        const randomCarta = candidatas[Math.floor(Math.random() * candidatas.length)];
+        user.cartas = user.cartas || [];
+        user.cartas.push(randomCarta._id);
+
+        nuevaCarta = {
+          _id: String(randomCarta._id),
+          titulo: randomCarta.titulo,
+          imagenPortada: randomCarta.imagenPortada || null,
+        };
+        break;
+      }
+
+      // "Nada", "Juego de Cultura", "Juego Nave Espacial" → no afectan saldo
+      case "Nada":
+      case "Juego de Cultura":
+      case "Juego Nave Espacial":
+      default:
+        break;
+    }
 
     await user.save();
 
-    const cantidad = -500 +
-      (resultado === "20000 Stepcoins" ? 20000 :
-       resultado === "500 Stepcoins para volver a tirar" ? 500 : 0);
-
+    const delta = user.stepcoins - saldoInicial;
     await StepcoinTransaction.create({
       userId,
-      cantidad,
+      cantidad: delta, // cambio neto real de la tirada
       tipo: "ruleta",
-      descripcion: `Resultado ruleta: ${resultado}`
+      descripcion: `Resultado ruleta aplicado: ${applied}`,
     });
 
-    res.json({ nuevosStepcoins: user.stepcoins, nuevaCarta });
+    return res.json({
+      resultado: applied,          // lo que se aplicó realmente
+      nuevosStepcoins: user.stepcoins,
+      nuevaCarta,                  // opcional
+    });
   } catch (err) {
-    console.error("❌ Error en ruleta:", err.message, err.stack);
-    res.status(500).json({ error: "Error interno al procesar ruleta" });
+    console.error("❌ Error en ruleta:", err);
+    return res.status(500).json({ error: "Error interno al procesar ruleta" });
   }
 });
+
 
 // Obtener usuarios ordenados por Stepcoins (ranking)
 router.get("/ranking", async (req, res) => {
