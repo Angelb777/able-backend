@@ -668,6 +668,7 @@ function verDetalles(userId) {
   fetch(`/api/users/${userId}`)
     .then(res => res.json())
     .then(user => {
+      const p = user.profile || {};
       alert(`
 Nombre: ${user.nombre}
 Email: ${user.email}
@@ -675,6 +676,18 @@ Rol: ${user.role}
 Stepcoins: ${user.stepcoins}
 Cartas: ${user.cartas?.join(", ") || "Ninguna"}
 Fecha de registro: ${new Date(user.createdAt).toLocaleString()}
+
+— Perfil (rellenado en app) —
+Nombre (app): ${p.name || '-'}
+Apellidos: ${p.lastName || '-'}
+Dirección: ${p.address || '-'}
+Ciudad: ${p.city || '-'}
+País: ${p.country || '-'}
+
+DNI frontal: ${p.idCardFront || '-'}
+DNI trasera: ${p.idCardBack || '-'}
+Carnet frontal: ${p.licenseFront || '-'}
+Carnet trasera: ${p.licenseBack || '-'}
       `);
     });
 }

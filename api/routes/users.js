@@ -3,6 +3,71 @@ const router = express.Router();
 const User = require('../models/User');
 const Skin = require('../models/Skin'); // necesario para fallback
 
+// Obtener datos de perfil del usuario autenticado
+router.get('/data', /*ensureAuth,*/ async (req, res) => {
+  try {
+    // Si tienes JWT, usa req.user.id; si no, temporal: req.query.userId
+    const userId = /*req.user?.id ||*/ req.query.userId;
+    if (!userId) return res.status(400).json({ error: 'Falta userId o token' });
+
+    const user = await User.findById(userId).select('-password');
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    // Devuelve SOLO lo que Flutter espera
+    const p = user.profile || {};
+    return res.json({
+      name: p.name || '',
+      lastName: p.lastName || '',
+      address: p.address || '',
+      city: p.city || '',
+      country: p.country || '',
+      idCardFront: p.idCardFront || '',
+      idCardBack: p.idCardBack || '',
+      licenseFront: p.licenseFront || '',
+      licenseBack: p.licenseBack || '',
+    });
+  } catch (err) {
+    console.error('❌ /api/user/data error', err);
+    res.status(500).json({ error: 'Error al obtener datos de perfil' });
+  }
+});
+
+// Guardar/actualizar perfil del usuario autenticado
+router.post('/update', /*ensureAuth,*/ async (req, res) => {
+  try {
+    // Si tienes JWT, usa req.user.id; si no, temporal: req.body.userId
+    const userId = /*req.user?.id ||*/ req.body.userId;
+    if (!userId) return res.status(400).json({ error: 'Falta userId o token' });
+
+    const {
+      name, lastName, address, city, country,
+      idCardFront, idCardBack, licenseFront, licenseBack
+    } = req.body;
+
+    const update = {
+      $set: {
+        'profile.name': name ?? '',
+        'profile.lastName': lastName ?? '',
+        'profile.address': address ?? '',
+        'profile.city': city ?? '',
+        'profile.country': country ?? '',
+        'profile.idCardFront': idCardFront ?? '',
+        'profile.idCardBack': idCardBack ?? '',
+        'profile.licenseFront': licenseFront ?? '',
+        'profile.licenseBack': licenseBack ?? '',
+      }
+    };
+
+    const user = await User.findByIdAndUpdate(userId, update, { new: true }).select('-password');
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    res.json({ ok: true, profile: user.profile || {} });
+  } catch (err) {
+    console.error('❌ /api/user/update error', err);
+    res.status(500).json({ error: 'Error al actualizar datos de perfil' });
+  }
+});
+
 // Obtener todos los usuarios (sin contraseña)
 router.get('/', async (req, res) => {
   try {
@@ -36,6 +101,19 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+// Obtener usuario con cartas pobladas
+router.get('/con-cartas/:id', async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id)
+      .select('-password')
+      .populate('cartas');
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener usuario con cartas' });
+  }
+});
+
 // Obtener un usuario por ID (sin contraseña y con skins pobladas)
 router.get('/:id', async (req, res) => {
   try {
@@ -50,18 +128,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Obtener usuario con cartas pobladas
-router.get('/con-cartas/:id', async (req, res) => {
-  try {
-    const user = await User.findById(req.params.id)
-      .select('-password')
-      .populate('cartas');
-    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
-    res.json(user);
-  } catch (err) {
-    res.status(500).json({ error: 'Error al obtener usuario con cartas' });
-  }
-});
+
 
 // ✅ Actualizar nombre de usuario
 router.put('/:id', async (req, res) => {

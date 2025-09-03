@@ -5,6 +5,8 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 
+const usersRouter = require('./api/routes/users');
+
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
 }
@@ -99,6 +101,7 @@ app.use('/api/auth', require('./api/routes/auth'));
 app.use('/api/discounts', require('./api/routes/discounts'));
 app.use('/api/admin', require('./api/routes/admin'));
 app.use('/api/users', require('./api/routes/users'));
+app.use('/api/user', require('./api/routes/users'));
 app.use('/api/profile', require('./api/routes/profile'));
 app.use('/api/payments', require('./api/routes/payments'));
 app.use('/api/metrics', require('./api/routes/metrics'));
