@@ -4,6 +4,9 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');                // ✅ NUEVO
+const { Server } = require('socket.io');     // ✅ NUEVO
+
 
 const usersRouter = require('./api/routes/users');
 
@@ -95,6 +98,31 @@ app.get('/admin/pedidos', (_req, res) => {
 });
 
 /* =========================
+   HTTP Server + Socket.IO
+========================= */
+const server = http.createServer(app);
+
+// CORS para Socket.IO: usa tu whitelist si existe; si no, abierto (útil para móvil)
+const io = new Server(server, {
+  cors: rawOrigins.length
+    ? {
+        origin: (origin, cb) => {
+          // En apps móviles origin suele venir null/undefined → permitir
+          if (!origin) return cb(null, true);
+          if (rawOrigins.includes(origin)) return cb(null, true);
+          return cb(new Error(`Origen Socket.IO no permitido: ${origin}`));
+        },
+        credentials: true,
+      }
+    : { origin: '*', credentials: true },
+  transports: ['websocket', 'polling'],
+});
+
+// 👉 Conectar tu namespace de PVP
+require('./sockets/pvp.socket')(io);
+
+
+/* =========================
    Rutas API
 ========================= */
 app.use('/api/auth', require('./api/routes/auth'));
@@ -169,7 +197,8 @@ mongoose.connect(uri)
     console.log(`   Host: ${conn.host}`);
     console.log(`   DB:   ${conn.name}`);
 
-    app.listen(PORT, () => {
+    // ⬇️⬇️⬇️  USAR server.listen (no app.listen)  ⬇️⬇️⬇️
+    server.listen(PORT, () => {
       console.log(`🚀 Servidor escuchando en puerto ${PORT}`);
       if (rawOrigins.length) {
         console.log(`🔐 CORS whitelist: ${rawOrigins.join(' , ')}`);
@@ -177,6 +206,7 @@ mongoose.connect(uri)
         console.log('⚠️  CORS abierto (ALLOWED_ORIGINS vacío). Define ALLOWED_ORIGINS en .env para restringir.');
       }
       console.log('📂 UPLOAD_BASE_DIR:', UPLOAD_BASE_DIR);
+      console.log('📡 Socket.IO ON (namespace /pvp)');
     });
   })
   .catch(err => {
