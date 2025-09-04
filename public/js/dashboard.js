@@ -3257,71 +3257,117 @@ document.addEventListener("DOMContentLoaded", function () {
   const seccionComun = document.getElementById("comunCarta");
 
   const secciones = {
-    Proyectil: document.getElementById("seccionProyectil"),
-    Arrastre: document.getElementById("seccionArrastre"),
-    Trampa: document.getElementById("seccionTrampa"),
+    Proyectil:  document.getElementById("seccionProyectil"),
+    Arrastre:   document.getElementById("seccionArrastre"),
+    Trampa:     document.getElementById("seccionTrampa"),
     Invocacion: document.getElementById("seccionInvocacion"),
-    Vida: document.getElementById("seccionVida"),
-    Defensa: document.getElementById("seccionDefensa")
+    Vida:       document.getElementById("seccionVida"),
+    Defensa:    document.getElementById("seccionDefensa")
   };
 
+  // --- Helpers ---
+  const clearInputs = (root) => {
+    root.querySelectorAll("input, select, textarea").forEach(el => {
+      if (el.type === "file") {
+        // limpiar selección de archivos
+        el.value = "";
+      } else if (el.tagName === "SELECT") {
+        // deja el valor por defecto del select
+      } else {
+        el.value = "";
+      }
+      // quitar required si lo tenía
+      if (el.required) {
+        el.dataset.wasRequired = "true";
+        el.required = false;
+      }
+    });
+  };
+
+  const restoreRequiredIfNeeded = (root) => {
+    root.querySelectorAll("input, select, textarea").forEach(el => {
+      if (el.dataset.wasRequired === "true") {
+        el.required = true;
+      }
+    });
+  };
+
+  // --- Mostrar/ocultar secciones y gestionar required/valores ---
   tipoSelect.addEventListener("change", () => {
     const tipo = tipoSelect.value;
     seccionComun.style.display = tipo ? "block" : "none";
+
     Object.keys(secciones).forEach(key => {
-      secciones[key].style.display = key === tipo ? "block" : "none";
+      const visible = key === tipo;
+      const seccion = secciones[key];
+
+      if (visible) {
+        seccion.style.display = "block";
+        restoreRequiredIfNeeded(seccion);
+      } else {
+        seccion.style.display = "none";
+        clearInputs(seccion); // ← limpia valores y quita required
+        // limpia previews de esa sección si los hay
+        seccion.querySelectorAll('div[id^="preview"]').forEach(div => div.innerHTML = "");
+        // y limpia buffers de archivos por campo (ver abajo)
+        const camposDeEsta = seccion.querySelectorAll('input[type="file"][id]');
+        camposDeEsta.forEach(inp => {
+          const map = camposMultiples.find(c => c.id === inp.id);
+          if (map && archivosPorCampo[map.name]) archivosPorCampo[map.name] = [];
+        });
+      }
     });
   });
 
   if (tipoSelect.value) tipoSelect.dispatchEvent(new Event("change"));
 
-  // ✅ Campos múltiples válidos según backend
-  const inputsMultiples = [
-    "imagenesArma",
-    "imagenesExplosion",
-    "imagenesMovimiento",
-    "imagenesBala",
-    "imagenesMuerte",
-    "imagenesActivacion",
-    "imagenesInvocacion",
-    "imagenesVida",
-    "imagenesDefensa"
+  // =================== Gestión de múltiples imágenes ===================
+  // Mapeo id ↔ name ↔ previewId (name = lo que espera multer)
+  const camposMultiples = [
+    { id: "imagenesArma",        name: "imagenesArma",        previewId: "previewImagenesArma" },
+    { id: "imagenesExplosion",   name: "imagenesExplosion",   previewId: "previewImagenesExplosion" },
+    { id: "imagenesMovimiento",  name: "imagenesMovimiento",  previewId: "previewImagenesMovimiento" },
+    // id en HTML = imagenesBala, pero el backend espera name=imagenesDisparo
+    { id: "imagenesBala",        name: "imagenesDisparo",     previewId: "previewImagenesBala" },
+    { id: "imagenesMuerte",      name: "imagenesMuerte",      previewId: "previewImagenesMuerte" },
+    { id: "imagenesActivacion",  name: "imagenesActivacion",  previewId: "previewImagenesActivacion" },
+    { id: "imagenesInvocacion",  name: "imagenesInvocacion",  previewId: "previewImagenesInvocacion" },
+    { id: "imagenesVida",        name: "imagenesVida",        previewId: "previewImagenesVida" },
+    { id: "imagenesDefensa",     name: "imagenesDefensa",     previewId: "previewImagenesDefensa" },
   ];
 
-  const archivosPorCampo = {};
+  const archivosPorCampo = {}; // clave = name que espera multer
+  camposMultiples.forEach(c => { archivosPorCampo[c.name] = []; });
 
-  // Inicializar listeners
-  inputsMultiples.forEach(nombreCampo => {
-    archivosPorCampo[nombreCampo] = [];
-    const input = document.getElementById(nombreCampo);
-    const preview = document.getElementById("preview" + nombreCampo.charAt(0).toUpperCase() + nombreCampo.slice(1));
-
+  // Listeners de cada input file múltiple
+  camposMultiples.forEach(c => {
+    const input   = document.getElementById(c.id);
+    const preview = document.getElementById(c.previewId);
     if (!input || !preview) return;
 
     input.addEventListener("change", () => {
       const nuevos = Array.from(input.files);
       for (const file of nuevos) {
-        if (archivosPorCampo[nombreCampo].length >= 4) {
-          alert("Máximo 4 imágenes para " + nombreCampo);
+        if (archivosPorCampo[c.name].length >= 4) {
+          alert("Máximo 4 imágenes para " + c.name);
           break;
         }
-        if (!archivosPorCampo[nombreCampo].some(f => f.name === file.name && f.size === file.size)) {
-          archivosPorCampo[nombreCampo].push(file);
-        }
+        const ya = archivosPorCampo[c.name].some(f => f.name === file.name && f.size === file.size);
+        if (!ya) archivosPorCampo[c.name].push(file);
       }
-      renderPreview(nombreCampo, preview);
-      input.value = '';
+      renderPreview(c.name, preview);
+      input.value = ""; // evita duplicados
     });
   });
 
-  function renderPreview(campo, contenedor) {
+  function renderPreview(nombreCampo, contenedor) {
     contenedor.innerHTML = "";
-    archivosPorCampo[campo].forEach((file, index) => {
-      const div = document.createElement("div");
-      div.style.display = "flex";
-      div.style.alignItems = "center";
-      div.style.gap = "8px";
-      div.style.marginBottom = "4px";
+    archivosPorCampo[nombreCampo].forEach((file, index) => {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "8px";
+      row.style.marginBottom = "4px";
 
       const name = document.createElement("span");
       name.textContent = "📄 " + file.name;
@@ -3330,58 +3376,60 @@ document.addEventListener("DOMContentLoaded", function () {
       btn.textContent = "❌";
       btn.type = "button";
       btn.onclick = () => {
-        archivosPorCampo[campo].splice(index, 1);
-        renderPreview(campo, contenedor);
+        archivosPorCampo[nombreCampo].splice(index, 1);
+        renderPreview(nombreCampo, contenedor);
       };
 
-      div.appendChild(name);
-      div.appendChild(btn);
-      contenedor.appendChild(div);
+      row.appendChild(name);
+      row.appendChild(btn);
+      contenedor.appendChild(row);
     });
   }
 
-  // 📤 Envío del formulario
+  // =================== Envío del formulario ===================
+  const form = document.getElementById("formCarta");
+  form.addEventListener("submit", async function (e) {
+    e.preventDefault();
 
-  document.getElementById("formCarta").addEventListener("submit", async function (e) {
-  e.preventDefault();
-
-  const formData = new FormData(this);
-
-  // Añadir los archivos múltiples desde archivosPorCampo
-  for (const campo in archivosPorCampo) {
-    archivosPorCampo[campo].forEach(file => {
-      formData.append(campo, file);
-    });
-  }
-
-  try {
-    const res = await fetch("/api/cards", {
-      method: "POST",
-      body: formData
+    // 1) Normalizar todos los number vacíos -> "0" (evita NaN en backend)
+    form.querySelectorAll('input[type="number"]').forEach(inp => {
+      if (inp.value === "" || isNaN(Number(inp.value))) {
+        inp.value = "0";
+      }
     });
 
-    if (!res.ok) {
-      const errorText = await res.text();
-      throw new Error(errorText || "Error al crear la carta");
+    // 2) Construir el FormData
+    const formData = new FormData(form);
+
+    // 3) Añadir los archivos múltiples desde archivosPorCampo con el NOMBRE correcto
+    for (const nombreCampo in archivosPorCampo) {
+      archivosPorCampo[nombreCampo].forEach(file => {
+        formData.append(nombreCampo, file);
+      });
     }
 
-    alert("✅ Carta creada correctamente.");
-    renderGestionJuego();
+    try {
+      const res = await fetch("/api/cards", { method: "POST", body: formData });
+      const rawText = await res.text(); // leer siempre el cuerpo
+      if (!res.ok) {
+        console.error("❌ Respuesta del servidor:", rawText);
+        throw new Error(rawText || "Error al crear la carta");
+      }
 
-    // Limpiar el formulario
-    this.reset();
+      alert("✅ Carta creada correctamente.");
+      if (typeof renderGestionJuego === "function") renderGestionJuego();
 
-    // Vaciar los previews
-    document.querySelectorAll("#formCarta div[id^=preview]").forEach(div => div.innerHTML = "");
-
-    // Ocultar secciones
-    document.getElementById("comunCarta").style.display = "none";
-    document.querySelectorAll("#formCarta div[id^=seccion]").forEach(div => div.style.display = "none");
-
-  } catch (err) {
-    console.error("❌ Error al crear la carta:", err);
-    alert("❌ Error al crear la carta");
-  }
+      // 4) Limpiar todo
+      form.reset();
+      Object.keys(archivosPorCampo).forEach(k => archivosPorCampo[k] = []);
+      document.querySelectorAll("#formCarta div[id^=preview]").forEach(div => div.innerHTML = "");
+      document.getElementById("comunCarta").style.display = "none";
+      document.querySelectorAll("#formCarta div[id^=seccion]").forEach(div => div.style.display = "none");
+      tipoSelect.value = ""; // volver al estado inicial
+    } catch (err) {
+      console.error("❌ Error al crear la carta (catch):", err);
+      alert("❌ Error al crear la carta");
+    }
   });
 });
 
