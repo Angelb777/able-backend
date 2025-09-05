@@ -68,7 +68,7 @@ module.exports = function(io) {
   // Helpers
   function toZoneId(lat, lng) {
     // Celda ~120 m. Ajusta DECIMALES para agrupar menos/más jugadores.
-    return geo.cellId(lat, lng, 2);
+    return 'GLOBAL_TEST_ROOM';
   }
 
   // Validar spawn de bala contra su carta (anti-cheat)
