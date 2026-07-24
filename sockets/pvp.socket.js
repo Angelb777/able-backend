@@ -1,32 +1,44 @@
 // sockets/pvp.socket.js
 const geo  = require('../utils/geo');              // <- OK si utils está en la raíz del repo
-const Card = require('../api/models/Card');        // <- ANTES: ../models/Card
-const User = require('../api/models/User');        // <- ANTES: ../models/User
+const Card = require('../api/models/Card');
+const UserLife = require('../api/models/UserLife');
 
-// Si tienes el modelo Life, apunta igual a api/models
-let Life;
-try {
-  Life = require('../api/models/Life');            // <- ANTES: ../models/Life
-} catch (e) {
-  // fallback para no romper si aún no existe el modelo
-  Life = {
-    findOne: async () => null,
-    updateOne: async () => ({ acknowledged: true })
-  };
-}
-
-module.exports = function(io) {
+module.exports = function(io, dependencies = {}) {
+  const CardModel = dependencies.CardModel || Card;
+  const LifeModel = dependencies.LifeModel || UserLife;
   const nsp = io.of('/pvp');
+  const instanceId =
+    process.env.RENDER_INSTANCE_ID || process.env.HOSTNAME || `pid-${process.pid}`;
 
   // Estado en memoria (MVP)
   const players = new Map(); // socketId -> { userId, lat, lng, heading, skinUrl, nombre, zoneId, lastShotByCard:{}, vida }
   const bullets = new Map(); // bulletId -> { byUserId, zoneId, lat, lng, heading, speed, alcance, dano, spriteUrl, createdAt }
   const roomIndex = new Map(); // zoneId -> Set<socketId>
 
+  const log = (message, details = {}) => {
+    console.log(`[PVP][${instanceId}] ${message}`, details);
+  };
+
+  const playersForUser = (userId) =>
+    [...players.values()].filter((player) => player.userId === userId);
+
   // Tick de balas (server-authoritative)
   const TICK_MS = 50;
-  setInterval(() => {
-    const now = Date.now();
+  const emitBulletExplosion = (bulletId, bullet, reason, hitUserId = null) => {
+    nsp.to(bullet.zoneId).emit('bullet:explode', {
+      bulletId,
+      clientShotId: bullet.clientShotId,
+      byUserId: bullet.byUserId,
+      hitUserId,
+      reason,
+      lat: bullet.lat,
+      lng: bullet.lng,
+      spriteUrl: bullet.spriteUrl,
+      explosionFrames: bullet.explosionFrames,
+    });
+  };
+
+  const bulletTimer = setInterval(() => {
     for (const [id, b] of bullets) {
       // avanzar ~ speed * (TICK_MS/1000)
       const deltaM = b.speed * (TICK_MS / 1000);
@@ -36,34 +48,67 @@ module.exports = function(io) {
 
       // colisiones con jugadores de su sala
       const socketsInZone = roomIndex.get(b.zoneId) || new Set();
+      let hit = false;
       for (const sid of socketsInZone) {
         const p = players.get(sid);
         if (!p || p.userId === b.byUserId) continue;
 
         const dist = geo.distanceMeters({lat:b.lat, lng:b.lng}, {lat:p.lat, lng:p.lng});
         if (dist <= 12) { // umbral de impacto
-          // aplicar daño (servidor)
           const nuevaVida = Math.max(0, (p.vida ?? 1000) - b.dano);
-          p.vida = nuevaVida;
-          // Persistir vida si tienes modelo/servicio (adaptar a tu lógica real):
-          Life.updateOne({ userId: p.userId }, { $set: { vida: nuevaVida }}, { upsert: true }).catch(()=>{});
+          for (const sameUser of playersForUser(p.userId)) {
+            sameUser.vida = nuevaVida;
+          }
+          LifeModel.updateOne(
+            { userId: p.userId },
+            { $set: { vida: nuevaVida }, $setOnInsert: { yaPenalizado: false } },
+            { upsert: true }
+          ).catch((error) => {
+            console.error(`[PVP][${instanceId}] life persist error`, {
+              bulletId: id,
+              userId: p.userId,
+              error: error.message,
+            });
+          });
 
-          // notificar a sala
-          nsp.to(b.zoneId).emit('life:update', { userId: p.userId, vida: nuevaVida });
-          nsp.to(b.zoneId).emit('bullet:explode', { bulletId: id, lat: b.lat, lng: b.lng });
-
+          nsp.to(b.zoneId).emit('life:update', {
+            bulletId: id,
+            byUserId: b.byUserId,
+            userId: p.userId,
+            vida: nuevaVida,
+            dano: b.dano,
+          });
+          emitBulletExplosion(id, b, 'hit', p.userId);
           bullets.delete(id);
+          hit = true;
+          log('bullet hit', {
+            bulletId: id,
+            clientShotId: b.clientShotId,
+            byUserId: b.byUserId,
+            hitUserId: p.userId,
+            damage: b.dano,
+            life: nuevaVida,
+            distanceMeters: Number(dist.toFixed(2)),
+          });
           break;
         }
       }
+      if (hit) continue;
 
       // fin de alcance
       if ((b.recorrido || 0) >= b.alcance) {
-        nsp.to(b.zoneId).emit('bullet:explode', { bulletId: id, lat: b.lat, lng: b.lng });
+        emitBulletExplosion(id, b, 'range');
         bullets.delete(id);
+        log('bullet range completed', {
+          bulletId: id,
+          clientShotId: b.clientShotId,
+          byUserId: b.byUserId,
+          alcance: b.alcance,
+        });
       }
     }
   }, TICK_MS);
+  bulletTimer.unref?.();
 
   // Helpers
   function toZoneId(lat, lng) {
@@ -73,7 +118,7 @@ module.exports = function(io) {
 
   // Validar spawn de bala contra su carta (anti-cheat)
   async function validateBullet(byUserId, cardId, intento) {
-    const card = await Card.findById(cardId).lean();
+    const card = await CardModel.findById(cardId).lean();
     if (!card) throw new Error('Carta no existe');
     if (card.tipoArma !== 'Proyectil') throw new Error('Carta no es Proyectil');
 
@@ -92,41 +137,113 @@ module.exports = function(io) {
     if (shooter) {
       shooter.lastShotByCard = { ...lastMap, [cardId]: Date.now() };
     }
-    return { alcance: card.alcance||0, dano: card.dano||0 };
+    return {
+      alcance: card.alcance || 0,
+      dano: card.dano || 0,
+      cooldownMs: cd,
+    };
   }
 
   nsp.on('connection', (socket) => {
+    log('socket connected', {
+      socketId: socket.id,
+      namespace: '/pvp',
+      totalSockets: nsp.sockets.size,
+    });
     // 1) Spawn/presencia inicial
     socket.on('presence:hello', async (payload, cb) => {
       try {
-        const { userId, lat, lng, heading, skinUrl, nombre } = payload;
+        const {
+          userId: rawUserId,
+          lat,
+          lng,
+          heading,
+          skinUrl = '',
+          nombre = 'Jugador',
+        } = payload || {};
+        const userId = rawUserId?.toString().trim();
         if (!userId || typeof lat!=='number' || typeof lng!=='number') {
+          log('presence rejected', {
+            socketId: socket.id,
+            userId,
+            lat,
+            lng,
+            error: 'payload inválido',
+          });
           return cb?.({ ok:false, error:'payload inválido' });
         }
 
         const zoneId = toZoneId(lat, lng);
+        const previous = players.get(socket.id);
+        if (previous) {
+          socket.leave(previous.zoneId);
+          roomIndex.get(previous.zoneId)?.delete(socket.id);
+        }
         socket.join(zoneId);
         if (!roomIndex.has(zoneId)) roomIndex.set(zoneId, new Set());
         roomIndex.get(zoneId).add(socket.id);
 
-        // vida actual (si tienes modelo Life)
-        const lifeDoc = await Life.findOne({ userId }).lean().catch(()=>null);
+        const lifeDoc = await LifeModel.findOne({ userId }).lean().catch((error) => {
+          console.error(`[PVP][${instanceId}] life read error`, {
+            socketId: socket.id,
+            userId,
+            error: error.message,
+          });
+          return null;
+        });
         const vida = lifeDoc?.vida ?? 1000;
 
-        players.set(socket.id, { userId, lat, lng, heading: heading||0, skinUrl, nombre, zoneId, lastShotByCard:{}, vida });
+        players.set(socket.id, {
+          userId,
+          lat,
+          lng,
+          heading: typeof heading === 'number' ? heading : 0,
+          skinUrl,
+          nombre,
+          zoneId,
+          lastShotByCard: previous?.lastShotByCard || {},
+          vida,
+        });
 
         // Enviar al que entra el estado de la sala (jugadores ya presentes)
-        const others = [];
+        const othersByUserId = new Map();
         for (const sid of roomIndex.get(zoneId)) {
           if (sid === socket.id) continue;
           const p = players.get(sid);
-          if (p) others.push({ userId:p.userId, lat:p.lat, lng:p.lng, heading:p.heading, skinUrl:p.skinUrl, nombre:p.nombre, vida:p.vida??1000 });
+          if (p && p.userId !== userId) {
+            othersByUserId.set(p.userId, {
+              userId:p.userId,
+              lat:p.lat,
+              lng:p.lng,
+              heading:p.heading,
+              skinUrl:p.skinUrl,
+              nombre:p.nombre,
+              vida:p.vida??1000,
+            });
+          }
         }
-        cb?.({ ok:true, players: others });
+        const others = [...othersByUserId.values()];
+        cb?.({ ok:true, players: others, instanceId });
+        log('presence registered', {
+          socketId: socket.id,
+          userId,
+          zoneId,
+          lat,
+          lng,
+          skinUrl,
+          nombre,
+          vida,
+          roomSockets: roomIndex.get(zoneId).size,
+          playersReturned: others.map((p) => p.userId),
+        });
 
         // Notificar a los demás tu spawn
         socket.to(zoneId).emit('presence:spawn', { userId, lat, lng, heading, skinUrl, nombre, vida });
       } catch (e) {
+        console.error(`[PVP][${instanceId}] presence hello error`, {
+          socketId: socket.id,
+          error: e.message,
+        });
         cb?.({ ok:false, error: e.message });
       }
     });
@@ -151,8 +268,25 @@ module.exports = function(io) {
         p.zoneId = newZone;
       }
 
-      p.lat = lat; p.lng = lng; p.heading = heading||p.heading;
-      nsp.to(p.zoneId).emit('presence:move', { userId: p.userId, lat, lng, heading: p.heading });
+      p.lat = lat;
+      p.lng = lng;
+      if (typeof heading === 'number') p.heading = heading;
+      nsp.to(p.zoneId).emit('presence:move', {
+        userId: p.userId,
+        lat,
+        lng,
+        heading: p.heading,
+        skinUrl: p.skinUrl,
+        nombre: p.nombre,
+        vida: p.vida,
+      });
+      log('presence move', {
+        socketId: socket.id,
+        userId: p.userId,
+        lat,
+        lng,
+        heading: p.heading,
+      });
     });
 
     // 3) Disparo
@@ -161,21 +295,58 @@ module.exports = function(io) {
         const p = players.get(socket.id);
         if (!p) throw new Error('No player');
 
-        const { clientShotId, cardId, from, heading, speed, alcance, dano, spriteUrl } = payload;
+        const {
+          clientShotId,
+          cardId,
+          from,
+          heading,
+          speed,
+          alcance,
+          dano,
+          spriteUrl,
+          explosionFrames,
+        } = payload || {};
+        if (
+          !cardId ||
+          !from ||
+          typeof from.lat !== 'number' ||
+          typeof from.lng !== 'number' ||
+          typeof heading !== 'number' ||
+          typeof speed !== 'number' ||
+          typeof alcance !== 'number' ||
+          typeof dano !== 'number'
+        ) {
+          throw new Error('Payload de bala inválido');
+        }
         // Rango de spawn razonable (anti-teleport del origen)
         if (geo.distanceMeters({lat:p.lat,lng:p.lng}, from) > 25) throw new Error('Origen inválido');
 
-        await validateBullet(p.userId, cardId, { alcance, dano, speed });
+        const validated = await validateBullet(p.userId, cardId, {
+          alcance,
+          dano,
+          speed,
+        });
 
         // Crear bala server-side
         const bulletId = `${p.userId}-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+        const authoritativeFrom = { lat: p.lat, lng: p.lng };
+        const authoritativeHeading = ((heading % 360) + 360) % 360;
+        const authoritativeSpeed = Math.min(Math.max(speed, 0), 180);
+        const normalizedExplosionFrames = Array.isArray(explosionFrames)
+          ? explosionFrames.filter((frame) => typeof frame === 'string' && frame.trim())
+          : [];
         bullets.set(bulletId, {
+          clientShotId,
           byUserId: p.userId,
           zoneId: p.zoneId,
-          lat: from.lat, lng: from.lng,
-          heading: heading%360, speed: Math.min(speed, 180),
-          alcance, dano,
+          lat: authoritativeFrom.lat,
+          lng: authoritativeFrom.lng,
+          heading: authoritativeHeading,
+          speed: authoritativeSpeed,
+          alcance: validated.alcance,
+          dano: validated.dano,
           spriteUrl,
+          explosionFrames: normalizedExplosionFrames,
           createdAt: Date.now(),
         });
 
@@ -183,24 +354,71 @@ module.exports = function(io) {
         nsp.to(p.zoneId).emit('bullet:spawn', {
           bulletId, byUserId: p.userId,
           clientShotId,
-          from, heading, speed: Math.min(speed,180),
-          alcance, dano, spriteUrl
+          from: authoritativeFrom,
+          heading: authoritativeHeading,
+          speed: authoritativeSpeed,
+          alcance: validated.alcance,
+          dano: validated.dano,
+          spriteUrl,
+          explosionFrames: normalizedExplosionFrames,
         });
 
-        cb?.({ ok:true, bulletId });
+        cb?.({
+          ok:true,
+          bulletId,
+          clientShotId,
+          alcance: validated.alcance,
+          dano: validated.dano,
+        });
+        log('bullet spawned', {
+          socketId: socket.id,
+          bulletId,
+          clientShotId,
+          byUserId: p.userId,
+          from: authoritativeFrom,
+          heading: authoritativeHeading,
+          speed: authoritativeSpeed,
+          alcance: validated.alcance,
+          dano: validated.dano,
+        });
       } catch (e) {
+        console.error(`[PVP][${instanceId}] bullet rejected`, {
+          socketId: socket.id,
+          userId: players.get(socket.id)?.userId,
+          clientShotId: payload?.clientShotId,
+          error: e.message,
+        });
         cb?.({ ok:false, error: e.message });
       }
     });
 
     // 4) Desconexión
-    socket.on('disconnect', () => {
+    socket.on('disconnect', (reason) => {
       const p = players.get(socket.id);
-      if (!p) return;
-      nsp.to(p.zoneId).emit('presence:leave', { userId: p.userId });
+      if (!p) {
+        log('socket disconnected before presence', {
+          socketId: socket.id,
+          reason,
+        });
+        return;
+      }
 
       roomIndex.get(p.zoneId)?.delete(socket.id);
       players.delete(socket.id);
+      const stillConnected = playersForUser(p.userId).length > 0;
+      if (!stillConnected) {
+        nsp.to(p.zoneId).emit('presence:leave', { userId: p.userId });
+      }
+      if (roomIndex.get(p.zoneId)?.size === 0) {
+        roomIndex.delete(p.zoneId);
+      }
+      log('socket disconnected', {
+        socketId: socket.id,
+        userId: p.userId,
+        reason,
+        leaveEmitted: !stillConnected,
+        remainingPlayers: players.size,
+      });
     });
   });
 };
