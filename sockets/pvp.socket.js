@@ -161,7 +161,7 @@ module.exports = function(io) {
         const p = players.get(socket.id);
         if (!p) throw new Error('No player');
 
-        const { cardId, from, heading, speed, alcance, dano, spriteUrl } = payload;
+        const { clientShotId, cardId, from, heading, speed, alcance, dano, spriteUrl } = payload;
         // Rango de spawn razonable (anti-teleport del origen)
         if (geo.distanceMeters({lat:p.lat,lng:p.lng}, from) > 25) throw new Error('Origen inválido');
 
@@ -182,6 +182,7 @@ module.exports = function(io) {
         // Avisar a la sala para que los clientes la dibujen en local
         nsp.to(p.zoneId).emit('bullet:spawn', {
           bulletId, byUserId: p.userId,
+          clientShotId,
           from, heading, speed: Math.min(speed,180),
           alcance, dano, spriteUrl
         });
