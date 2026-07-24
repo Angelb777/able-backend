@@ -4,6 +4,7 @@ const http = require('node:http');
 const { Server } = require('socket.io');
 const { io: createClient } = require('socket.io-client');
 const registerPvp = require('../sockets/pvp.socket');
+const geo = require('../utils/geo');
 
 const waitForEvent = (socket, event, timeoutMs = 2000) =>
   new Promise((resolve, reject) => {
@@ -58,16 +59,27 @@ test('two players share presence, movement, one hit, life and explosions', async
   const fakeCardModel = {
     findById(cardId) {
       return {
-        lean: async () =>
-          cardId === 'card-projectile'
+        lean: async () => {
+          const cards = {
+            'card-projectile': {
+              alcance: 45,
+              dano: 125,
+            },
+            'card-short': {
+              alcance: 6,
+              dano: 25,
+            },
+          };
+          const card = cards[cardId];
+          return card
             ? {
                 _id: cardId,
                 tipoArma: 'Proyectil',
-                alcance: 45,
-                dano: 125,
                 tiempoEspera: 0,
+                ...card,
               }
-            : null,
+            : null;
+        },
       };
     },
   };
@@ -215,7 +227,121 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.equal(rangeAck.ok, true);
   assert.equal(rangeExplosion.bulletId, rangeAck.bulletId);
   assert.equal(rangeExplosion.reason, 'range');
+  assert.ok(rangeExplosion.lng > -0.8785);
+  assert.ok(
+    Math.abs(
+      geo.distanceMeters(
+        { lat: 41.65671, lng: -0.8785 },
+        { lat: rangeExplosion.lat, lng: rangeExplosion.lng }
+      ) - 45
+    ) < 0.25
+  );
   assert.equal(lifeByUser.get('507f191e810c19729de860ea'), 875);
+
+  const origin = { lat: 41.65671, lng: -0.8785 };
+  const north20 = geo.computeOffset(origin, 20, 0);
+  const besidePath = geo.computeOffset(north20, 9.5, 90);
+  const nearMissMove = waitForEvent(playerA, 'presence:move');
+  playerB.emit('presence:update', {
+    lat: besidePath.lat,
+    lng: besidePath.lng,
+    heading: 0,
+  });
+  await nearMissMove;
+
+  const nearMissExplosionOnA = waitForEvent(playerA, 'bullet:explode');
+  const nearMissAck = await emitWithAck(playerA, 'bullet:spawn', {
+    clientShotId: 'shot-a-near-miss',
+    cardId: 'card-projectile',
+    from: origin,
+    heading: 0,
+    speed: 180,
+    alcance: 45,
+    dano: 125,
+    spriteUrl: 'https://example.test/bullet.png',
+    explosionFrames: ['https://example.test/explosion.png'],
+  });
+  const nearMissExplosion = await nearMissExplosionOnA;
+  assert.equal(nearMissExplosion.bulletId, nearMissAck.bulletId);
+  assert.equal(nearMissExplosion.reason, 'range');
+  assert.equal(lifeByUser.get('507f191e810c19729de860ea'), 875);
+
+  const directHitMove = waitForEvent(playerA, 'presence:move');
+  playerB.emit('presence:update', {
+    lat: north20.lat,
+    lng: north20.lng,
+    heading: 0,
+  });
+  await directHitMove;
+
+  const directLifeOnA = waitForEvent(playerA, 'life:update');
+  const directExplosionOnA = waitForEvent(playerA, 'bullet:explode');
+  const directAck = await emitWithAck(playerA, 'bullet:spawn', {
+    clientShotId: 'shot-a-direct-hit',
+    cardId: 'card-projectile',
+    from: origin,
+    heading: 0,
+    speed: 180,
+    alcance: 45,
+    dano: 125,
+    spriteUrl: 'https://example.test/bullet.png',
+    explosionFrames: ['https://example.test/explosion.png'],
+  });
+  const [directLife, directExplosion] = await Promise.all([
+    directLifeOnA,
+    directExplosionOnA,
+  ]);
+  assert.equal(directLife.bulletId, directAck.bulletId);
+  assert.equal(directLife.vida, 750);
+  assert.equal(directExplosion.reason, 'hit');
+  assert.equal(directExplosion.hitUserId, '507f191e810c19729de860ea');
+  assert.ok(
+    Math.abs(
+      geo.distanceMeters(
+        origin,
+        { lat: directExplosion.lat, lng: directExplosion.lng }
+      ) - 12
+    ) < 0.3
+  );
+
+  const farAway = geo.computeOffset(origin, 1000, 90);
+  const shortMove = waitForEvent(playerA, 'presence:move');
+  playerB.emit('presence:update', {
+    lat: farAway.lat,
+    lng: farAway.lng,
+    heading: 0,
+  });
+  await shortMove;
+
+  const shortSpawnOnB = waitForEvent(playerB, 'bullet:spawn');
+  const shortExplosionOnB = waitForEvent(playerB, 'bullet:explode');
+  const shortAck = await emitWithAck(playerA, 'bullet:spawn', {
+    clientShotId: 'shot-a-short',
+    cardId: 'card-short',
+    from: origin,
+    heading: 180,
+    speed: 180,
+    alcance: 6,
+    dano: 25,
+    spriteUrl: 'https://example.test/bullet.png',
+    explosionFrames: ['https://example.test/explosion.png'],
+  });
+  const shortSpawn = await shortSpawnOnB;
+  const shortSpawnReceivedAt = Date.now();
+  const shortExplosion = await shortExplosionOnB;
+  assert.equal(shortSpawn.bulletId, shortAck.bulletId);
+  assert.equal(shortSpawn.startDelayMs, 180);
+  assert.equal(shortExplosion.reason, 'range');
+  assert.ok(Date.now() - shortSpawnReceivedAt >= 140);
+  assert.ok(shortExplosion.lat < origin.lat);
+  assert.ok(
+    Math.abs(
+      geo.distanceMeters(
+        origin,
+        { lat: shortExplosion.lat, lng: shortExplosion.lng }
+      ) - 6
+    ) < 0.25
+  );
 
   let leaveEventsOnA = 0;
   playerA.on('presence:leave', () => leaveEventsOnA++);
