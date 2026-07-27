@@ -3367,6 +3367,9 @@ document.addEventListener("DOMContentLoaded", function () {
   // --- Helpers ---
   const clearInputs = (root) => {
     root.querySelectorAll("input, select, textarea").forEach(el => {
+      // Los controles deshabilitados no se incluyen en FormData. Esto evita
+      // enviar varios campos con el mismo nombre (dano, vida, duracion, etc.).
+      el.disabled = true;
       if (el.type === "file") {
         // limpiar selección de archivos
         el.value = "";
@@ -3385,6 +3388,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   const restoreRequiredIfNeeded = (root) => {
     root.querySelectorAll("input, select, textarea").forEach(el => {
+      el.disabled = false;
       if (el.dataset.wasRequired === "true") {
         el.required = true;
       }
@@ -3418,7 +3422,7 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   });
 
-  if (tipoSelect.value) tipoSelect.dispatchEvent(new Event("change"));
+  tipoSelect.dispatchEvent(new Event("change"));
 
   // =================== Gestión de múltiples imágenes ===================
   // Mapeo id ↔ name ↔ previewId (name = lo que espera multer)
@@ -3567,7 +3571,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const esEdicion = Boolean(cartaEditandoId);
 
     // 1) Normalizar todos los number vacíos -> "0" (evita NaN en backend)
-    form.querySelectorAll('input[type="number"]').forEach(inp => {
+    form.querySelectorAll('input[type="number"]:not(:disabled)').forEach(inp => {
       if (inp.value === "" || isNaN(Number(inp.value))) {
         inp.value = "0";
       }
