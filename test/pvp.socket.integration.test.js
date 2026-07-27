@@ -83,12 +83,27 @@ test('two players share presence, movement, one hit, life and explosions', async
       };
     },
   };
+  const fakeTurretModel = {
+    find() {
+      return { lean: async () => [] };
+    },
+    async updateOne() {},
+    async deleteOne() {},
+  };
+  const fakeUserModel = {
+    findOneAndUpdate() {
+      return { lean: async () => null };
+    },
+    async updateOne() {},
+  };
 
   const httpServer = http.createServer();
   const io = new Server(httpServer, { transports: ['websocket'] });
   registerPvp(io, {
     CardModel: fakeCardModel,
     LifeModel: fakeLifeModel,
+    TurretModel: fakeTurretModel,
+    UserModel: fakeUserModel,
   });
   await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
   const address = httpServer.address();
@@ -146,6 +161,17 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.equal(movedA.userId, '507f1f77bcf86cd799439011');
   assert.equal(movedA.nombre, 'Alice');
   assert.equal(movedA.skinUrl, 'https://example.test/skin-a.png');
+
+  const skinMoveOnB = waitForEvent(playerB, 'presence:move');
+  playerA.emit('presence:update', {
+    lat: 41.65671,
+    lng: -0.8785,
+    heading: 5,
+    skinUrl: 'https://example.test/skin-a-new.png',
+    nombre: 'Alice',
+  });
+  const skinMovedA = await skinMoveOnB;
+  assert.equal(skinMovedA.skinUrl, 'https://example.test/skin-a-new.png');
 
   let lifeEventsA = 0;
   let lifeEventsB = 0;
@@ -275,6 +301,7 @@ test('two players share presence, movement, one hit, life and explosions', async
   await directHitMove;
 
   const directLifeOnA = waitForEvent(playerA, 'life:update');
+  const directLifeOnB = waitForEvent(playerB, 'life:update');
   const directExplosionOnA = waitForEvent(playerA, 'bullet:explode');
   const directAck = await emitWithAck(playerA, 'bullet:spawn', {
     clientShotId: 'shot-a-direct-hit',
@@ -287,12 +314,14 @@ test('two players share presence, movement, one hit, life and explosions', async
     spriteUrl: 'https://example.test/bullet.png',
     explosionFrames: ['https://example.test/explosion.png'],
   });
-  const [directLife, directExplosion] = await Promise.all([
+  const [directLife, directLifeB, directExplosion] = await Promise.all([
     directLifeOnA,
+    directLifeOnB,
     directExplosionOnA,
   ]);
   assert.equal(directLife.bulletId, directAck.bulletId);
   assert.equal(directLife.vida, 750);
+  assert.deepEqual(directLife, directLifeB);
   assert.equal(directExplosion.reason, 'hit');
   assert.equal(directExplosion.hitUserId, '507f191e810c19729de860ea');
   assert.ok(
@@ -303,6 +332,19 @@ test('two players share presence, movement, one hit, life and explosions', async
       ) - 12
     ) < 0.3
   );
+
+  lifeByUser.set('507f191e810c19729de860ea', 1000);
+  const syncedLifeOnA = waitForEvent(playerA, 'life:update');
+  const syncedLifeOnB = waitForEvent(playerB, 'life:update');
+  const lifeSyncAck = await emitWithAck(playerB, 'life:sync', {});
+  const [syncedLifeA, syncedLifeB] = await Promise.all([
+    syncedLifeOnA,
+    syncedLifeOnB,
+  ]);
+  assert.equal(lifeSyncAck.ok, true);
+  assert.equal(lifeSyncAck.vida, 1000);
+  assert.equal(syncedLifeA.vida, 1000);
+  assert.deepEqual(syncedLifeA, syncedLifeB);
 
   const farAway = geo.computeOffset(origin, 1000, 90);
   const shortMove = waitForEvent(playerA, 'presence:move');

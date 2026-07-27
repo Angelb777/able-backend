@@ -890,13 +890,29 @@ async function renderValidarRewards() {
 async function eliminarReward(id) {
   if (!confirm("¿Seguro que quieres eliminar este anuncio?")) return;
   try {
-    const res = await fetch(`/api/rewards/${id}`, { method: "DELETE" });
+    const token = localStorage.getItem("token") || "";
+    const res = await fetch(`/api/rewards/${id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
+    if (!res.ok) throw new Error(data.error || "No se pudo eliminar");
+
     alert("✅ Eliminado correctamente");
-    cargarMisRewards();
+
+    // El admin borra desde la lista de validación; el comercio (o el admin
+    // desde "Añadir") borra desde "Mis anuncios". Recarga la lista visible.
+    const validar = document.getElementById("validar");
+    const validacionVisible =
+      validar && window.getComputedStyle(validar).display !== "none";
+
+    if (role === "admin" && validacionVisible) {
+      await renderValidarRewards();
+    } else {
+      await cargarMisRewards();
+    }
   } catch (err) {
-    alert("❌ Error al eliminar");
+    alert(`❌ ${err.message || "Error al eliminar"}`);
     console.error(err);
   }
 }

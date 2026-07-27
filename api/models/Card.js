@@ -36,6 +36,8 @@ const CardSchema = new mongoose.Schema({
   imagenesDisparo: [String],      // si dispara proyectiles
   imagenesMuerte: [String],       // 4 imágenes al morir
   vida: { type: Number, default: 0 },
+  cadenciaDisparo: { type: Number, default: 10 }, // segundos entre disparos
+  premioBajaTorreta: { type: Number, default: 100 },
 
   // ===== Trampa =====
   radioActivacion: { type: Number, default: 1 }, // metros

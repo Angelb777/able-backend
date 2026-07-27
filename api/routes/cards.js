@@ -135,6 +135,8 @@ router.post(
 
         // Específicos
         vida: toInt(body.vida, 0),
+        cadenciaDisparo: Math.max(1, toInt(body.cadenciaDisparo, 10)),
+        premioBajaTorreta: Math.max(0, toInt(body.premioBajaTorreta, 100)),
         vidaQueDa: toInt(body.vidaQueDa, 0),
         radioRecogida: toFloat(body.radioRecogida, 1),
         radioActivacion: toFloat(body.radioActivacion, 1),

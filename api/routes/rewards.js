@@ -5,6 +5,20 @@ const multer = require("multer");
 const path = require("path");
 const Reward = require("../models/Reward");
 const User = require("../models/User");
+const { verifyToken } = require("../middlewares/authMiddleware");
+
+// El catálogo cambia desde el panel de administración. Evita que Flutter,
+// navegadores o proxies reutilicen una respuesta anterior después de un borrado.
+router.use((req, res, next) => {
+  if (req.method === "GET") {
+    res.set({
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+    });
+  }
+  next();
+});
 
 // Configuración de Multer para subir imágenes localmente
 const storage = multer.diskStorage({
@@ -135,15 +149,42 @@ router.patch("/:id/validar", async (req, res) => {
   }
 });
 
-// Eliminar reward (admin o comercio)
-router.delete("/:id", async (req, res) => {
+// Eliminar reward (admin o comercio propietario)
+router.delete("/:id", verifyToken, async (req, res) => {
   try {
     const reward = await Reward.findById(req.params.id);
     if (!reward) return res.status(404).json({ error: "No encontrado" });
 
-    await Reward.findByIdAndDelete(req.params.id);
-    res.json({ message: "Reward eliminado" });
+    const esAdmin = req.user.role === "admin";
+    const esComercioPropietario =
+      req.user.role === "comercio" &&
+      reward.comercioId &&
+      String(reward.comercioId) === String(req.user.id);
+
+    if (!esAdmin && !esComercioPropietario) {
+      return res.status(403).json({ error: "No tienes permiso para eliminar este reward" });
+    }
+
+    const eliminado = await Reward.findByIdAndDelete(req.params.id);
+    if (!eliminado) {
+      return res.status(404).json({ error: "El reward ya no existe" });
+    }
+
+    // Limpia referencias antiguas si algún usuario lo tenía guardado en este
+    // campo. El reward ya está eliminado: un fallo de limpieza no debe hacer
+    // creer al panel que el borrado principal falló.
+    try {
+      await User.updateMany(
+        { rewardsComprados: eliminado._id },
+        { $pull: { rewardsComprados: eliminado._id } }
+      );
+    } catch (cleanupError) {
+      console.error("Reward eliminado, pero falló la limpieza de referencias:", cleanupError);
+    }
+
+    res.json({ message: "Reward eliminado", id: String(eliminado._id) });
   } catch (err) {
+    console.error("Error al eliminar reward:", err);
     res.status(500).json({ error: "Error al eliminar" });
   }
 });

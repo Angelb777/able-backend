@@ -27,6 +27,7 @@ const userSchema = new mongoose.Schema({
   },
 
   stepcoins: { type: Number, default: 1000 },
+  stepcoinsTorretaPendientes: { type: Number, default: 0 },
 
   cartas: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Card' }],
   rewardsComprados: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Reward' }],

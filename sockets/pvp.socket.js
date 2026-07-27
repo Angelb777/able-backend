@@ -2,10 +2,14 @@
 const geo  = require('../utils/geo');              // <- OK si utils está en la raíz del repo
 const Card = require('../api/models/Card');
 const UserLife = require('../api/models/UserLife');
+const Turret = require('../api/models/Turret');
+const User = require('../api/models/User');
 
 module.exports = function(io, dependencies = {}) {
   const CardModel = dependencies.CardModel || Card;
   const LifeModel = dependencies.LifeModel || UserLife;
+  const TurretModel = dependencies.TurretModel || Turret;
+  const UserModel = dependencies.UserModel || User;
   const nsp = io.of('/pvp');
   const instanceId =
     process.env.RENDER_INSTANCE_ID || process.env.HOSTNAME || `pid-${process.pid}`;
@@ -14,6 +18,19 @@ module.exports = function(io, dependencies = {}) {
   const players = new Map(); // socketId -> { userId, lat, lng, heading, skinUrl, nombre, zoneId, lastShotByCard:{}, vida }
   const bullets = new Map(); // bulletId -> { byUserId, zoneId, lat, lng, heading, speed, alcance, dano, spriteUrl, createdAt }
   const roomIndex = new Map(); // zoneId -> Set<socketId>
+  const turrets = new Map();
+  const TURRET_BULLET_SPEED = 80;
+  const turretPayload = (t) => ({
+    turretId: String(t._id), ownerUserId: String(t.ownerUserId), cardId: String(t.cardId),
+    lat: t.lat, lng: t.lng, vida: t.vida, vidaMaxima: t.vidaMaxima,
+    alcance: t.alcance, dano: t.dano, cadenciaDisparo: t.cadenciaDisparo,
+    expiresAt: new Date(t.expiresAt).toISOString(),
+    imagenesMovimiento: t.imagenesMovimiento || [], imagenesDisparo: t.imagenesDisparo || [],
+    imagenesMuerte: t.imagenesMuerte || [],
+  });
+  const turretsReady = TurretModel.find({ expiresAt: { $gt: new Date() }, vida: { $gt: 0 } }).lean()
+    .then((items) => items.forEach((t) => turrets.set(String(t._id), t)))
+    .catch((error) => console.error('[PVP] turret restore error', error));
 
   const log = (message, details = {}) => {
     console.log(`[PVP][${instanceId}] ${message}`, details);
@@ -143,6 +160,26 @@ module.exports = function(io, dependencies = {}) {
       }
       if (hit) continue;
 
+      for (const [turretId, turret] of turrets) {
+        if (turret.zoneId !== b.zoneId || String(turret.ownerUserId) === b.byUserId) continue;
+        const impact = segmentCircleIntersection(previous, next, turret, PLAYER_HIT_RADIUS_M);
+        if (!impact) continue;
+        b.lat = impact.lat; b.lng = impact.lng;
+        turret.vida = Math.max(0, turret.vida - b.dano);
+        TurretModel.updateOne({ _id: turretId }, { $set: { vida: turret.vida } }).catch(() => {});
+        nsp.to(turret.zoneId).emit('turret:update', turretPayload(turret));
+        emitBulletExplosion(id, b, 'turret', null);
+        bullets.delete(id);
+        if (turret.vida === 0) {
+          turrets.delete(turretId);
+          TurretModel.deleteOne({ _id: turretId }).catch(() => {});
+          nsp.to(turret.zoneId).emit('turret:destroy', { ...turretPayload(turret), reason: 'destroyed' });
+        }
+        hit = true;
+        break;
+      }
+      if (hit) continue;
+
       b.lat = next.lat;
       b.lng = next.lng;
       b.recorrido = (b.recorrido || 0) + stepM;
@@ -161,6 +198,49 @@ module.exports = function(io, dependencies = {}) {
     }
   }, TICK_MS);
   bulletTimer.unref?.();
+
+  const turretTimer = setInterval(async () => {
+    const now = Date.now();
+    for (const [turretId, turret] of turrets) {
+      if (new Date(turret.expiresAt).getTime() <= now || turret.vida <= 0) {
+        turrets.delete(turretId);
+        await TurretModel.deleteOne({ _id: turretId }).catch(() => {});
+        nsp.to(turret.zoneId).emit('turret:destroy', { ...turretPayload(turret), reason: 'expired' });
+        continue;
+      }
+      if (new Date(turret.nextShotAt).getTime() > now) continue;
+      const candidates = [...players.values()].filter((p) =>
+        p.zoneId === turret.zoneId && p.userId !== String(turret.ownerUserId) &&
+        (p.vida ?? 0) > 0 && geo.distanceMeters(turret, p) <= turret.alcance);
+      candidates.sort((a, b) => geo.distanceMeters(turret, a) - geo.distanceMeters(turret, b));
+      const target = candidates[0];
+      if (!target) continue;
+      turret.nextShotAt = new Date(now + turret.cadenciaDisparo * 1000);
+      await TurretModel.updateOne({ _id: turretId }, { $set: { nextShotAt: turret.nextShotAt } }).catch(() => {});
+      const shotId = `turret-${turretId}-${now}`;
+      const distance = geo.distanceMeters(turret, target);
+      nsp.to(turret.zoneId).emit('turret:shot', {
+        shotId, turretId, ownerUserId: String(turret.ownerUserId), targetUserId: target.userId,
+        from: { lat: turret.lat, lng: turret.lng }, to: { lat: target.lat, lng: target.lng },
+        speed: TURRET_BULLET_SPEED, dano: turret.dano,
+        spriteUrl: turret.imagenesDisparo?.[0] || '',
+      });
+      setTimeout(async () => {
+        const current = playersForUser(target.userId)[0];
+        if (!turrets.has(turretId) || !current || geo.distanceMeters(current, { lat: target.lat, lng: target.lng }) > PLAYER_HIT_RADIUS_M) return;
+        const previousLife = current.vida ?? 1000;
+        const nuevaVida = Math.max(0, previousLife - turret.dano);
+        playersForUser(target.userId).forEach((p) => { p.vida = nuevaVida; });
+        await LifeModel.updateOne({ userId: target.userId }, { $set: { vida: nuevaVida } }, { upsert: true }).catch(() => {});
+        nsp.to(turret.zoneId).emit('life:update', { userId: target.userId, vida: nuevaVida, dano: turret.dano, byTurretId: turretId, byUserId: String(turret.ownerUserId) });
+        nsp.to(turret.zoneId).emit('turret:shot:explode', { shotId, turretId, lat: target.lat, lng: target.lng });
+        if (previousLife > 0 && nuevaVida === 0) {
+          await UserModel.updateOne({ _id: turret.ownerUserId }, { $inc: { stepcoinsTorretaPendientes: turret.premioBaja || 0 } }).catch(() => {});
+        }
+      }, Math.max(100, distance / TURRET_BULLET_SPEED * 1000));
+    }
+  }, 500);
+  turretTimer.unref?.();
 
   // Helpers
   function toZoneId(lat, lng) {
@@ -275,7 +355,20 @@ module.exports = function(io, dependencies = {}) {
           }
         }
         const others = [...othersByUserId.values()];
-        cb?.({ ok:true, players: others, instanceId });
+        await turretsReady;
+        const roomTurrets = [...turrets.values()]
+          .filter((t) => t.zoneId === zoneId)
+          .map(turretPayload);
+        const claimed = await UserModel.findOneAndUpdate(
+          { _id: userId, stepcoinsTorretaPendientes: { $gt: 0 } },
+          [{ $set: {
+            stepcoins: { $add: ['$stepcoins', '$stepcoinsTorretaPendientes'] },
+            stepcoinsTorretaPendientes: 0,
+          } }],
+          { new: false }
+        ).lean().catch(() => null);
+        const claimedStepcoins = claimed?.stepcoinsTorretaPendientes || 0;
+        cb?.({ ok:true, players: others, turrets: roomTurrets, claimedStepcoins, instanceId });
         log('presence registered', {
           socketId: socket.id,
           userId,
@@ -305,7 +398,7 @@ module.exports = function(io, dependencies = {}) {
       const p = players.get(socket.id);
       if (!p) return;
 
-      const { lat, lng, heading } = payload || {};
+      const { lat, lng, heading, skinUrl, nombre } = payload || {};
       if (typeof lat!=='number' || typeof lng!=='number') return;
 
       const newZone = toZoneId(lat, lng);
@@ -323,6 +416,12 @@ module.exports = function(io, dependencies = {}) {
       p.lat = lat;
       p.lng = lng;
       if (typeof heading === 'number') p.heading = heading;
+      if (typeof skinUrl === 'string' && skinUrl.trim()) {
+        p.skinUrl = skinUrl.trim();
+      }
+      if (typeof nombre === 'string' && nombre.trim()) {
+        p.nombre = nombre.trim();
+      }
       nsp.to(p.zoneId).emit('presence:move', {
         userId: p.userId,
         lat,
@@ -338,7 +437,69 @@ module.exports = function(io, dependencies = {}) {
         lat,
         lng,
         heading: p.heading,
+        skinUrl: p.skinUrl,
+        nombre: p.nombre,
       });
+    });
+
+    // Resincroniza la copia de vida en memoria después de un reset REST.
+    socket.on('life:sync', async (_payload, cb) => {
+      const p = players.get(socket.id);
+      if (!p) return cb?.({ ok: false, error: 'No player' });
+
+      try {
+        const lifeDoc = await LifeModel.findOne({ userId: p.userId }).lean();
+        const vida = lifeDoc?.vida ?? 1000;
+        for (const sameUser of playersForUser(p.userId)) {
+          sameUser.vida = vida;
+        }
+        nsp.to(p.zoneId).emit('life:update', {
+          userId: p.userId,
+          vida,
+          reason: 'sync',
+        });
+        cb?.({ ok: true, vida });
+      } catch (error) {
+        console.error(`[PVP][${instanceId}] life sync error`, {
+          socketId: socket.id,
+          userId: p.userId,
+          error: error.message,
+        });
+        cb?.({ ok: false, error: error.message });
+      }
+    });
+
+    socket.on('turret:place', async (payload, cb) => {
+      try {
+        const p = players.get(socket.id);
+        if (!p) throw new Error('No player');
+        const card = await CardModel.findById(payload?.cardId).lean();
+        if (!card || card.tipoArma !== 'Arrastre') throw new Error('Carta de arrastre inválida');
+        const lat = Number(payload?.lat);
+        const lng = Number(payload?.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) ||
+            geo.distanceMeters(p, { lat, lng }) > 60) throw new Error('Posición de torreta inválida');
+        const now = Date.now();
+        const turret = await TurretModel.create({
+          ownerUserId: p.userId, cardId: card._id, lat, lng, zoneId: toZoneId(lat, lng),
+          vida: Math.max(1, card.vida || 1), vidaMaxima: Math.max(1, card.vida || 1),
+          alcance: Math.max(1, card.alcance || 1), dano: Math.max(0, card.dano || 0),
+          cadenciaDisparo: Math.max(1, card.cadenciaDisparo || 10),
+          premioBaja: Math.max(0, card.premioBajaTorreta || 0),
+          nextShotAt: new Date(now + Math.max(1, card.cadenciaDisparo || 10) * 1000),
+          expiresAt: new Date(now + Math.max(1, card.duracion || 30) * 1000),
+          imagenesMovimiento: card.imagenesMovimiento || [],
+          imagenesDisparo: card.imagenesDisparo || [],
+          imagenesMuerte: card.imagenesMuerte || [],
+        });
+        const plain = turret.toObject();
+        turrets.set(String(plain._id), plain);
+        const result = turretPayload(plain);
+        nsp.to(plain.zoneId).emit('turret:spawn', result);
+        cb?.({ ok: true, turret: result });
+      } catch (error) {
+        cb?.({ ok: false, error: error.message });
+      }
     });
 
     // 3) Disparo
