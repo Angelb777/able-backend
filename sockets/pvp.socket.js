@@ -20,6 +20,19 @@ module.exports = function(io, dependencies = {}) {
   const roomIndex = new Map(); // zoneId -> Set<socketId>
   const turrets = new Map();
   const TURRET_BULLET_SPEED = 80;
+  const DEFAULT_TURRET_RANGE_M = 100;
+  const DEFAULT_TURRET_DAMAGE = 10;
+  const normalizeTurretCombatStats = (turret) => {
+    const alcance = Number(turret.alcance);
+    const dano = Number(turret.dano);
+    turret.alcance = Number.isFinite(alcance) && alcance > 0
+      ? alcance
+      : DEFAULT_TURRET_RANGE_M;
+    turret.dano = Number.isFinite(dano) && dano > 0
+      ? dano
+      : DEFAULT_TURRET_DAMAGE;
+    return turret;
+  };
   const turretPayload = (t) => ({
     turretId: String(t._id), ownerUserId: String(t.ownerUserId), cardId: String(t.cardId),
     lat: t.lat, lng: t.lng, vida: t.vida, vidaMaxima: t.vidaMaxima,
@@ -29,7 +42,10 @@ module.exports = function(io, dependencies = {}) {
     imagenesMuerte: t.imagenesMuerte || [],
   });
   const turretsReady = TurretModel.find({ expiresAt: { $gt: new Date() }, vida: { $gt: 0 } }).lean()
-    .then((items) => items.forEach((t) => turrets.set(String(t._id), t)))
+    .then((items) => items.forEach((t) => {
+      normalizeTurretCombatStats(t);
+      turrets.set(String(t._id), t);
+    }))
     .catch((error) => console.error('[PVP] turret restore error', error));
 
   const log = (message, details = {}) => {
@@ -480,10 +496,17 @@ module.exports = function(io, dependencies = {}) {
         if (!Number.isFinite(lat) || !Number.isFinite(lng) ||
             geo.distanceMeters(p, { lat, lng }) > 500) throw new Error('Posición de torreta inválida');
         const now = Date.now();
+        const alcanceConfigurado = Number(card.alcance);
+        const danoConfigurado = Number(card.dano);
         const turret = await TurretModel.create({
           ownerUserId: p.userId, cardId: card._id, lat, lng, zoneId: toZoneId(lat, lng),
           vida: Math.max(1, card.vida || 1), vidaMaxima: Math.max(1, card.vida || 1),
-          alcance: Math.max(1, card.alcance || 1), dano: Math.max(0, card.dano || 0),
+          alcance: Number.isFinite(alcanceConfigurado) && alcanceConfigurado > 0
+            ? alcanceConfigurado
+            : DEFAULT_TURRET_RANGE_M,
+          dano: Number.isFinite(danoConfigurado) && danoConfigurado > 0
+            ? danoConfigurado
+            : DEFAULT_TURRET_DAMAGE,
           cadenciaDisparo: Math.max(1, card.cadenciaDisparo || 10),
           premioBaja: Math.max(0, card.premioBajaTorreta || 0),
           nextShotAt: new Date(now + Math.max(1, card.cadenciaDisparo || 10) * 1000),

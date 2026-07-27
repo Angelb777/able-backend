@@ -69,12 +69,20 @@ test('two players share presence, movement, one hit, life and explosions', async
               alcance: 6,
               dano: 25,
             },
+            'card-turret-zero': {
+              tipoArma: 'Arrastre',
+              alcance: 0,
+              dano: 0,
+              vida: 200,
+              cadenciaDisparo: 1,
+              duracion: 60,
+            },
           };
           const card = cards[cardId];
           return card
             ? {
                 _id: cardId,
-                tipoArma: 'Proyectil',
+                tipoArma: card.tipoArma || 'Proyectil',
                 tiempoEspera: 0,
                 ...card,
               }
@@ -86,6 +94,13 @@ test('two players share presence, movement, one hit, life and explosions', async
   const fakeTurretModel = {
     find() {
       return { lean: async () => [] };
+    },
+    async create(data) {
+      const stored = { _id: 'turret-test-1', ...data };
+      return {
+        ...stored,
+        toObject: () => ({ ...stored }),
+      };
     },
     async updateOne() {},
     async deleteOne() {},
@@ -345,6 +360,25 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.equal(lifeSyncAck.vida, 1000);
   assert.equal(syncedLifeA.vida, 1000);
   assert.deepEqual(syncedLifeA, syncedLifeB);
+
+  const turretSpawnOnB = waitForEvent(playerB, 'turret:spawn');
+  const turretShotOnA = waitForEvent(playerA, 'turret:shot', 3000);
+  const turretPlaceAck = await emitWithAck(playerA, 'turret:place', {
+    cardId: 'card-turret-zero',
+    lat: origin.lat,
+    lng: origin.lng,
+  });
+  const spawnedTurret = await turretSpawnOnB;
+  assert.equal(turretPlaceAck.ok, true);
+  assert.equal(turretPlaceAck.turret.alcance, 100);
+  assert.equal(turretPlaceAck.turret.dano, 10);
+  assert.equal(spawnedTurret.alcance, 100);
+  assert.equal(spawnedTurret.dano, 10);
+
+  const turretShot = await turretShotOnA;
+  assert.equal(turretShot.turretId, 'turret-test-1');
+  assert.equal(turretShot.targetUserId, '507f191e810c19729de860ea');
+  assert.equal(turretShot.dano, 10);
 
   const farAway = geo.computeOffset(origin, 1000, 90);
   const shortMove = waitForEvent(playerA, 'presence:move');

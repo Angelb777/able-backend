@@ -88,6 +88,12 @@ router.post(
       if (body.tipoArma === "Proyectil" && (!files.imagenesArma || files.imagenesArma.length === 0)) {
         return res.status(400).json({ error: "Debes subir al menos una imagen del proyectil (imagenesArma)." });
       }
+      if (body.tipoArma === "Arrastre" &&
+          (toInt(body.alcance, 0) <= 0 || toInt(body.dano, 0) <= 0)) {
+        return res.status(400).json({
+          error: "Las cartas Arrastre necesitan alcance y daño mayores que 0."
+        });
+      }
 
       // ❗ Evita duplicados
       const yaExiste = await Card.findOne({
@@ -205,6 +211,12 @@ router.put(
       if (!body.titulo || !body.tipoArma) {
         return res.status(400).json({
           error: "Faltan campos obligatorios: título y tipoArma."
+        });
+      }
+      if (body.tipoArma === "Arrastre" &&
+          (toInt(body.alcance, 0) <= 0 || toInt(body.dano, 0) <= 0)) {
+        return res.status(400).json({
+          error: "Las cartas Arrastre necesitan alcance y daño mayores que 0."
         });
       }
 
