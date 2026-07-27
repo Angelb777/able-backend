@@ -111,6 +111,11 @@ test('two players share presence, movement, one hit, life and explosions', async
     },
     async updateOne() {},
   };
+  const fakeUfoModel = {
+    find() {
+      return { lean: async () => [] };
+    },
+  };
 
   const httpServer = http.createServer();
   const io = new Server(httpServer, { transports: ['websocket'] });
@@ -119,6 +124,7 @@ test('two players share presence, movement, one hit, life and explosions', async
     LifeModel: fakeLifeModel,
     TurretModel: fakeTurretModel,
     UserModel: fakeUserModel,
+    UfoModel: fakeUfoModel,
   });
   await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
   const address = httpServer.address();
@@ -380,6 +386,54 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.equal(turretShot.targetUserId, '507f191e810c19729de860ea');
   assert.equal(turretShot.dano, 10);
 
+  const east30 = geo.computeOffset(origin, 30, 90);
+  const ownerMoveOnB = waitForEvent(playerB, 'presence:move');
+  playerA.emit('presence:update', {
+    lat: east30.lat,
+    lng: east30.lng,
+    heading: 0,
+  });
+  await ownerMoveOnB;
+
+  const turretDamageOnB = waitForEvent(playerB, 'turret:update');
+  const turretHitExplosionOnB = waitForEvent(playerB, 'bullet:explode');
+  const turretHitAck = await emitWithAck(playerB, 'bullet:spawn', {
+    clientShotId: 'shot-b-turret',
+    cardId: 'card-projectile',
+    from: north20,
+    heading: 180,
+    speed: 180,
+    alcance: 45,
+    dano: 125,
+    spriteUrl: 'https://example.test/bullet.png',
+    explosionFrames: ['https://example.test/explosion.png'],
+  });
+  const [damagedTurret, turretHitExplosion] = await Promise.all([
+    turretDamageOnB,
+    turretHitExplosionOnB,
+  ]);
+  assert.equal(turretHitAck.ok, true);
+  assert.equal(damagedTurret.turretId, 'turret-test-1');
+  assert.equal(damagedTurret.vida, 75);
+  assert.equal(turretHitExplosion.reason, 'turret');
+  assert.equal(turretHitExplosion.hitTurretId, 'turret-test-1');
+  assert.ok(
+    Math.abs(
+      geo.distanceMeters(origin, {
+        lat: turretHitExplosion.lat,
+        lng: turretHitExplosion.lng,
+      }) - 8
+    ) < 0.3
+  );
+
+  const ownerReturnOnB = waitForEvent(playerB, 'presence:move');
+  playerA.emit('presence:update', {
+    lat: origin.lat,
+    lng: origin.lng,
+    heading: 0,
+  });
+  await ownerReturnOnB;
+
   const farAway = geo.computeOffset(origin, 1000, 90);
   const shortMove = waitForEvent(playerA, 'presence:move');
   playerB.emit('presence:update', {
@@ -449,4 +503,157 @@ test('two players share presence, movement, one hit, life and explosions', async
   const leftB = await leaveOnA;
   assert.equal(leftB.userId, '507f191e810c19729de860ea');
   assert.equal(leaveEventsOnA, 1);
+});
+
+test('ufo starts after first shot, is shared and awards its killer', async (t) => {
+  const awarded = new Map();
+  const fakeLifeModel = {
+    findOne() {
+      return { lean: async () => null };
+    },
+    async updateOne() {},
+  };
+  const fakeCardModel = {
+    findById() {
+      return {
+        lean: async () => ({
+          _id: 'card-ufo',
+          tipoArma: 'Proyectil',
+          alcance: 120,
+          dano: 60,
+          tiempoEspera: 0,
+        }),
+      };
+    },
+  };
+  const fakeTurretModel = {
+    find() {
+      return { lean: async () => [] };
+    },
+    async updateOne() {},
+    async deleteOne() {},
+  };
+  const fakeUserModel = {
+    findOneAndUpdate() {
+      return { lean: async () => null };
+    },
+    async updateOne({ _id }, update) {
+      awarded.set(_id, (awarded.get(_id) || 0) + (update.$inc?.stepcoins || 0));
+    },
+  };
+  const fakeUfoModel = {
+    find() {
+      return {
+        lean: async () => [{
+          _id: 'ufo-shared',
+          nombre: 'OVNI compartido',
+          imagenOvni: '/uploads/ufo/ufo.webp',
+          imagenBala: '/uploads/ufo/bullet.webp',
+          vida: 50,
+          velocidadBala: 100,
+          velocidadMovimiento: 1,
+          tiempoAparicion: 0,
+          duracionPantalla: 10,
+          stepcoinsPremio: 77,
+          segundosEntreDisparos: 3,
+          danoBala: 10,
+        }],
+      };
+    },
+  };
+
+  const httpServer = http.createServer();
+  const io = new Server(httpServer, { transports: ['websocket'] });
+  registerPvp(io, {
+    CardModel: fakeCardModel,
+    LifeModel: fakeLifeModel,
+    TurretModel: fakeTurretModel,
+    UserModel: fakeUserModel,
+    UfoModel: fakeUfoModel,
+  });
+  await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${httpServer.address().port}`;
+  const sockets = [];
+  t.after(async () => {
+    for (const socket of sockets) socket.disconnect();
+    await new Promise((resolve) => io.close(resolve));
+    if (httpServer.listening) {
+      await new Promise((resolve) => httpServer.close(resolve));
+    }
+  });
+
+  const origin = { lat: 41.65671, lng: -0.8785 };
+  const observerPosition = geo.computeOffset(origin, 300, 90);
+  const shooter = await connectClient(url);
+  const observer = await connectClient(url);
+  sockets.push(shooter, observer);
+  await emitWithAck(shooter, 'presence:hello', {
+    userId: '507f1f77bcf86cd799439011',
+    ...origin,
+  });
+  await emitWithAck(observer, 'presence:hello', {
+    userId: '507f191e810c19729de860ea',
+    ...observerPosition,
+  });
+
+  const ufoOnShooter = waitForEvent(shooter, 'ufo:spawn');
+  const ufoOnObserver = waitForEvent(observer, 'ufo:spawn');
+  const triggerAck = await emitWithAck(shooter, 'bullet:spawn', {
+    clientShotId: 'ufo-trigger-shot',
+    cardId: 'card-ufo',
+    from: origin,
+    heading: 0,
+    speed: 0,
+    alcance: 120,
+    dano: 60,
+    spriteUrl: '/uploads/cards/bullet.webp',
+    explosionFrames: ['/uploads/cards/explosion.webp'],
+  });
+  const [spawnedForShooter, spawnedForObserver] = await Promise.all([
+    ufoOnShooter,
+    ufoOnObserver,
+  ]);
+  assert.equal(triggerAck.ok, true);
+  assert.deepEqual(spawnedForShooter, spawnedForObserver);
+  assert.equal(spawnedForShooter.ufoId, 'ufo-shared');
+
+  const toRadians = (value) => value * Math.PI / 180;
+  const lat1 = toRadians(origin.lat);
+  const lat2 = toRadians(spawnedForShooter.lat);
+  const deltaLng = toRadians(spawnedForShooter.lng - origin.lng);
+  const heading = (
+    Math.atan2(
+      Math.sin(deltaLng) * Math.cos(lat2),
+      Math.cos(lat1) * Math.sin(lat2) -
+        Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng)
+    ) * 180 / Math.PI + 360
+  ) % 360;
+
+  const destroyOnShooter = waitForEvent(shooter, 'ufo:destroy');
+  const destroyOnObserver = waitForEvent(observer, 'ufo:destroy');
+  const explosionOnShooter = waitForEvent(shooter, 'bullet:explode');
+  const killAck = await emitWithAck(shooter, 'bullet:spawn', {
+    clientShotId: 'ufo-kill-shot',
+    cardId: 'card-ufo',
+    from: origin,
+    heading,
+    speed: 180,
+    alcance: 120,
+    dano: 60,
+    spriteUrl: '/uploads/cards/bullet.webp',
+    explosionFrames: ['/uploads/cards/explosion.webp'],
+  });
+  const [destroyed, destroyedForObserver, explosion] = await Promise.all([
+    destroyOnShooter,
+    destroyOnObserver,
+    explosionOnShooter,
+  ]);
+  assert.equal(killAck.ok, true);
+  assert.deepEqual(destroyed, destroyedForObserver);
+  assert.equal(destroyed.ufoId, 'ufo-shared');
+  assert.equal(destroyed.winnerUserId, '507f1f77bcf86cd799439011');
+  assert.equal(destroyed.stepcoinsPremio, 77);
+  assert.equal(explosion.reason, 'ufo');
+  assert.equal(explosion.hitUfoId, 'ufo-shared');
+  assert.equal(awarded.get('507f1f77bcf86cd799439011'), 77);
 });

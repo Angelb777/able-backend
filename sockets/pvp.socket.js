@@ -4,12 +4,14 @@ const Card = require('../api/models/Card');
 const UserLife = require('../api/models/UserLife');
 const Turret = require('../api/models/Turret');
 const User = require('../api/models/User');
+const Ufo = require('../api/models/Ufo');
 
 module.exports = function(io, dependencies = {}) {
   const CardModel = dependencies.CardModel || Card;
   const LifeModel = dependencies.LifeModel || UserLife;
   const TurretModel = dependencies.TurretModel || Turret;
   const UserModel = dependencies.UserModel || User;
+  const UfoModel = dependencies.UfoModel || Ufo;
   const nsp = io.of('/pvp');
   const instanceId =
     process.env.RENDER_INSTANCE_ID || process.env.HOSTNAME || `pid-${process.pid}`;
@@ -19,6 +21,9 @@ module.exports = function(io, dependencies = {}) {
   const bullets = new Map(); // bulletId -> { byUserId, zoneId, lat, lng, heading, speed, alcance, dano, spriteUrl, createdAt }
   const roomIndex = new Map(); // zoneId -> Set<socketId>
   const turrets = new Map();
+  const activeUfos = new Map();
+  const scheduledUfoZones = new Set();
+  const pendingUfoTimers = new Map();
   const TURRET_BULLET_SPEED = 80;
   const DEFAULT_TURRET_RANGE_M = 100;
   const DEFAULT_TURRET_DAMAGE = 10;
@@ -90,17 +95,79 @@ module.exports = function(io, dependencies = {}) {
     };
   };
 
-  const emitBulletExplosion = (bulletId, bullet, reason, hitUserId = null) => {
+  const emitBulletExplosion = (bulletId, bullet, reason, hit = {}) => {
     nsp.to(bullet.zoneId).emit('bullet:explode', {
       bulletId,
       clientShotId: bullet.clientShotId,
       byUserId: bullet.byUserId,
-      hitUserId,
+      hitUserId: hit.userId || null,
+      hitTurretId: hit.turretId || null,
+      hitUfoId: hit.ufoId || null,
       reason,
       lat: bullet.lat,
       lng: bullet.lng,
       spriteUrl: bullet.spriteUrl,
       explosionFrames: bullet.explosionFrames,
+    });
+  };
+
+  const ufoPayload = (state) => ({
+    ufoId: state.ufoId,
+    lat: state.lat,
+    lng: state.lng,
+    vida: state.vida,
+    expiresAt: new Date(state.expiresAt).toISOString(),
+    ufo: state.ufo,
+  });
+
+  const scheduleUfosAfterFirstShot = async (zoneId, origin) => {
+    if (scheduledUfoZones.has(zoneId)) return;
+    scheduledUfoZones.add(zoneId);
+    const configuredUfos = await UfoModel.find().lean().catch((error) => {
+      scheduledUfoZones.delete(zoneId);
+      console.error(`[PVP][${instanceId}] ufo read error`, error);
+      return [];
+    });
+    if (!scheduledUfoZones.has(zoneId)) return;
+    const scheduledAt = Date.now();
+    for (const configured of configuredUfos) {
+      const delayMs = Math.max(0, Number(configured.tiempoAparicion) || 0) * 1000;
+      const durationMs =
+        Math.max(1, Number(configured.duracionPantalla) || 600) * 1000;
+      const timer = setTimeout(() => {
+        pendingUfoTimers.get(zoneId)?.delete(timer);
+        if ((roomIndex.get(zoneId)?.size || 0) === 0) return;
+        const ufoId = String(configured._id);
+        const key = `${zoneId}:${ufoId}`;
+        const position = geo.computeOffset(
+          origin,
+          45 + Math.random() * 45,
+          Math.random() * 360
+        );
+        const state = {
+          key,
+          ufoId,
+          zoneId,
+          lat: position.lat,
+          lng: position.lng,
+          anchor: { ...origin },
+          vida: Math.max(1, Number(configured.vida) || 300),
+          expiresAt: Date.now() + durationMs,
+          ufo: { ...configured, _id: ufoId },
+        };
+        activeUfos.set(key, state);
+        nsp.to(zoneId).emit('ufo:spawn', ufoPayload(state));
+      }, delayMs);
+      if (!pendingUfoTimers.has(zoneId)) {
+        pendingUfoTimers.set(zoneId, new Set());
+      }
+      pendingUfoTimers.get(zoneId).add(timer);
+      timer.unref?.();
+    }
+    log('ufos scheduled after first shot', {
+      zoneId,
+      count: configuredUfos.length,
+      scheduledAt,
     });
   };
 
@@ -113,88 +180,116 @@ module.exports = function(io, dependencies = {}) {
       const stepM = Math.min(b.speed * (TICK_MS / 1000), remainingM);
       const next = geo.computeOffset(previous, stepM, b.heading);
 
-      // colisiones con jugadores de su sala
+      // Resuelve todos los candidatos del segmento y conserva solo el primero.
+      // Así una bala nunca atraviesa una torre/OVNI para impactar algo posterior.
+      const candidates = [];
+      const seenUsers = new Set();
       const socketsInZone = roomIndex.get(b.zoneId) || new Set();
-      let hit = false;
       for (const sid of socketsInZone) {
-        const p = players.get(sid);
-        if (!p || p.userId === b.byUserId) continue;
-
+        const player = players.get(sid);
+        if (!player || player.userId === b.byUserId ||
+            seenUsers.has(player.userId)) continue;
+        seenUsers.add(player.userId);
         const impact = segmentCircleIntersection(
-          previous,
-          next,
-          { lat: p.lat, lng: p.lng },
-          PLAYER_HIT_RADIUS_M
+          previous, next, player, PLAYER_HIT_RADIUS_M
+        );
+        if (impact) candidates.push({ type: 'player', target: player, impact });
+      }
+      for (const [turretId, turret] of turrets) {
+        if (turret.zoneId !== b.zoneId ||
+            String(turret.ownerUserId) === b.byUserId) continue;
+        const impact = segmentCircleIntersection(
+          previous, next, turret, PLAYER_HIT_RADIUS_M
         );
         if (impact) {
-          b.lat = impact.lat;
-          b.lng = impact.lng;
-          b.recorrido = (b.recorrido || 0) + stepM * impact.t;
-          const dist = geo.distanceMeters(
-            { lat: b.lat, lng: b.lng },
-            { lat: p.lat, lng: p.lng }
-          );
-          const nuevaVida = Math.max(0, (p.vida ?? 1000) - b.dano);
-          for (const sameUser of playersForUser(p.userId)) {
+          candidates.push({ type: 'turret', target: turret, turretId, impact });
+        }
+      }
+      for (const state of activeUfos.values()) {
+        if (state.zoneId !== b.zoneId) continue;
+        const impact = segmentCircleIntersection(
+          previous, next, state, PLAYER_HIT_RADIUS_M
+        );
+        if (impact) candidates.push({ type: 'ufo', target: state, impact });
+      }
+      candidates.sort((a, c) => a.impact.t - c.impact.t);
+      const collision = candidates[0];
+      if (collision) {
+        const { impact, target } = collision;
+        b.lat = impact.lat;
+        b.lng = impact.lng;
+        b.recorrido = (b.recorrido || 0) + stepM * impact.t;
+
+        if (collision.type === 'player') {
+          const nuevaVida = Math.max(0, (target.vida ?? 1000) - b.dano);
+          for (const sameUser of playersForUser(target.userId)) {
             sameUser.vida = nuevaVida;
           }
           LifeModel.updateOne(
-            { userId: p.userId },
+            { userId: target.userId },
             { $set: { vida: nuevaVida }, $setOnInsert: { yaPenalizado: false } },
             { upsert: true }
           ).catch((error) => {
             console.error(`[PVP][${instanceId}] life persist error`, {
               bulletId: id,
-              userId: p.userId,
+              userId: target.userId,
               error: error.message,
             });
           });
-
           nsp.to(b.zoneId).emit('life:update', {
             bulletId: id,
             byUserId: b.byUserId,
-            userId: p.userId,
+            userId: target.userId,
             vida: nuevaVida,
             dano: b.dano,
           });
-          emitBulletExplosion(id, b, 'hit', p.userId);
-          bullets.delete(id);
-          hit = true;
-          log('bullet hit', {
-            bulletId: id,
-            clientShotId: b.clientShotId,
-            byUserId: b.byUserId,
-            hitUserId: p.userId,
-            damage: b.dano,
-            life: nuevaVida,
-            distanceMeters: Number(dist.toFixed(2)),
-            hitRadiusMeters: PLAYER_HIT_RADIUS_M,
-            traveledMeters: Number(b.recorrido.toFixed(2)),
+          emitBulletExplosion(id, b, 'hit', { userId: target.userId });
+        } else if (collision.type === 'turret') {
+          target.vida = Math.max(0, target.vida - b.dano);
+          TurretModel.updateOne(
+            { _id: collision.turretId },
+            { $set: { vida: target.vida } }
+          ).catch(() => {});
+          nsp.to(target.zoneId).emit('turret:update', turretPayload(target));
+          emitBulletExplosion(id, b, 'turret', {
+            turretId: collision.turretId,
           });
-          break;
+          if (target.vida === 0) {
+            turrets.delete(collision.turretId);
+            TurretModel.deleteOne({ _id: collision.turretId }).catch(() => {});
+            nsp.to(target.zoneId).emit('turret:destroy', {
+              ...turretPayload(target),
+              reason: 'destroyed',
+            });
+          }
+        } else {
+          target.vida = Math.max(0, target.vida - b.dano);
+          emitBulletExplosion(id, b, 'ufo', { ufoId: target.ufoId });
+          if (target.vida === 0) {
+            activeUfos.delete(target.key);
+            const premio = Math.max(
+              0,
+              Number(target.ufo.stepcoinsPremio) || 0
+            );
+            if (premio > 0) {
+              UserModel.updateOne(
+                { _id: b.byUserId },
+                { $inc: { stepcoins: premio } }
+              ).catch(() => {});
+            }
+            nsp.to(target.zoneId).emit('ufo:destroy', {
+              ufoId: target.ufoId,
+              winnerUserId: b.byUserId,
+              stepcoinsPremio: premio,
+              reason: 'destroyed',
+            });
+          } else {
+            nsp.to(target.zoneId).emit('ufo:update', ufoPayload(target));
+          }
         }
-      }
-      if (hit) continue;
-
-      for (const [turretId, turret] of turrets) {
-        if (turret.zoneId !== b.zoneId || String(turret.ownerUserId) === b.byUserId) continue;
-        const impact = segmentCircleIntersection(previous, next, turret, PLAYER_HIT_RADIUS_M);
-        if (!impact) continue;
-        b.lat = impact.lat; b.lng = impact.lng;
-        turret.vida = Math.max(0, turret.vida - b.dano);
-        TurretModel.updateOne({ _id: turretId }, { $set: { vida: turret.vida } }).catch(() => {});
-        nsp.to(turret.zoneId).emit('turret:update', turretPayload(turret));
-        emitBulletExplosion(id, b, 'turret', null);
         bullets.delete(id);
-        if (turret.vida === 0) {
-          turrets.delete(turretId);
-          TurretModel.deleteOne({ _id: turretId }).catch(() => {});
-          nsp.to(turret.zoneId).emit('turret:destroy', { ...turretPayload(turret), reason: 'destroyed' });
-        }
-        hit = true;
-        break;
+        continue;
       }
-      if (hit) continue;
 
       b.lat = next.lat;
       b.lng = next.lng;
@@ -214,6 +309,38 @@ module.exports = function(io, dependencies = {}) {
     }
   }, TICK_MS);
   bulletTimer.unref?.();
+
+  const ufoTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [key, state] of activeUfos) {
+      if (state.expiresAt <= now) {
+        activeUfos.delete(key);
+        nsp.to(state.zoneId).emit('ufo:destroy', {
+          ufoId: state.ufoId,
+          reason: 'expired',
+          winnerUserId: null,
+          stepcoinsPremio: 0,
+        });
+        continue;
+      }
+      const movementSpeed = Math.min(
+        12,
+        Math.max(0.5, Number(state.ufo.velocidadMovimiento) || 0.5)
+      );
+      let next = geo.computeOffset(
+        state,
+        movementSpeed,
+        Math.random() * 360
+      );
+      if (geo.distanceMeters(next, state.anchor) > 120) {
+        next = geo.computeOffset(state.anchor, 80, Math.random() * 360);
+      }
+      state.lat = next.lat;
+      state.lng = next.lng;
+      nsp.to(state.zoneId).emit('ufo:update', ufoPayload(state));
+    }
+  }, 1000);
+  ufoTimer.unref?.();
 
   const turretTimer = setInterval(async () => {
     const now = Date.now();
@@ -375,6 +502,9 @@ module.exports = function(io, dependencies = {}) {
         const roomTurrets = [...turrets.values()]
           .filter((t) => t.zoneId === zoneId)
           .map(turretPayload);
+        const roomUfos = [...activeUfos.values()]
+          .filter((ufo) => ufo.zoneId === zoneId)
+          .map(ufoPayload);
         const claimed = await UserModel.findOneAndUpdate(
           { _id: userId, stepcoinsTorretaPendientes: { $gt: 0 } },
           [{ $set: {
@@ -384,7 +514,14 @@ module.exports = function(io, dependencies = {}) {
           { new: false }
         ).lean().catch(() => null);
         const claimedStepcoins = claimed?.stepcoinsTorretaPendientes || 0;
-        cb?.({ ok:true, players: others, turrets: roomTurrets, claimedStepcoins, instanceId });
+        cb?.({
+          ok:true,
+          players: others,
+          turrets: roomTurrets,
+          ufos: roomUfos,
+          claimedStepcoins,
+          instanceId,
+        });
         log('presence registered', {
           socketId: socket.id,
           userId,
@@ -588,6 +725,9 @@ module.exports = function(io, dependencies = {}) {
           createdAt: Date.now(),
           startsAt: Date.now() + BULLET_START_DELAY_MS,
         });
+        scheduleUfosAfterFirstShot(p.zoneId, authoritativeFrom).catch((error) => {
+          console.error(`[PVP][${instanceId}] ufo schedule error`, error);
+        });
 
         // Avisar a la sala para que los clientes la dibujen en local
         nsp.to(p.zoneId).emit('bullet:spawn', {
@@ -653,6 +793,14 @@ module.exports = function(io, dependencies = {}) {
       }
       if (roomIndex.get(p.zoneId)?.size === 0) {
         roomIndex.delete(p.zoneId);
+        for (const timer of pendingUfoTimers.get(p.zoneId) || []) {
+          clearTimeout(timer);
+        }
+        pendingUfoTimers.delete(p.zoneId);
+        scheduledUfoZones.delete(p.zoneId);
+        for (const [key, ufo] of activeUfos) {
+          if (ufo.zoneId === p.zoneId) activeUfos.delete(key);
+        }
       }
       log('socket disconnected', {
         socketId: socket.id,
