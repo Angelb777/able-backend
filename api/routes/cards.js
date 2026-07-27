@@ -167,6 +167,132 @@ router.post(
   }
 );
 
+// ✏️ Editar carta. Los archivos solo se sustituyen cuando llegan otros nuevos.
+router.put(
+  "/:id",
+  upload.fields([
+    { name: "imagenPortada", maxCount: 1 },
+    { name: "imagenesArma", maxCount: 4 },
+    { name: "imagenesExplosion", maxCount: 4 },
+    { name: "imagenesExtras", maxCount: 5 },
+    { name: "imagenesMovimiento", maxCount: 4 },
+    { name: "imagenesDisparo", maxCount: 4 },
+    { name: "imagenesBala", maxCount: 4 },
+    { name: "imagenesMuerte", maxCount: 4 },
+    { name: "imagenesActivacion", maxCount: 4 },
+    { name: "imagenesInvocacion", maxCount: 4 },
+    { name: "imagenesVida", maxCount: 4 },
+    { name: "imagenesDefensa", maxCount: 4 }
+  ]),
+  async (req, res) => {
+    try {
+      const card = await Card.findById(req.params.id);
+      if (!card) {
+        return res.status(404).json({ error: "Carta no encontrada" });
+      }
+
+      const files = req.files || {};
+      const body = req.body || {};
+      const toInt = (value, fallback = 0) =>
+        value === undefined || value === null || value === ""
+          ? fallback
+          : parseInt(value, 10);
+      const toFloat = (value, fallback = 0) =>
+        value === undefined || value === null || value === ""
+          ? fallback
+          : parseFloat(value);
+
+      if (!body.titulo || !body.tipoArma) {
+        return res.status(400).json({
+          error: "Faltan campos obligatorios: título y tipoArma."
+        });
+      }
+
+      const duplicada = await Card.findOne({
+        _id: { $ne: card._id },
+        titulo: body.titulo,
+        tipoArma: body.tipoArma,
+        dispositivo: body.dispositivo || "Ambos"
+      });
+      if (duplicada) {
+        return res.status(400).json({
+          error: "Ya existe otra carta con ese título, tipo y dispositivo."
+        });
+      }
+
+      Object.assign(card, {
+        titulo: body.titulo,
+        descripcion: body.descripcion || "",
+        tipoArma: body.tipoArma,
+        dispositivo: body.dispositivo || "Ambos",
+        alcance: toInt(body.alcance, 0),
+        dano: toInt(body.dano, 0),
+        tiempoEspera: toInt(body.tiempoEspera, 0),
+        sePuedeSaltar: body.sePuedeSaltar === "true",
+        duracion: toInt(body.duracion, 0) * 60,
+        vida: toInt(body.vida, 0),
+        cadenciaDisparo: Math.max(1, toInt(body.cadenciaDisparo, 10)),
+        premioBajaTorreta: Math.max(0, toInt(body.premioBajaTorreta, 100)),
+        vidaQueDa: toInt(body.vidaQueDa, card.vidaQueDa || 0),
+        radioRecogida: toFloat(body.radioRecogida, card.radioRecogida || 1),
+        radioActivacion: toFloat(body.radioActivacion, 1),
+        usoUnico: body.usoUnico === "true",
+        velocidadMovimiento: body.velocidadMovimiento
+          ? toFloat(body.velocidadMovimiento)
+          : undefined,
+        iaComportamiento: body.iaComportamiento || undefined,
+        duracionDefensa: toInt(body.duracionDefensa, 0),
+        tipoDefensa: body.tipoDefensa || "Inmunidad",
+        porcentajeReduccion: toInt(body.porcentajeReduccion, 0)
+      });
+
+      if (files.imagenPortada?.length) {
+        card.imagenPortada = normalizarRuta(files.imagenPortada[0]);
+      }
+
+      const camposImagenes = [
+        "imagenesArma",
+        "imagenesExplosion",
+        "imagenesExtras",
+        "imagenesMovimiento",
+        "imagenesMuerte",
+        "imagenesActivacion",
+        "imagenesInvocacion",
+        "imagenesVida",
+        "imagenesDefensa"
+      ];
+      camposImagenes.forEach((campo) => {
+        if (files[campo]?.length) {
+          card[campo] = files[campo].map(normalizarRuta);
+        }
+      });
+
+      const imagenesDisparo = [
+        ...(files.imagenesDisparo || []),
+        ...(files.imagenesBala || [])
+      ];
+      if (imagenesDisparo.length) {
+        card.imagenesDisparo = imagenesDisparo.map(normalizarRuta);
+      }
+
+      await card.save();
+      return res.json({ message: "✅ Carta actualizada correctamente", card });
+    } catch (err) {
+      if (err.name === "ValidationError") {
+        return res.status(400).json({
+          error: "Validación fallida",
+          details: err.message
+        });
+      }
+      console.error("❌ Error al actualizar carta:", err);
+      return res.status(500).json({
+        error: "Error interno al actualizar la carta",
+        details: err.message
+      });
+    }
+  }
+);
+
 // 📥 Obtener todas las cartas
 router.get("/", async (req, res) => {
   try {

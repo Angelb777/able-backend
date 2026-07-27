@@ -71,6 +71,63 @@ router.post('/', upload.fields([
   }
 });
 
+// ✏️ Editar OVNI. Si no se suben imágenes nuevas, conserva las actuales.
+router.put('/:id', upload.fields([
+  { name: 'imagenOvni', maxCount: 1 },
+  { name: 'imagenBala', maxCount: 1 }
+]), async (req, res) => {
+  try {
+    const ovni = await Ufo.findById(req.params.id);
+    if (!ovni) {
+      return res.status(404).json({ error: 'OVNI no encontrado' });
+    }
+
+    const {
+      nombre,
+      vida,
+      velocidadBala,
+      velocidadMovimiento,
+      tiempoAparicion,
+      duracionPantalla,
+      stepcoinsPremio,
+      segundosEntreDisparos,
+      danoBala
+    } = req.body;
+
+    if (!nombre || vida === undefined || tiempoAparicion === undefined ||
+        duracionPantalla === undefined) {
+      return res.status(400).json({ error: 'Faltan datos requeridos' });
+    }
+
+    Object.assign(ovni, {
+      nombre,
+      vida: Number(vida),
+      velocidadBala: Number(velocidadBala),
+      velocidadMovimiento: Number(velocidadMovimiento),
+      tiempoAparicion: Number(tiempoAparicion),
+      duracionPantalla: Number(duracionPantalla),
+      stepcoinsPremio: Number(stepcoinsPremio),
+      segundosEntreDisparos: Number(segundosEntreDisparos),
+      danoBala: Number(danoBala)
+    });
+
+    const nuevaImagenOvni = req.files?.imagenOvni?.[0]?.filename;
+    const nuevaImagenBala = req.files?.imagenBala?.[0]?.filename;
+    if (nuevaImagenOvni) {
+      ovni.imagenOvni = `/uploads/ufo/${nuevaImagenOvni}`;
+    }
+    if (nuevaImagenBala) {
+      ovni.imagenBala = `/uploads/ufo/${nuevaImagenBala}`;
+    }
+
+    await ovni.save();
+    return res.json(ovni);
+  } catch (err) {
+    console.error('❌ Error al actualizar OVNI:', err);
+    return res.status(500).json({ error: 'Error al actualizar el OVNI' });
+  }
+});
+
 // ✅ Obtener ovnis activos (independientemente de la posición)
 router.get('/activos', async (req, res) => {
   try {

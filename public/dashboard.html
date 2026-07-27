@@ -411,7 +411,9 @@
     <input type="number" name="duracionDefensa"><br><br>
   </div>
 
-  <button type="submit">Crear Carta</button>
+  <button type="submit" id="submitCarta">Crear Carta</button>
+  <button type="button" id="cancelarEdicionCarta" style="display:none;">Cancelar edición</button>
+  <p id="estadoEdicionCarta" style="display:none;"></p>
 </form>
 
 <hr>
@@ -424,13 +426,13 @@
   <form id="crearUfoForm" enctype="multipart/form-data" autocomplete="off">
   <input type="text" name="nombre" placeholder="Nombre del OVNI" required>
 
-  <label for="imagenOvni">Imagen OVNI (PNG)</label>
-  <input type="file" name="imagenOvni" id="imagenOvni" accept="image/png" required>
+  <label for="imagenOvni">Imagen OVNI</label>
+  <input type="file" name="imagenOvni" id="imagenOvni" accept="image/*" required>
 
   <input type="number" name="vida" placeholder="Vida" required>
 
-  <label for="imagenBala">Imagen Bala (PNG)</label>
-  <input type="file" name="imagenBala" id="imagenBala" accept="image/png" required>
+  <label for="imagenBala">Imagen Bala</label>
+  <input type="file" name="imagenBala" id="imagenBala" accept="image/*" required>
 
   <input type="number" name="velocidadBala" placeholder="Velocidad bala" required>
   <input type="number" name="velocidadMovimiento" placeholder="Velocidad OVNI" required>
@@ -442,7 +444,9 @@
   <input type="number" name="segundosEntreDisparos" placeholder="Frecuencia de disparo (seg)" required>
   <input type="number" name="danoBala" placeholder="Daño de la bala" required>
 
-  <button type="submit">Crear OVNI</button>
+  <button type="submit" id="submitUfo">Crear OVNI</button>
+  <button type="button" id="cancelarEdicionUfo" style="display:none;">Cancelar edición</button>
+  <p id="estadoEdicionUfo" style="display:none;"></p>
 </form>
 
   <ul id="listaUfos"></ul>

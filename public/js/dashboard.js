@@ -36,6 +36,10 @@ let reviveTimeoutId = null;
 let skinParadoActualUrl = null; 
 let skinMuriendoActualUrl = null;
 let lastSkinApplied = null;
+let cartasGestion = [];
+let cartaEditandoId = null;
+let ufosGestion = [];
+let ufoEditandoId = null;
 
 
 
@@ -1278,6 +1282,8 @@ async function renderUfoManager() {
   try {
     const res = await fetch("/api/ufo");
     const ufos = await res.json();
+    if (!res.ok) throw new Error(ufos.error || "Error al cargar OVNIs");
+    ufosGestion = ufos;
 
     lista.innerHTML = "";
 
@@ -1307,7 +1313,10 @@ async function renderUfoManager() {
           🕒 Dura en pantalla: ${ufo.duracionPantalla}s<br>
           💰 Premio: ${ufo.stepcoinsPremio} stepcoins
         </div>
-        <button style="margin-left:auto;background:#c62828;color:white;padding:5px 10px;border:none;border-radius:4px;cursor:pointer;" onclick="eliminarUfo('${ufo._id}')">Eliminar</button>
+        <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
+          <button style="background:#1565c0;color:white;padding:5px 10px;border:none;border-radius:4px;cursor:pointer;" onclick="editarUfo('${ufo._id}')">✏️ Editar</button>
+          <button style="background:#c62828;color:white;padding:5px 10px;border:none;border-radius:4px;cursor:pointer;" onclick="eliminarUfo('${ufo._id}')">Eliminar</button>
+        </div>
       `;
 
       lista.appendChild(li);
@@ -1317,6 +1326,66 @@ async function renderUfoManager() {
     console.error("❌ Error al renderizar OVNIs:", err);
     lista.innerHTML = "<li>Error al cargar OVNIs</li>";
   }
+}
+
+function cancelarEdicionUfo() {
+  const form = document.getElementById("crearUfoForm");
+  if (!form) return;
+
+  ufoEditandoId = null;
+  form.reset();
+  form.querySelector('[name="imagenOvni"]').required = true;
+  form.querySelector('[name="imagenBala"]').required = true;
+
+  const submit = document.getElementById("submitUfo");
+  const cancelar = document.getElementById("cancelarEdicionUfo");
+  const estado = document.getElementById("estadoEdicionUfo");
+  if (submit) submit.textContent = "Crear OVNI";
+  if (cancelar) cancelar.style.display = "none";
+  if (estado) {
+    estado.textContent = "";
+    estado.style.display = "none";
+  }
+}
+
+function editarUfo(id) {
+  const ufo = ufosGestion.find((item) => item._id === id);
+  const form = document.getElementById("crearUfoForm");
+  if (!ufo || !form) return;
+
+  cancelarEdicionUfo();
+  ufoEditandoId = id;
+
+  [
+    "nombre",
+    "vida",
+    "velocidadBala",
+    "velocidadMovimiento",
+    "tiempoAparicion",
+    "duracionPantalla",
+    "stepcoinsPremio",
+    "segundosEntreDisparos",
+    "danoBala"
+  ].forEach((campo) => {
+    const input = form.elements.namedItem(campo);
+    if (input) input.value = ufo[campo] ?? "";
+  });
+
+  form.querySelector('[name="imagenOvni"]').required = false;
+  form.querySelector('[name="imagenBala"]').required = false;
+
+  const submit = document.getElementById("submitUfo");
+  const cancelar = document.getElementById("cancelarEdicionUfo");
+  const estado = document.getElementById("estadoEdicionUfo");
+  if (submit) submit.textContent = "Guardar cambios";
+  if (cancelar) cancelar.style.display = "inline-block";
+  if (estado) {
+    estado.textContent =
+      `Editando “${ufo.nombre}”. Las imágenes actuales se conservarán si no eliges archivos nuevos.`;
+    estado.style.display = "block";
+  }
+
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function eliminarUfo(id) {
@@ -1380,39 +1449,44 @@ async function renderGestionJuego() {
   // 🛸 FORMULARIO CREAR OVNI
   const formUfo = document.getElementById("crearUfoForm");
   if (formUfo && !formUfo.dataset.listenerAdded) {
+    const cancelarUfo = document.getElementById("cancelarEdicionUfo");
+    cancelarUfo?.addEventListener("click", cancelarEdicionUfo);
+
     formUfo.addEventListener("submit", async (e) => {
       e.preventDefault();
 
       const formData = new FormData(formUfo);
+      const esEdicion = Boolean(ufoEditandoId);
 
       // Validaciones mínimas de archivos
       const imagenOvni = formData.get("imagenOvni");
       const imagenBala = formData.get("imagenBala");
-      if (!imagenOvni || !imagenOvni.name || imagenOvni.size === 0) {
+      if (!esEdicion && (!imagenOvni || !imagenOvni.name || imagenOvni.size === 0)) {
         alert("⚠️ Selecciona una imagen válida para el OVNI");
         return;
       }
-      if (!imagenBala || !imagenBala.name || imagenBala.size === 0) {
+      if (!esEdicion && (!imagenBala || !imagenBala.name || imagenBala.size === 0)) {
         alert("⚠️ Selecciona una imagen válida para la bala");
         return;
       }
 
       try {
-        const res = await fetch("/api/ufo", {
-          method: "POST",
+        const res = await fetch(esEdicion ? `/api/ufo/${ufoEditandoId}` : "/api/ufo", {
+          method: esEdicion ? "PUT" : "POST",
           body: formData
         });
 
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Error al crear OVNI");
+        if (!res.ok) throw new Error(data.error || "Error al guardar el OVNI");
 
-        alert("✅ OVNI creado correctamente");
-
-        formUfo.querySelectorAll("input, textarea").forEach(input => (input.value = ""));
-        renderUfoManager(); // 👈❗️Recargar lista después de crear OVNI
+        alert(esEdicion
+          ? "✅ OVNI actualizado correctamente"
+          : "✅ OVNI creado correctamente");
+        cancelarEdicionUfo();
+        renderUfoManager();
       } catch (err) {
-        console.error("❌ Error al crear OVNI:", err);
-        alert("❌ Error al crear OVNI");
+        console.error("❌ Error al guardar OVNI:", err);
+        alert(`❌ ${err.message || "Error al guardar el OVNI"}`);
       }
     });
 
@@ -1930,6 +2004,8 @@ async function cargarCartas() {
   try {
     const res = await fetch("/api/cards");
     const cartas = await res.json();
+    if (!res.ok) throw new Error(cartas.error || "Error al cargar cartas");
+    cartasGestion = cartas;
 
     const contenedor = document.getElementById("listaCartas");
     contenedor.innerHTML = "";
@@ -1952,6 +2028,7 @@ async function cargarCartas() {
         <p><strong>Daño:</strong> ${carta.dano}</p>
         <p><strong>Dispositivo:</strong> ${carta.dispositivo || "Ambos"}</p>
         <p><strong>Tiempo de espera:</strong> ${carta.tiempoEspera || 0} segundos</p>
+        <button onclick="editarCarta('${carta._id}')">✏️ Editar</button>
         <button onclick="eliminarCarta('${carta._id}')">🗑️ Eliminar</button>
       `;
 
@@ -1960,6 +2037,12 @@ async function cargarCartas() {
   } catch (err) {
     console.error("❌ Error al cargar cartas:", err);
   }
+}
+
+function editarCarta(id) {
+  const carta = cartasGestion.find((item) => item._id === id);
+  if (!carta || typeof window.prepararFormularioCartaEdicion !== "function") return;
+  window.prepararFormularioCartaEdicion(carta);
 }
 
 async function eliminarCarta(id) {
@@ -3404,8 +3487,84 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // =================== Envío del formulario ===================
   const form = document.getElementById("formCarta");
+
+  function limpiarFormularioCarta() {
+    cartaEditandoId = null;
+    form.reset();
+    Object.keys(archivosPorCampo).forEach((campo) => {
+      archivosPorCampo[campo] = [];
+    });
+    form.querySelectorAll('div[id^="preview"]').forEach((div) => {
+      div.innerHTML = "";
+    });
+    form.querySelector('[name="imagenPortada"]').required = true;
+    tipoSelect.value = "";
+    tipoSelect.dispatchEvent(new Event("change"));
+
+    const submit = document.getElementById("submitCarta");
+    const cancelar = document.getElementById("cancelarEdicionCarta");
+    const estado = document.getElementById("estadoEdicionCarta");
+    if (submit) submit.textContent = "Crear Carta";
+    if (cancelar) cancelar.style.display = "none";
+    if (estado) {
+      estado.textContent = "";
+      estado.style.display = "none";
+    }
+  }
+
+  document
+    .getElementById("cancelarEdicionCarta")
+    ?.addEventListener("click", limpiarFormularioCarta);
+
+  window.prepararFormularioCartaEdicion = (carta) => {
+    limpiarFormularioCarta();
+    cartaEditandoId = carta._id;
+
+    tipoSelect.value = carta.tipoArma || "";
+    tipoSelect.dispatchEvent(new Event("change"));
+
+    const valores = {
+      titulo: carta.titulo,
+      descripcion: carta.descripcion,
+      dispositivo: carta.dispositivo || "Ambos",
+      tiempoEspera: carta.tiempoEspera ?? 0,
+      sePuedeSaltar: String(Boolean(carta.sePuedeSaltar)),
+      alcance: carta.alcance ?? 0,
+      dano: carta.dano ?? 0,
+      vida: carta.vida ?? carta.vidaQueDa ?? 0,
+      cadenciaDisparo: carta.cadenciaDisparo ?? 10,
+      premioBajaTorreta: carta.premioBajaTorreta ?? 100,
+      duracion: Number(carta.duracion || 0) / 60,
+      radioActivacion: carta.radioActivacion ?? 1,
+      usoUnico: String(carta.usoUnico !== false),
+      duracionDefensa: carta.duracionDefensa ?? 5
+    };
+
+    Object.entries(valores).forEach(([campo, valor]) => {
+      form.querySelectorAll(`[name="${campo}"]`).forEach((input) => {
+        input.value = valor ?? "";
+      });
+    });
+
+    form.querySelector('[name="imagenPortada"]').required = false;
+
+    const submit = document.getElementById("submitCarta");
+    const cancelar = document.getElementById("cancelarEdicionCarta");
+    const estado = document.getElementById("estadoEdicionCarta");
+    if (submit) submit.textContent = "Guardar cambios";
+    if (cancelar) cancelar.style.display = "inline-block";
+    if (estado) {
+      estado.textContent =
+        `Editando “${carta.titulo}”. Los archivos actuales se conservarán si no eliges otros nuevos.`;
+      estado.style.display = "block";
+    }
+
+    form.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   form.addEventListener("submit", async function (e) {
     e.preventDefault();
+    const esEdicion = Boolean(cartaEditandoId);
 
     // 1) Normalizar todos los number vacíos -> "0" (evita NaN en backend)
     form.querySelectorAll('input[type="number"]').forEach(inp => {
@@ -3425,26 +3584,28 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     try {
-      const res = await fetch("/api/cards", { method: "POST", body: formData });
+      const res = await fetch(esEdicion ? `/api/cards/${cartaEditandoId}` : "/api/cards", {
+        method: esEdicion ? "PUT" : "POST",
+        body: formData
+      });
       const rawText = await res.text(); // leer siempre el cuerpo
       if (!res.ok) {
         console.error("❌ Respuesta del servidor:", rawText);
-        throw new Error(rawText || "Error al crear la carta");
+        let mensaje = rawText;
+        try {
+          mensaje = JSON.parse(rawText).error || rawText;
+        } catch (_) {}
+        throw new Error(mensaje || "Error al guardar la carta");
       }
 
-      alert("✅ Carta creada correctamente.");
-      if (typeof renderGestionJuego === "function") renderGestionJuego();
-
-      // 4) Limpiar todo
-      form.reset();
-      Object.keys(archivosPorCampo).forEach(k => archivosPorCampo[k] = []);
-      document.querySelectorAll("#formCarta div[id^=preview]").forEach(div => div.innerHTML = "");
-      document.getElementById("comunCarta").style.display = "none";
-      document.querySelectorAll("#formCarta div[id^=seccion]").forEach(div => div.style.display = "none");
-      tipoSelect.value = ""; // volver al estado inicial
+      alert(esEdicion
+        ? "✅ Carta actualizada correctamente."
+        : "✅ Carta creada correctamente.");
+      limpiarFormularioCarta();
+      await cargarCartas();
     } catch (err) {
-      console.error("❌ Error al crear la carta (catch):", err);
-      alert("❌ Error al crear la carta");
+      console.error("❌ Error al guardar la carta:", err);
+      alert(`❌ ${err.message || "Error al guardar la carta"}`);
     }
   });
 });
