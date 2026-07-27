@@ -478,7 +478,7 @@ module.exports = function(io, dependencies = {}) {
         const lat = Number(payload?.lat);
         const lng = Number(payload?.lng);
         if (!Number.isFinite(lat) || !Number.isFinite(lng) ||
-            geo.distanceMeters(p, { lat, lng }) > 60) throw new Error('Posición de torreta inválida');
+            geo.distanceMeters(p, { lat, lng }) > 500) throw new Error('Posición de torreta inválida');
         const now = Date.now();
         const turret = await TurretModel.create({
           ownerUserId: p.userId, cardId: card._id, lat, lng, zoneId: toZoneId(lat, lng),
@@ -488,7 +488,9 @@ module.exports = function(io, dependencies = {}) {
           premioBaja: Math.max(0, card.premioBajaTorreta || 0),
           nextShotAt: new Date(now + Math.max(1, card.cadenciaDisparo || 10) * 1000),
           expiresAt: new Date(now + Math.max(1, card.duracion || 30) * 1000),
-          imagenesMovimiento: card.imagenesMovimiento || [],
+          imagenesMovimiento: card.imagenesMovimiento?.length
+            ? card.imagenesMovimiento
+            : (card.imagenPortada ? [card.imagenPortada] : []),
           imagenesDisparo: card.imagenesDisparo || [],
           imagenesMuerte: card.imagenesMuerte || [],
         });
