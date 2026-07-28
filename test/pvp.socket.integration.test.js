@@ -88,7 +88,7 @@ test('two players share presence, movement, one hit, life and explosions', async
               dano: 90,
               duracion: 300,
               tiempoEspera: 5,
-              usoUnico: true,
+          usoUnico: false,
               imagenPortada: '/uploads/cards/mine.webp',
               imagenesActivacion: ['/uploads/cards/mine-explosion.webp'],
               imagenesExplosionTrampa: [

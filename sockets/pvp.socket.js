@@ -71,10 +71,10 @@ module.exports = function(io, dependencies = {}) {
     const target = { lat: airstrike.lat, lng: airstrike.lng };
     const from = geo.computeOffset(
       target,
-      250,
+      2000,
       (airstrike.heading + 180) % 360
     );
-    const to = geo.computeOffset(target, 250, airstrike.heading);
+    const to = geo.computeOffset(target, 2000, airstrike.heading);
     return {
       airstrikeId: String(airstrike._id),
       ownerUserId: String(airstrike.ownerUserId),
@@ -505,13 +505,10 @@ module.exports = function(io, dependencies = {}) {
         { upsert: true }
       ).catch(() => {});
 
-      const removeAfterTrigger = mine.usoUnico !== false;
-      if (removeAfterTrigger) {
-        mines.delete(mineId);
-        await MineModel.deleteOne({ _id: mineId }).catch(() => {});
-      } else {
-        mine.processing = false;
-      }
+      // Una mina siempre se destruye al detonar.
+      const removeAfterTrigger = true;
+      mines.delete(mineId);
+      await MineModel.deleteOne({ _id: mineId }).catch(() => {});
 
       nsp.to(mine.zoneId).emit('mine:trigger', {
         ...minePayload(mine),
@@ -1027,7 +1024,7 @@ module.exports = function(io, dependencies = {}) {
           throw new Error('Carta de Ataque Aéreo inválida');
         }
         if (!Number.isFinite(lat) || !Number.isFinite(lng) ||
-            geo.distanceMeters(p, { lat, lng }) > 500) {
+            geo.distanceMeters(p, { lat, lng }) > 1000) {
           throw new Error('Posición de ataque inválida');
         }
 
