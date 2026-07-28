@@ -362,11 +362,18 @@
     <input type="file" id="imagenesActivacion" name="imagenesActivacion" accept="image/*" multiple><br>
     <div id="previewImagenesActivacion"></div><br>
 
+    <label>Imágenes de explosión (máx 4):</label>
+    <input type="file" id="imagenesExplosionTrampa" name="imagenesExplosionTrampa" accept="image/*" multiple><br>
+    <div id="previewImagenesExplosionTrampa"></div><br>
+
     <label>Radio de activación (metros):</label>
     <input type="number" name="radioActivacion"><br><br>
 
     <label>Daño:</label>
-    <input type="number" name="dano"><br><br>
+    <input type="number" name="dano" min="1" required><br><br>
+
+    <label>Duración en partida (minutos):</label>
+    <input type="number" name="duracion" min="1" value="5" required><br><br>
 
     <label>¿Uso único?:</label>
     <select name="usoUnico">
@@ -380,6 +387,27 @@
     <label>Imágenes del refuerzo (máx 4):</label>
     <input type="file" id="imagenesInvocacion" name="imagenesInvocacion" accept="image/*" multiple><br>
     <div id="previewImagenesInvocacion"></div><br>
+
+    <label>Imágenes del avión (máx 4):</label>
+    <input type="file" id="imagenesAvion" name="imagenesAvion" accept="image/*" multiple><br>
+    <div id="previewImagenesAvion"></div><br>
+
+    <label>Imágenes de la bomba (máx 4):</label>
+    <input type="file" id="imagenesBomba" name="imagenesBomba" accept="image/*" multiple><br>
+    <div id="previewImagenesBomba"></div><br>
+
+    <label>Imágenes de la explosión (máx 4):</label>
+    <input type="file" id="imagenesExplosionInvocacion" name="imagenesExplosionInvocacion" accept="image/*" multiple><br>
+    <div id="previewImagenesExplosionInvocacion"></div><br>
+
+    <label>Radio de explosión (metros):</label>
+    <input type="number" name="radioExplosion" min="1" required><br><br>
+
+    <label>Daño:</label>
+    <input type="number" name="dano" min="1" required><br><br>
+
+    <label>Tiempo hasta el ataque (segundos):</label>
+    <input type="number" name="tiempoHastaAtaque" min="1" required><br><br>
 
     <label>Duración de la invocación (segundos):</label>
     <input type="number" name="duracion"><br><br>
@@ -398,7 +426,7 @@
     <div id="previewImagenesVida"></div><br>
 
     <label>Cantidad de vida que otorga:</label>
-    <input type="number" name="vida"><br><br>
+    <input type="number" name="vida" min="1" required><br><br>
   </div>
 
   <!-- 🛡️ Defensa -->

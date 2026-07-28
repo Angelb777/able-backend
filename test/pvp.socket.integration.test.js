@@ -77,6 +77,51 @@ test('two players share presence, movement, one hit, life and explosions', async
               cadenciaDisparo: 1,
               duracion: 60,
             },
+            'card-life': {
+              tipoArma: 'Vida',
+              vidaQueDa: 150,
+            },
+            'card-mine': {
+              tipoArma: 'Trampa',
+              radioActivacion: 8,
+              dano: 90,
+              duracion: 300,
+              tiempoEspera: 5,
+              usoUnico: true,
+              imagenPortada: '/uploads/cards/mine.webp',
+              imagenesActivacion: ['/uploads/cards/mine-explosion.webp'],
+              imagenesExplosionTrampa: [
+                '/uploads/cards/mine-explosion-final.webp',
+              ],
+            },
+            'card-mine-expiring': {
+              tipoArma: 'Trampa',
+              radioActivacion: 5,
+              dano: 25,
+              duracion: 1,
+              usoUnico: true,
+            },
+            'card-mine-owner': {
+              tipoArma: 'Trampa',
+              radioActivacion: 5,
+              dano: 25,
+              duracion: 300,
+              tiempoEspera: 5,
+              usoUnico: true,
+              imagenesExplosionTrampa: ['/uploads/cards/owner-explosion.webp'],
+            },
+            'card-airstrike': {
+              tipoArma: 'Invocacion',
+              radioExplosion: 15,
+              dano: 200,
+              tiempoHastaAtaque: 1,
+              tiempoEspera: 5,
+              imagenesAvion: ['/uploads/cards/plane.webp'],
+              imagenesBomba: ['/uploads/cards/bomb.webp'],
+              imagenesExplosionInvocacion: [
+                '/uploads/cards/airstrike-explosion.webp',
+              ],
+            },
           };
           const card = cards[cardId];
           return card
@@ -105,11 +150,88 @@ test('two players share presence, movement, one hit, life and explosions', async
     async updateOne() {},
     async deleteOne() {},
   };
-  const fakeUserModel = {
-    findOneAndUpdate() {
-      return { lean: async () => null };
+  const deletedMines = [];
+  let mineSequence = 0;
+  const fakeMineModel = {
+    find() {
+      return { lean: async () => [] };
+    },
+    async create(data) {
+      mineSequence++;
+      const stored = { _id: `mine-test-${mineSequence}`, ...data };
+      return {
+        ...stored,
+        toObject: () => ({ ...stored }),
+      };
+    },
+    async deleteOne({ _id }) {
+      deletedMines.push(String(_id));
+    },
+  };
+  const deletedAirstrikes = [];
+  const fakeAirstrikeModel = {
+    find() {
+      return { lean: async () => [] };
+    },
+    async create(data) {
+      const stored = { _id: 'airstrike-test-1', ...data };
+      return {
+        ...stored,
+        toObject: () => ({ ...stored }),
+      };
     },
     async updateOne() {},
+    async deleteOne({ _id }) {
+      deletedAirstrikes.push(String(_id));
+    },
+  };
+  const cardsByUser = new Map([
+    [
+      '507f1f77bcf86cd799439011',
+      new Set([
+        'card-mine',
+        'card-mine-expiring',
+        'card-mine-owner',
+        'card-airstrike',
+      ]),
+    ],
+    ['507f191e810c19729de860ea', new Set(['card-life'])],
+  ]);
+  const fakeUserModel = {
+    findOne(query) {
+      return {
+        lean: async () => {
+          const ownedCards = cardsByUser.get(String(query._id));
+          const cardId = String(query.cartas || '');
+          return ownedCards?.has(cardId) && query.mazo === query.cartas
+            ? { _id: String(query._id) }
+            : null;
+        },
+      };
+    },
+    findOneAndUpdate(query, update) {
+      return {
+        lean: async () => {
+          const userId = String(query._id);
+          const ownedCards = cardsByUser.get(userId);
+          const cardId = String(query.cartas || '');
+          if (!ownedCards?.has(cardId) || query.mazo !== query.cartas) {
+            return null;
+          }
+          ownedCards.delete(cardId);
+          return { _id: userId, cartas: [...ownedCards], mazo: [...ownedCards] };
+        },
+      };
+    },
+    async updateOne({ _id }, update) {
+      const ownedCards = cardsByUser.get(String(_id)) || new Set();
+      for (const cardId of update.$addToSet?.cartas
+        ? [update.$addToSet.cartas]
+        : []) {
+        ownedCards.add(String(cardId));
+      }
+      cardsByUser.set(String(_id), ownedCards);
+    },
   };
   const fakeUfoModel = {
     find() {
@@ -123,6 +245,8 @@ test('two players share presence, movement, one hit, life and explosions', async
     CardModel: fakeCardModel,
     LifeModel: fakeLifeModel,
     TurretModel: fakeTurretModel,
+    MineModel: fakeMineModel,
+    AirstrikeModel: fakeAirstrikeModel,
     UserModel: fakeUserModel,
     UfoModel: fakeUfoModel,
   });
@@ -354,7 +478,7 @@ test('two players share presence, movement, one hit, life and explosions', async
     ) < 0.3
   );
 
-  lifeByUser.set('507f191e810c19729de860ea', 1000);
+  lifeByUser.set('507f191e810c19729de860ea', 940);
   const syncedLifeOnA = waitForEvent(playerA, 'life:update');
   const syncedLifeOnB = waitForEvent(playerB, 'life:update');
   const lifeSyncAck = await emitWithAck(playerB, 'life:sync', {});
@@ -363,9 +487,204 @@ test('two players share presence, movement, one hit, life and explosions', async
     syncedLifeOnB,
   ]);
   assert.equal(lifeSyncAck.ok, true);
-  assert.equal(lifeSyncAck.vida, 1000);
-  assert.equal(syncedLifeA.vida, 1000);
+  assert.equal(lifeSyncAck.vida, 940);
+  assert.equal(syncedLifeA.vida, 940);
   assert.deepEqual(syncedLifeA, syncedLifeB);
+
+  const healedLifeOnA = waitForEvent(playerA, 'life:update');
+  const healedLifeOnB = waitForEvent(playerB, 'life:update');
+  const lifeCardAck = await emitWithAck(playerB, 'card:use-life', {
+    cardId: 'card-life',
+  });
+  const [healedLifeA, healedLifeB] = await Promise.all([
+    healedLifeOnA,
+    healedLifeOnB,
+  ]);
+  assert.equal(lifeCardAck.ok, true);
+  assert.equal(lifeCardAck.vida, 1000);
+  assert.equal(lifeCardAck.vidaRecuperada, 60);
+  assert.equal(healedLifeA.reason, 'life-card');
+  assert.equal(healedLifeA.vida, 1000);
+  assert.deepEqual(healedLifeA, healedLifeB);
+  assert.equal(lifeByUser.get('507f191e810c19729de860ea'), 1000);
+  assert.equal(cardsByUser.get('507f191e810c19729de860ea').size, 0);
+
+  const reusedLifeCardAck = await emitWithAck(playerB, 'card:use-life', {
+    cardId: 'card-life',
+  });
+  assert.equal(reusedLifeCardAck.ok, false);
+
+  let mineTriggers = 0;
+  playerA.on('mine:trigger', () => mineTriggers++);
+  const north10 = geo.computeOffset(origin, 10, 0);
+  const mineSpawnOnA = waitForEvent(playerA, 'mine:spawn');
+  const mineSpawnOnB = waitForEvent(playerB, 'mine:spawn');
+  const minePlaceAck = await emitWithAck(playerA, 'mine:place', {
+    cardId: 'card-mine',
+    lat: north10.lat,
+    lng: north10.lng,
+  });
+  const [spawnedMineA, spawnedMineB] = await Promise.all([
+    mineSpawnOnA,
+    mineSpawnOnB,
+  ]);
+  assert.equal(minePlaceAck.ok, true);
+  assert.equal(spawnedMineA.mineId, 'mine-test-1');
+  assert.deepEqual(spawnedMineA, spawnedMineB);
+  assert.deepEqual(spawnedMineA.imagenesExplosion, [
+    '/uploads/cards/mine-explosion-final.webp',
+  ]);
+  assert.equal(
+    cardsByUser.get('507f1f77bcf86cd799439011').has('card-mine'),
+    true
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.equal(mineTriggers, 0);
+
+  const mineCooldownAck = await emitWithAck(playerA, 'mine:place', {
+    cardId: 'card-mine',
+    lat: north10.lat,
+    lng: north10.lng,
+  });
+  assert.equal(mineCooldownAck.ok, false);
+  assert.match(mineCooldownAck.error, /tiempo de espera/i);
+
+  const mineTriggerOnA = waitForEvent(playerA, 'mine:trigger');
+  const mineTriggerOnB = waitForEvent(playerB, 'mine:trigger');
+  const mineLifeOnA = waitForEvent(playerA, 'life:update');
+  const mineLifeOnB = waitForEvent(playerB, 'life:update');
+  const mineMoveOnA = waitForEvent(playerA, 'presence:move');
+  playerB.emit('presence:update', {
+    lat: north10.lat,
+    lng: north10.lng,
+    heading: 0,
+  });
+  await mineMoveOnA;
+  const [triggeredMineA, triggeredMineB, mineLifeA, mineLifeB] =
+    await Promise.all([
+      mineTriggerOnA,
+      mineTriggerOnB,
+      mineLifeOnA,
+      mineLifeOnB,
+    ]);
+  assert.equal(triggeredMineA.targetUserId, '507f191e810c19729de860ea');
+  assert.equal(triggeredMineA.removed, true);
+  assert.deepEqual(triggeredMineA, triggeredMineB);
+  assert.deepEqual(triggeredMineA.imagenesExplosion, [
+    '/uploads/cards/mine-explosion-final.webp',
+  ]);
+  assert.equal(mineLifeA.vida, 910);
+  assert.equal(mineLifeA.reason, 'mine');
+  assert.deepEqual(mineLifeA, mineLifeB);
+  assert.deepEqual(deletedMines, ['mine-test-1']);
+
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.equal(mineTriggers, 1);
+
+  const returnNorthOnA = waitForEvent(playerA, 'presence:move');
+  playerB.emit('presence:update', {
+    lat: north20.lat,
+    lng: north20.lng,
+    heading: 0,
+  });
+  await returnNorthOnA;
+
+  const ownerMineTrigger = waitForEvent(playerA, 'mine:trigger');
+  const ownerMineLife = waitForEvent(playerA, 'life:update');
+  const ownerMineAck = await emitWithAck(playerA, 'mine:place', {
+    cardId: 'card-mine-owner',
+    lat: origin.lat,
+    lng: origin.lng,
+  });
+  assert.equal(ownerMineAck.ok, true);
+  const [triggeredOwnerMine, ownerLife] = await Promise.all([
+    ownerMineTrigger,
+    ownerMineLife,
+  ]);
+  assert.equal(triggeredOwnerMine.targetUserId, '507f1f77bcf86cd799439011');
+  assert.deepEqual(triggeredOwnerMine.imagenesExplosion, [
+    '/uploads/cards/owner-explosion.webp',
+  ]);
+  assert.equal(ownerLife.userId, '507f1f77bcf86cd799439011');
+  assert.equal(ownerLife.vida, 975);
+
+  const expiringMineDestroy = waitForEvent(playerA, 'mine:destroy', 2500);
+  const mineFar = geo.computeOffset(origin, 100, 90);
+  const expiringMineAck = await emitWithAck(playerA, 'mine:place', {
+    cardId: 'card-mine-expiring',
+    lat: mineFar.lat,
+    lng: mineFar.lng,
+  });
+  assert.equal(expiringMineAck.ok, true);
+  const expiredMine = await expiringMineDestroy;
+  assert.equal(expiredMine.mineId, 'mine-test-3');
+  assert.equal(expiredMine.reason, 'expired');
+
+  const airstrikeSpawnA = waitForEvent(playerA, 'airstrike:spawn');
+  const airstrikeSpawnB = waitForEvent(playerB, 'airstrike:spawn');
+  const airstrikeLaunchA = waitForEvent(playerA, 'airstrike:launch', 2500);
+  const airstrikeLaunchB = waitForEvent(playerB, 'airstrike:launch', 2500);
+  const airstrikeImpactA = waitForEvent(playerA, 'airstrike:impact', 7000);
+  const airstrikeImpactB = waitForEvent(playerB, 'airstrike:impact', 7000);
+  const airstrikePlacedAt = Date.now();
+  const airstrikeAck = await emitWithAck(playerA, 'airstrike:place', {
+    cardId: 'card-airstrike',
+    lat: north10.lat,
+    lng: north10.lng,
+  });
+  const [spawnedAirstrikeA, spawnedAirstrikeB] = await Promise.all([
+    airstrikeSpawnA,
+    airstrikeSpawnB,
+  ]);
+  assert.equal(airstrikeAck.ok, true);
+  assert.equal(spawnedAirstrikeA.airstrikeId, 'airstrike-test-1');
+  assert.deepEqual(spawnedAirstrikeA, spawnedAirstrikeB);
+  assert.equal(
+    cardsByUser.get('507f1f77bcf86cd799439011').has('card-airstrike'),
+    true
+  );
+
+  const airstrikeCooldownAck = await emitWithAck(
+    playerA,
+    'airstrike:place',
+    {
+      cardId: 'card-airstrike',
+      lat: north10.lat,
+      lng: north10.lng,
+    }
+  );
+  assert.equal(airstrikeCooldownAck.ok, false);
+  assert.match(airstrikeCooldownAck.error, /tiempo de espera/i);
+
+  const [launchedAirstrikeA, launchedAirstrikeB] = await Promise.all([
+    airstrikeLaunchA,
+    airstrikeLaunchB,
+  ]);
+  assert.ok(Date.now() - airstrikePlacedAt >= 800);
+  assert.deepEqual(launchedAirstrikeA, launchedAirstrikeB);
+  assert.deepEqual(launchedAirstrikeA.imagenesAvion, [
+    '/uploads/cards/plane.webp',
+  ]);
+  assert.deepEqual(launchedAirstrikeA.imagenesBomba, [
+    '/uploads/cards/bomb.webp',
+  ]);
+
+  const [impactedAirstrikeA, impactedAirstrikeB] = await Promise.all([
+    airstrikeImpactA,
+    airstrikeImpactB,
+  ]);
+  assert.deepEqual(impactedAirstrikeA, impactedAirstrikeB);
+  assert.deepEqual(impactedAirstrikeA.imagenesExplosion, [
+    '/uploads/cards/airstrike-explosion.webp',
+  ]);
+  assert.deepEqual(
+    impactedAirstrikeA.hits.map((hit) => hit.userId).sort(),
+    ['507f191e810c19729de860ea', '507f1f77bcf86cd799439011'].sort()
+  );
+  assert.equal(lifeByUser.get('507f1f77bcf86cd799439011'), 775);
+  assert.equal(lifeByUser.get('507f191e810c19729de860ea'), 710);
+  assert.deepEqual(deletedAirstrikes, ['airstrike-test-1']);
 
   const turretSpawnOnB = waitForEvent(playerB, 'turret:spawn');
   const turretShotOnA = waitForEvent(playerA, 'turret:shot', 3000);
@@ -533,6 +852,19 @@ test('ufo starts after first shot, is shared and awards its killer', async (t) =
     async updateOne() {},
     async deleteOne() {},
   };
+  const fakeMineModel = {
+    find() {
+      return { lean: async () => [] };
+    },
+    async deleteOne() {},
+  };
+  const fakeAirstrikeModel = {
+    find() {
+      return { lean: async () => [] };
+    },
+    async updateOne() {},
+    async deleteOne() {},
+  };
   const fakeUserModel = {
     findOneAndUpdate() {
       return { lean: async () => null };
@@ -568,6 +900,8 @@ test('ufo starts after first shot, is shared and awards its killer', async (t) =
     CardModel: fakeCardModel,
     LifeModel: fakeLifeModel,
     TurretModel: fakeTurretModel,
+    MineModel: fakeMineModel,
+    AirstrikeModel: fakeAirstrikeModel,
     UserModel: fakeUserModel,
     UfoModel: fakeUfoModel,
   });
@@ -628,6 +962,15 @@ test('ufo starts after first shot, is shared and awards its killer', async (t) =
         Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng)
     ) * 180 / Math.PI + 360
   ) % 360;
+  const ufoDistance = geo.distanceMeters(origin, {
+    lat: spawnedForShooter.lat,
+    lng: spawnedForShooter.lng,
+  });
+  // Apunta con 20 m de separación respecto al centro. Debe impactar porque
+  // sigue atravesando el área visual del OVNI, aunque no pase por su centro.
+  const visualGrazeHeading = (
+    heading + Math.asin(20 / ufoDistance) * 180 / Math.PI
+  ) % 360;
 
   const destroyOnShooter = waitForEvent(shooter, 'ufo:destroy');
   const destroyOnObserver = waitForEvent(observer, 'ufo:destroy');
@@ -636,7 +979,7 @@ test('ufo starts after first shot, is shared and awards its killer', async (t) =
     clientShotId: 'ufo-kill-shot',
     cardId: 'card-ufo',
     from: origin,
-    heading,
+    heading: visualGrazeHeading,
     speed: 180,
     alcance: 120,
     dano: 60,

@@ -61,7 +61,11 @@ router.post(
     { name: "imagenesMuerte", maxCount: 4 },
 
     { name: "imagenesActivacion", maxCount: 4 },
+    { name: "imagenesExplosionTrampa", maxCount: 4 },
     { name: "imagenesInvocacion", maxCount: 4 },
+    { name: "imagenesAvion", maxCount: 4 },
+    { name: "imagenesBomba", maxCount: 4 },
+    { name: "imagenesExplosionInvocacion", maxCount: 4 },
     { name: "imagenesVida", maxCount: 4 },
     { name: "imagenesDefensa", maxCount: 4 }
   ]),
@@ -94,7 +98,27 @@ router.post(
           error: "Las cartas Arrastre necesitan alcance y daño mayores que 0."
         });
       }
-
+      if (body.tipoArma === "Vida" && toInt(body.vida, 0) <= 0) {
+        return res.status(400).json({
+          error: "Las cartas Vida necesitan otorgar una cantidad de vida mayor que 0."
+        });
+      }
+      if (body.tipoArma === "Trampa" &&
+          (toFloat(body.radioActivacion, 0) <= 0 ||
+           toInt(body.dano, 0) <= 0 ||
+           toInt(body.duracion, 0) <= 0)) {
+        return res.status(400).json({
+          error: "Las cartas Trampa necesitan radio, daño y duración mayores que 0."
+        });
+      }
+      if (body.tipoArma === "Invocacion" &&
+          (toFloat(body.radioExplosion, 0) <= 0 ||
+           toInt(body.dano, 0) <= 0 ||
+           toInt(body.tiempoHastaAtaque, 0) <= 0)) {
+        return res.status(400).json({
+          error: "Las cartas Invocación necesitan radio, daño y tiempo hasta el ataque mayores que 0."
+        });
+      }
       // ❗ Evita duplicados
       const yaExiste = await Card.findOne({
         titulo: body.titulo,
@@ -135,7 +159,13 @@ router.post(
         imagenesDisparo:      imgsDisparo,
         imagenesMuerte:      (files.imagenesMuerte      || []).map(normalizarRuta),
         imagenesActivacion:  (files.imagenesActivacion  || []).map(normalizarRuta),
+        imagenesExplosionTrampa:
+          (files.imagenesExplosionTrampa || []).map(normalizarRuta),
         imagenesInvocacion:  (files.imagenesInvocacion  || []).map(normalizarRuta),
+        imagenesAvion:       (files.imagenesAvion       || []).map(normalizarRuta),
+        imagenesBomba:       (files.imagenesBomba       || []).map(normalizarRuta),
+        imagenesExplosionInvocacion:
+          (files.imagenesExplosionInvocacion || []).map(normalizarRuta),
         imagenesVida:        (files.imagenesVida        || []).map(normalizarRuta),
         imagenesDefensa:     (files.imagenesDefensa     || []).map(normalizarRuta),
 
@@ -143,9 +173,13 @@ router.post(
         vida: toInt(body.vida, 0),
         cadenciaDisparo: Math.max(1, toInt(body.cadenciaDisparo, 10)),
         premioBajaTorreta: Math.max(0, toInt(body.premioBajaTorreta, 100)),
-        vidaQueDa: toInt(body.vidaQueDa, 0),
+        vidaQueDa: body.tipoArma === "Vida"
+          ? toInt(body.vida, 0)
+          : toInt(body.vidaQueDa, 0),
         radioRecogida: toFloat(body.radioRecogida, 1),
         radioActivacion: toFloat(body.radioActivacion, 1),
+        radioExplosion: toFloat(body.radioExplosion, 1),
+        tiempoHastaAtaque: toInt(body.tiempoHastaAtaque, 0),
         usoUnico: body.usoUnico === "true",
         velocidadMovimiento: body.velocidadMovimiento ? toFloat(body.velocidadMovimiento) : undefined,
         iaComportamiento: body.iaComportamiento || undefined,
@@ -186,7 +220,11 @@ router.put(
     { name: "imagenesBala", maxCount: 4 },
     { name: "imagenesMuerte", maxCount: 4 },
     { name: "imagenesActivacion", maxCount: 4 },
+    { name: "imagenesExplosionTrampa", maxCount: 4 },
     { name: "imagenesInvocacion", maxCount: 4 },
+    { name: "imagenesAvion", maxCount: 4 },
+    { name: "imagenesBomba", maxCount: 4 },
+    { name: "imagenesExplosionInvocacion", maxCount: 4 },
     { name: "imagenesVida", maxCount: 4 },
     { name: "imagenesDefensa", maxCount: 4 }
   ]),
@@ -219,6 +257,27 @@ router.put(
           error: "Las cartas Arrastre necesitan alcance y daño mayores que 0."
         });
       }
+      if (body.tipoArma === "Vida" && toInt(body.vida, 0) <= 0) {
+        return res.status(400).json({
+          error: "Las cartas Vida necesitan otorgar una cantidad de vida mayor que 0."
+        });
+      }
+      if (body.tipoArma === "Trampa" &&
+          (toFloat(body.radioActivacion, 0) <= 0 ||
+           toInt(body.dano, 0) <= 0 ||
+           toInt(body.duracion, 0) <= 0)) {
+        return res.status(400).json({
+          error: "Las cartas Trampa necesitan radio, daño y duración mayores que 0."
+        });
+      }
+      if (body.tipoArma === "Invocacion" &&
+          (toFloat(body.radioExplosion, 0) <= 0 ||
+           toInt(body.dano, 0) <= 0 ||
+           toInt(body.tiempoHastaAtaque, 0) <= 0)) {
+        return res.status(400).json({
+          error: "Las cartas Invocación necesitan radio, daño y tiempo hasta el ataque mayores que 0."
+        });
+      }
 
       const duplicada = await Card.findOne({
         _id: { $ne: card._id },
@@ -245,9 +304,16 @@ router.put(
         vida: toInt(body.vida, 0),
         cadenciaDisparo: Math.max(1, toInt(body.cadenciaDisparo, 10)),
         premioBajaTorreta: Math.max(0, toInt(body.premioBajaTorreta, 100)),
-        vidaQueDa: toInt(body.vidaQueDa, card.vidaQueDa || 0),
+        vidaQueDa: body.tipoArma === "Vida"
+          ? toInt(body.vida, card.vidaQueDa || 0)
+          : toInt(body.vidaQueDa, card.vidaQueDa || 0),
         radioRecogida: toFloat(body.radioRecogida, card.radioRecogida || 1),
         radioActivacion: toFloat(body.radioActivacion, 1),
+        radioExplosion: toFloat(body.radioExplosion, card.radioExplosion || 1),
+        tiempoHastaAtaque: toInt(
+          body.tiempoHastaAtaque,
+          card.tiempoHastaAtaque || 0
+        ),
         usoUnico: body.usoUnico === "true",
         velocidadMovimiento: body.velocidadMovimiento
           ? toFloat(body.velocidadMovimiento)
@@ -269,7 +335,11 @@ router.put(
         "imagenesMovimiento",
         "imagenesMuerte",
         "imagenesActivacion",
+        "imagenesExplosionTrampa",
         "imagenesInvocacion",
+        "imagenesAvion",
+        "imagenesBomba",
+        "imagenesExplosionInvocacion",
         "imagenesVida",
         "imagenesDefensa"
       ];

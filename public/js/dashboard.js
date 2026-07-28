@@ -1262,12 +1262,25 @@ document.addEventListener("click", async (e) => {
     if (!confirm("¿Eliminar esta recompensa?")) return;
 
     try {
-      await fetch(`/api/rewards/${rewardId}`, { method: "DELETE" });
+      const token = localStorage.getItem("token") || "";
+      if (!token) {
+        throw new Error("Tu sesión ha caducado. Vuelve a iniciar sesión.");
+      }
+
+      const res = await fetch(`/api/rewards/${rewardId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || `Error ${res.status} al eliminar`);
+      }
+
       alert("🗑️ Recompensa eliminada");
-      renderRewardsSection(); // Recargar la lista
+      await renderRewardsSection(); // Confirmar el estado real del servidor
     } catch (err) {
       console.error("❌ Error al eliminar reward:", err);
-      alert("❌ No se pudo eliminar");
+      alert(`❌ ${err.message || "No se pudo eliminar"}`);
     }
   }
 });
@@ -3434,7 +3447,11 @@ document.addEventListener("DOMContentLoaded", function () {
     { id: "imagenesBala",        name: "imagenesDisparo",     previewId: "previewImagenesBala" },
     { id: "imagenesMuerte",      name: "imagenesMuerte",      previewId: "previewImagenesMuerte" },
     { id: "imagenesActivacion",  name: "imagenesActivacion",  previewId: "previewImagenesActivacion" },
+    { id: "imagenesExplosionTrampa", name: "imagenesExplosionTrampa", previewId: "previewImagenesExplosionTrampa" },
     { id: "imagenesInvocacion",  name: "imagenesInvocacion",  previewId: "previewImagenesInvocacion" },
+    { id: "imagenesAvion",       name: "imagenesAvion",       previewId: "previewImagenesAvion" },
+    { id: "imagenesBomba",       name: "imagenesBomba",       previewId: "previewImagenesBomba" },
+    { id: "imagenesExplosionInvocacion", name: "imagenesExplosionInvocacion", previewId: "previewImagenesExplosionInvocacion" },
     { id: "imagenesVida",        name: "imagenesVida",        previewId: "previewImagenesVida" },
     { id: "imagenesDefensa",     name: "imagenesDefensa",     previewId: "previewImagenesDefensa" },
   ];
@@ -3540,6 +3557,8 @@ document.addEventListener("DOMContentLoaded", function () {
       premioBajaTorreta: carta.premioBajaTorreta ?? 100,
       duracion: Number(carta.duracion || 0) / 60,
       radioActivacion: carta.radioActivacion ?? 1,
+      radioExplosion: carta.radioExplosion ?? 1,
+      tiempoHastaAtaque: carta.tiempoHastaAtaque ?? 0,
       usoUnico: String(carta.usoUnico !== false),
       duracionDefensa: carta.duracionDefensa ?? 5
     };

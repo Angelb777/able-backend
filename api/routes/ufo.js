@@ -5,8 +5,12 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// 📁 Asegurar carpeta de destino
-const uploadDir = path.join(__dirname, '..', '..', 'uploads', 'ufo');
+// Usa la misma base que server.js. En producción UPLOAD_BASE_DIR apunta al
+// disco persistente (por ejemplo /data/uploads), por lo que las imágenes no
+// desaparecen al reiniciar o desplegar el servicio.
+const uploadBaseDir =
+  process.env.UPLOAD_BASE_DIR || path.join(__dirname, '..', '..', 'uploads');
+const uploadDir = path.join(uploadBaseDir, 'ufo');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
@@ -22,7 +26,16 @@ const storage = multer.diskStorage({
     cb(null, uniqueName);
   }
 });
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (!file.mimetype?.startsWith('image/')) {
+      return cb(new Error('El archivo del OVNI debe ser una imagen'));
+    }
+    cb(null, true);
+  }
+});
 
 // ✅ Crear OVNI
 router.post('/', upload.fields([
@@ -45,8 +58,12 @@ router.post('/', upload.fields([
       danoBala
     } = req.body;
 
-    if (!nombre || !vida || !tiempoAparicion || !duracionPantalla) {
+    if (!nombre || vida === undefined || tiempoAparicion === undefined ||
+        duracionPantalla === undefined) {
       return res.status(400).json({ error: "Faltan datos requeridos" });
+    }
+    if (!imagenOvniFilename) {
+      return res.status(400).json({ error: "La imagen del OVNI es requerida" });
     }
 
     const nuevoUfo = new Ufo({

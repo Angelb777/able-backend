@@ -25,7 +25,7 @@ const CardSchema = new mongoose.Schema({
   alcance: { type: Number, default: 0 },
   tiempoEspera: { type: Number, default: 0 }, // En segundos
   sePuedeSaltar: { type: Boolean, default: false },
-  duracion: { type: Number, default: 0 },     // ⏳ En segundos. Usado por Arrastre e Invocacion
+  duracion: { type: Number, default: 0 },     // ⏳ En segundos. Usado por Arrastre, Trampa e Invocacion
 
   // ===== Proyectil =====
   imagenesArma: [String],         // 4 imágenes
@@ -43,12 +43,18 @@ const CardSchema = new mongoose.Schema({
   radioActivacion: { type: Number, default: 1 }, // metros
   usoUnico: { type: Boolean, default: true },
   imagenesActivacion: [String], // al explotar o activarse
+  imagenesExplosionTrampa: [String],
 
   // ===== Invocacion =====
   // (duracion se usa también aquí; queda definido arriba como común)
   velocidadMovimiento: { type: Number },
   iaComportamiento: { type: String }, // ejemplo: "avanza y ataca"
   imagenesInvocacion: [String],
+  imagenesAvion: [String],
+  imagenesBomba: [String],
+  imagenesExplosionInvocacion: [String],
+  radioExplosion: { type: Number, default: 1 },
+  tiempoHastaAtaque: { type: Number, default: 0 },
 
   // ===== Vida =====
   vidaQueDa: { type: Number, default: 0 },

@@ -3,6 +3,8 @@ const geo  = require('../utils/geo');              // <- OK si utils está en la
 const Card = require('../api/models/Card');
 const UserLife = require('../api/models/UserLife');
 const Turret = require('../api/models/Turret');
+const Mine = require('../api/models/Mine');
+const Airstrike = require('../api/models/Airstrike');
 const User = require('../api/models/User');
 const Ufo = require('../api/models/Ufo');
 
@@ -10,6 +12,8 @@ module.exports = function(io, dependencies = {}) {
   const CardModel = dependencies.CardModel || Card;
   const LifeModel = dependencies.LifeModel || UserLife;
   const TurretModel = dependencies.TurretModel || Turret;
+  const MineModel = dependencies.MineModel || Mine;
+  const AirstrikeModel = dependencies.AirstrikeModel || Airstrike;
   const UserModel = dependencies.UserModel || User;
   const UfoModel = dependencies.UfoModel || Ufo;
   const nsp = io.of('/pvp');
@@ -21,12 +25,15 @@ module.exports = function(io, dependencies = {}) {
   const bullets = new Map(); // bulletId -> { byUserId, zoneId, lat, lng, heading, speed, alcance, dano, spriteUrl, createdAt }
   const roomIndex = new Map(); // zoneId -> Set<socketId>
   const turrets = new Map();
+  const mines = new Map();
+  const airstrikes = new Map();
   const activeUfos = new Map();
   const scheduledUfoZones = new Set();
   const pendingUfoTimers = new Map();
   const TURRET_BULLET_SPEED = 80;
   const DEFAULT_TURRET_RANGE_M = 100;
   const DEFAULT_TURRET_DAMAGE = 10;
+  const MAX_PLAYER_LIFE = 1000;
   const normalizeTurretCombatStats = (turret) => {
     const alcance = Number(turret.alcance);
     const dano = Number(turret.dano);
@@ -46,12 +53,69 @@ module.exports = function(io, dependencies = {}) {
     imagenesMovimiento: t.imagenesMovimiento || [], imagenesDisparo: t.imagenesDisparo || [],
     imagenesMuerte: t.imagenesMuerte || [],
   });
+  const minePayload = (mine) => ({
+    mineId: String(mine._id),
+    ownerUserId: String(mine.ownerUserId),
+    cardId: String(mine.cardId),
+    lat: mine.lat,
+    lng: mine.lng,
+    radioActivacion: mine.radioActivacion,
+    dano: mine.dano,
+    usoUnico: mine.usoUnico !== false,
+    expiresAt: new Date(mine.expiresAt).toISOString(),
+    imagenPortada: mine.imagenPortada || '',
+    imagenesActivacion: mine.imagenesActivacion || [],
+    imagenesExplosion: mine.imagenesExplosion || [],
+  });
+  const airstrikePayload = (airstrike) => {
+    const target = { lat: airstrike.lat, lng: airstrike.lng };
+    const from = geo.computeOffset(
+      target,
+      250,
+      (airstrike.heading + 180) % 360
+    );
+    const to = geo.computeOffset(target, 250, airstrike.heading);
+    return {
+      airstrikeId: String(airstrike._id),
+      ownerUserId: String(airstrike.ownerUserId),
+      cardId: String(airstrike.cardId),
+      lat: airstrike.lat,
+      lng: airstrike.lng,
+      radioExplosion: airstrike.radioExplosion,
+      dano: airstrike.dano,
+      attackAt: new Date(airstrike.attackAt).toISOString(),
+      impactAt: new Date(airstrike.impactAt).toISOString(),
+      launched: airstrike.launched === true,
+      heading: airstrike.heading,
+      from,
+      to,
+      planeDurationMs: 4000,
+      bombDropDelayMs: 2000,
+      bombDurationMs: 2000,
+      imagenesAvion: airstrike.imagenesAvion || [],
+      imagenesBomba: airstrike.imagenesBomba || [],
+      imagenesExplosion: airstrike.imagenesExplosion || [],
+    };
+  };
   const turretsReady = TurretModel.find({ expiresAt: { $gt: new Date() }, vida: { $gt: 0 } }).lean()
     .then((items) => items.forEach((t) => {
       normalizeTurretCombatStats(t);
       turrets.set(String(t._id), t);
     }))
     .catch((error) => console.error('[PVP] turret restore error', error));
+  const minesReady = MineModel.find({ expiresAt: { $gt: new Date() } }).lean()
+    .then((items) => items.forEach((mine) => {
+      mine.playersInside = new Set();
+      mines.set(String(mine._id), mine);
+    }))
+    .catch((error) => console.error('[PVP] mine restore error', error));
+  const airstrikesReady = AirstrikeModel.find({
+    impactAt: { $gt: new Date() },
+  }).lean()
+    .then((items) => items.forEach((airstrike) => {
+      airstrikes.set(String(airstrike._id), airstrike);
+    }))
+    .catch((error) => console.error('[PVP] airstrike restore error', error));
 
   const log = (message, details = {}) => {
     console.log(`[PVP][${instanceId}] ${message}`, details);
@@ -64,6 +128,10 @@ module.exports = function(io, dependencies = {}) {
   const TICK_MS = 50;
   const BULLET_START_DELAY_MS = 180;
   const PLAYER_HIT_RADIUS_M = 8;
+  // El icono del OVNI se dibuja a 90 px y ocupa bastante más superficie
+  // visual que un jugador. Un radio propio evita que un disparo que lo roza
+  // claramente en pantalla se considere un fallo en el servidor.
+  const UFO_HIT_RADIUS_M = 30;
 
   // Devuelve el primer punto en el que el segmento de la bala entra en el
   // radio del jugador. La aproximación plana es precisa para estos recorridos
@@ -208,7 +276,7 @@ module.exports = function(io, dependencies = {}) {
       for (const state of activeUfos.values()) {
         if (state.zoneId !== b.zoneId) continue;
         const impact = segmentCircleIntersection(
-          previous, next, state, PLAYER_HIT_RADIUS_M
+          previous, next, state, UFO_HIT_RADIUS_M
         );
         if (impact) candidates.push({ type: 'ufo', target: state, impact });
       }
@@ -385,6 +453,150 @@ module.exports = function(io, dependencies = {}) {
   }, 500);
   turretTimer.unref?.();
 
+  const mineTimer = setInterval(async () => {
+    const now = Date.now();
+    for (const [mineId, mine] of mines) {
+      if (new Date(mine.expiresAt).getTime() <= now) {
+        mines.delete(mineId);
+        await MineModel.deleteOne({ _id: mineId }).catch(() => {});
+        nsp.to(mine.zoneId).emit('mine:destroy', {
+          mineId,
+          reason: 'expired',
+        });
+        continue;
+      }
+      if (mine.processing) continue;
+
+      const candidatesByUser = new Map();
+      for (const player of players.values()) {
+        if (player.zoneId !== mine.zoneId || (player.vida ?? 0) <= 0) {
+          continue;
+        }
+        if (!candidatesByUser.has(player.userId)) {
+          candidatesByUser.set(player.userId, player);
+        }
+      }
+
+      const currentlyInside = new Set();
+      for (const [userId, player] of candidatesByUser) {
+        if (geo.distanceMeters(mine, player) <= mine.radioActivacion) {
+          currentlyInside.add(userId);
+        }
+      }
+
+      mine.playersInside ||= new Set();
+      const targetEntry = [...currentlyInside]
+        .find((userId) => !mine.playersInside.has(userId));
+      mine.playersInside = currentlyInside;
+      if (!targetEntry) continue;
+
+      const target = candidatesByUser.get(targetEntry);
+      if (!target) continue;
+      mine.processing = true;
+
+      const previousLife = target.vida ?? MAX_PLAYER_LIFE;
+      const nuevaVida = Math.max(0, previousLife - mine.dano);
+      for (const sameUser of playersForUser(target.userId)) {
+        sameUser.vida = nuevaVida;
+      }
+      await LifeModel.updateOne(
+        { userId: target.userId },
+        { $set: { vida: nuevaVida } },
+        { upsert: true }
+      ).catch(() => {});
+
+      const removeAfterTrigger = mine.usoUnico !== false;
+      if (removeAfterTrigger) {
+        mines.delete(mineId);
+        await MineModel.deleteOne({ _id: mineId }).catch(() => {});
+      } else {
+        mine.processing = false;
+      }
+
+      nsp.to(mine.zoneId).emit('mine:trigger', {
+        ...minePayload(mine),
+        targetUserId: target.userId,
+        vida: nuevaVida,
+        removed: removeAfterTrigger,
+      });
+      nsp.to(mine.zoneId).emit('life:update', {
+        userId: target.userId,
+        vida: nuevaVida,
+        dano: mine.dano,
+        byMineId: mineId,
+        byUserId: String(mine.ownerUserId),
+        reason: 'mine',
+      });
+    }
+  }, 250);
+  mineTimer.unref?.();
+
+  const airstrikeTimer = setInterval(async () => {
+    const now = Date.now();
+    for (const [airstrikeId, airstrike] of airstrikes) {
+      if (!airstrike.launched &&
+          new Date(airstrike.attackAt).getTime() <= now) {
+        airstrike.launched = true;
+        await AirstrikeModel.updateOne(
+          { _id: airstrikeId },
+          { $set: { launched: true } }
+        ).catch(() => {});
+        nsp.to(airstrike.zoneId).emit(
+          'airstrike:launch',
+          airstrikePayload(airstrike)
+        );
+      }
+
+      if (new Date(airstrike.impactAt).getTime() > now) continue;
+      airstrikes.delete(airstrikeId);
+      await AirstrikeModel.deleteOne({ _id: airstrikeId }).catch(() => {});
+
+      const targetsByUser = new Map();
+      for (const player of players.values()) {
+        if (player.zoneId !== airstrike.zoneId ||
+            (player.vida ?? 0) <= 0 ||
+            geo.distanceMeters(airstrike, player) >
+              airstrike.radioExplosion) {
+          continue;
+        }
+        if (!targetsByUser.has(player.userId)) {
+          targetsByUser.set(player.userId, player);
+        }
+      }
+
+      const hits = [];
+      for (const target of targetsByUser.values()) {
+        const nuevaVida = Math.max(
+          0,
+          (target.vida ?? MAX_PLAYER_LIFE) - airstrike.dano
+        );
+        for (const sameUser of playersForUser(target.userId)) {
+          sameUser.vida = nuevaVida;
+        }
+        await LifeModel.updateOne(
+          { userId: target.userId },
+          { $set: { vida: nuevaVida } },
+          { upsert: true }
+        ).catch(() => {});
+        hits.push({ userId: target.userId, vida: nuevaVida });
+        nsp.to(airstrike.zoneId).emit('life:update', {
+          userId: target.userId,
+          vida: nuevaVida,
+          dano: airstrike.dano,
+          byAirstrikeId: airstrikeId,
+          byUserId: String(airstrike.ownerUserId),
+          reason: 'airstrike',
+        });
+      }
+
+      nsp.to(airstrike.zoneId).emit('airstrike:impact', {
+        ...airstrikePayload(airstrike),
+        hits,
+      });
+    }
+  }, 100);
+  airstrikeTimer.unref?.();
+
   // Helpers
   function toZoneId(lat, lng) {
     // Celda ~120 m. Ajusta DECIMALES para agrupar menos/más jugadores.
@@ -499,9 +711,17 @@ module.exports = function(io, dependencies = {}) {
         }
         const others = [...othersByUserId.values()];
         await turretsReady;
+        await minesReady;
+        await airstrikesReady;
         const roomTurrets = [...turrets.values()]
           .filter((t) => t.zoneId === zoneId)
           .map(turretPayload);
+        const roomMines = [...mines.values()]
+          .filter((mine) => mine.zoneId === zoneId)
+          .map(minePayload);
+        const roomAirstrikes = [...airstrikes.values()]
+          .filter((airstrike) => airstrike.zoneId === zoneId)
+          .map(airstrikePayload);
         const roomUfos = [...activeUfos.values()]
           .filter((ufo) => ufo.zoneId === zoneId)
           .map(ufoPayload);
@@ -518,6 +738,8 @@ module.exports = function(io, dependencies = {}) {
           ok:true,
           players: others,
           turrets: roomTurrets,
+          mines: roomMines,
+          airstrikes: roomAirstrikes,
           ufos: roomUfos,
           claimedStepcoins,
           instanceId,
@@ -616,6 +838,261 @@ module.exports = function(io, dependencies = {}) {
         console.error(`[PVP][${instanceId}] life sync error`, {
           socketId: socket.id,
           userId: p.userId,
+          error: error.message,
+        });
+        cb?.({ ok: false, error: error.message });
+      }
+    });
+
+    // Consume una carta de Vida del mazo e inventario y aplica la curación
+    // en el servidor para que ningún cliente pueda elegir la cantidad.
+    socket.on('card:use-life', async (payload, cb) => {
+      const p = players.get(socket.id);
+      if (!p) return cb?.({ ok: false, error: 'No player' });
+
+      const cardId = String(payload?.cardId || '');
+      if (!cardId) {
+        return cb?.({ ok: false, error: 'Carta de Vida inválida' });
+      }
+
+      let cardConsumed = false;
+      try {
+        const card = await CardModel.findById(cardId).lean();
+        if (!card || card.tipoArma !== 'Vida') {
+          throw new Error('Carta de Vida inválida');
+        }
+
+        // Compatibilidad con cartas Vida creadas antes de persistir vidaQueDa.
+        const configuredHealing = Number(card.vidaQueDa || card.vida);
+        if (!Number.isFinite(configuredHealing) || configuredHealing <= 0) {
+          throw new Error('La carta no tiene una curación válida');
+        }
+
+        const user = await UserModel.findOneAndUpdate(
+          { _id: p.userId, cartas: cardId, mazo: cardId },
+          { $pull: { cartas: cardId, mazo: cardId } },
+          { new: true }
+        ).lean();
+        if (!user) {
+          throw new Error('La carta ya no está disponible en tu mazo');
+        }
+        cardConsumed = true;
+
+        const lifeDoc = await LifeModel.findOne({ userId: p.userId }).lean();
+        const previousLife = Math.max(
+          0,
+          Math.min(MAX_PLAYER_LIFE, Number(lifeDoc?.vida ?? MAX_PLAYER_LIFE))
+        );
+        const vida = Math.min(
+          MAX_PLAYER_LIFE,
+          previousLife + Math.floor(configuredHealing)
+        );
+        const vidaRecuperada = vida - previousLife;
+
+        await LifeModel.updateOne(
+          { userId: p.userId },
+          { $set: { vida }, $setOnInsert: { yaPenalizado: false } },
+          { upsert: true }
+        );
+        for (const sameUser of playersForUser(p.userId)) {
+          sameUser.vida = vida;
+        }
+
+        nsp.to(p.zoneId).emit('life:update', {
+          userId: p.userId,
+          vida,
+          vidaRecuperada,
+          cardId,
+          reason: 'life-card',
+        });
+        cb?.({ ok: true, vida, vidaRecuperada, consumedCardId: cardId });
+      } catch (error) {
+        if (cardConsumed) {
+          await UserModel.updateOne(
+            { _id: p.userId },
+            { $addToSet: { cartas: cardId, mazo: cardId } }
+          ).catch(() => {});
+        }
+        console.error(`[PVP][${instanceId}] life card error`, {
+          socketId: socket.id,
+          userId: p.userId,
+          cardId,
+          error: error.message,
+        });
+        cb?.({ ok: false, error: error.message });
+      }
+    });
+
+    socket.on('mine:place', async (payload, cb) => {
+      const p = players.get(socket.id);
+      if (!p) return cb?.({ ok: false, error: 'No player' });
+
+      const cardId = String(payload?.cardId || '');
+      const lat = Number(payload?.lat);
+      const lng = Number(payload?.lng);
+
+      try {
+        const card = await CardModel.findById(cardId).lean();
+        if (!card || card.tipoArma !== 'Trampa') {
+          throw new Error('Carta de Mina inválida');
+        }
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) ||
+            geo.distanceMeters(p, { lat, lng }) > 500) {
+          throw new Error('Posición de mina inválida');
+        }
+
+        const radioActivacion = Number(card.radioActivacion);
+        const dano = Number(card.dano);
+        const duracion = Number(card.duracion);
+        if (!Number.isFinite(radioActivacion) || radioActivacion <= 0 ||
+            !Number.isFinite(dano) || dano <= 0 ||
+            !Number.isFinite(duracion) || duracion <= 0) {
+          throw new Error('La Mina no tiene una configuración válida');
+        }
+
+        const user = await UserModel.findOne({
+          _id: p.userId,
+          cartas: cardId,
+          mazo: cardId,
+        }).lean();
+        if (!user) {
+          throw new Error('La carta ya no está disponible en tu mazo');
+        }
+
+        const cooldownKey = `mine:${cardId}`;
+        const cooldownMs =
+          Math.max(0, Number(card.tiempoEspera) || 0) * 1000;
+        const lastPlacedAt = p.lastShotByCard?.[cooldownKey] || 0;
+        if (Date.now() - lastPlacedAt < cooldownMs) {
+          throw new Error('Carta en tiempo de espera');
+        }
+
+        const mineDoc = await MineModel.create({
+          ownerUserId: p.userId,
+          cardId,
+          lat,
+          lng,
+          zoneId: toZoneId(lat, lng),
+          radioActivacion,
+          dano: Math.floor(dano),
+          usoUnico: card.usoUnico !== false,
+          expiresAt: new Date(Date.now() + Math.floor(duracion) * 1000),
+          imagenPortada: card.imagenPortada || '',
+          imagenesActivacion: card.imagenesActivacion?.length
+            ? card.imagenesActivacion
+            : (card.imagenPortada ? [card.imagenPortada] : []),
+          imagenesExplosion: card.imagenesExplosionTrampa || [],
+        });
+        const mine = mineDoc.toObject();
+        mine.playersInside = new Set();
+        mines.set(String(mine._id), mine);
+        for (const sameUser of playersForUser(p.userId)) {
+          sameUser.lastShotByCard = {
+            ...(sameUser.lastShotByCard || {}),
+            [cooldownKey]: Date.now(),
+          };
+        }
+
+        const result = minePayload(mine);
+        nsp.to(mine.zoneId).emit('mine:spawn', result);
+        cb?.({ ok: true, mine: result, cooldownMs });
+      } catch (error) {
+        console.error(`[PVP][${instanceId}] mine placement error`, {
+          socketId: socket.id,
+          userId: p.userId,
+          cardId,
+          error: error.message,
+        });
+        cb?.({ ok: false, error: error.message });
+      }
+    });
+
+    socket.on('airstrike:place', async (payload, cb) => {
+      const p = players.get(socket.id);
+      if (!p) return cb?.({ ok: false, error: 'No player' });
+
+      const cardId = String(payload?.cardId || '');
+      const lat = Number(payload?.lat);
+      const lng = Number(payload?.lng);
+
+      try {
+        const card = await CardModel.findById(cardId).lean();
+        if (!card || card.tipoArma !== 'Invocacion') {
+          throw new Error('Carta de Ataque Aéreo inválida');
+        }
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) ||
+            geo.distanceMeters(p, { lat, lng }) > 500) {
+          throw new Error('Posición de ataque inválida');
+        }
+
+        const radioExplosion = Number(card.radioExplosion);
+        const dano = Number(card.dano);
+        const tiempoHastaAtaque = Number(card.tiempoHastaAtaque);
+        if (!Number.isFinite(radioExplosion) || radioExplosion <= 0 ||
+            !Number.isFinite(dano) || dano <= 0 ||
+            !Number.isFinite(tiempoHastaAtaque) || tiempoHastaAtaque <= 0) {
+          throw new Error('El Ataque Aéreo no tiene una configuración válida');
+        }
+
+        const user = await UserModel.findOne({
+          _id: p.userId,
+          cartas: cardId,
+          mazo: cardId,
+        }).lean();
+        if (!user) {
+          throw new Error('La carta no está disponible en tu mazo');
+        }
+
+        const cooldownKey = `airstrike:${cardId}`;
+        const cooldownMs =
+          Math.max(0, Number(card.tiempoEspera) || 0) * 1000;
+        const lastPlacedAt = p.lastShotByCard?.[cooldownKey] || 0;
+        if (Date.now() - lastPlacedAt < cooldownMs) {
+          throw new Error('Carta en tiempo de espera');
+        }
+
+        const now = Date.now();
+        const attackAt = new Date(
+          now + Math.floor(tiempoHastaAtaque * 1000)
+        );
+        const impactAt = new Date(attackAt.getTime() + 4000);
+        const airstrikeDoc = await AirstrikeModel.create({
+          ownerUserId: p.userId,
+          cardId,
+          lat,
+          lng,
+          zoneId: toZoneId(lat, lng),
+          radioExplosion,
+          dano: Math.floor(dano),
+          attackAt,
+          impactAt,
+          launched: false,
+          heading: Math.random() * 360,
+          imagenesAvion: card.imagenesAvion?.length
+            ? card.imagenesAvion
+            : (card.imagenesInvocacion || []),
+          imagenesBomba: card.imagenesBomba?.length
+            ? card.imagenesBomba
+            : (card.imagenPortada ? [card.imagenPortada] : []),
+          imagenesExplosion: card.imagenesExplosionInvocacion || [],
+        });
+        const airstrike = airstrikeDoc.toObject();
+        airstrikes.set(String(airstrike._id), airstrike);
+        for (const sameUser of playersForUser(p.userId)) {
+          sameUser.lastShotByCard = {
+            ...(sameUser.lastShotByCard || {}),
+            [cooldownKey]: now,
+          };
+        }
+
+        const result = airstrikePayload(airstrike);
+        nsp.to(airstrike.zoneId).emit('airstrike:spawn', result);
+        cb?.({ ok: true, airstrike: result, cooldownMs });
+      } catch (error) {
+        console.error(`[PVP][${instanceId}] airstrike placement error`, {
+          socketId: socket.id,
+          userId: p.userId,
+          cardId,
           error: error.message,
         });
         cb?.({ ok: false, error: error.message });
