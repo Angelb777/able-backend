@@ -1,50 +1,39 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
 const Card = require("../models/Card");
 const User = require("../models/User");
+const { saveImage } = require("../utils/mediaStorage");
 
-// 📁 Asegurar que la carpeta exista antes de usarla
-const dir = path.join(__dirname, "../uploads/cards");
-if (!fs.existsSync(dir)) {
-  fs.mkdirSync(dir, { recursive: true });
-  console.log("📁 Carpeta 'uploads/cards' creada");
-}
-
-// 🧼 Renombrar archivos sin extensión
-fs.readdirSync(dir).forEach(file => {
-  const ext = path.extname(file);
-  if (!ext) {
-    const oldPath = path.join(dir, file);
-    const newPath = path.join(dir, file + ".png");
-    fs.renameSync(oldPath, newPath);
-    console.log(`✅ Renombrado: ${file} → ${file}.png`);
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (!file.mimetype?.startsWith("image/")) {
+      return cb(new Error("Sólo se permiten archivos de imagen"));
+    }
+    cb(null, true);
   }
 });
 
-// 🧱 Configurar almacenamiento con multer
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads/cards");
-  },
-  filename: (req, file, cb) => {
-  const ext = path.extname(file.originalname) || ".png";
-  const baseName = path.basename(file.originalname, ext).replace(/\s+/g, "_"); // quita espacios
-  const uniqueSuffix = Date.now();
-  const finalName = `${baseName}-${uniqueSuffix}${ext}`;
-  cb(null, finalName);
-}
-});
-
-const upload = multer({ storage });
-
 // 🔧 Normalizar rutas
 function normalizarRuta(file) {
-  let ruta = file.path.replace(/\\/g, "/");
-  if (!ruta.startsWith("/")) ruta = "/" + ruta;
-  return ruta;
+  return file.path;
+}
+
+async function guardarImagenes(files) {
+  const entries = await Promise.all(
+    Object.entries(files).map(async ([campo, archivos]) => {
+      const guardados = await Promise.all(
+        archivos.map(async (file) => ({
+          ...file,
+          path: await saveImage(file, "cards")
+        }))
+      );
+      return [campo, guardados];
+    })
+  );
+  return Object.fromEntries(entries);
 }
 
 router.post(
@@ -71,7 +60,7 @@ router.post(
   ]),
   async (req, res) => {
     try {
-      const files = req.files || {};
+      let files = req.files || {};
       const body  = req.body  || {};
 
       // 👀 DEBUG ÚTIL
@@ -130,6 +119,7 @@ router.post(
       }
 
       // Unificar imágenes de disparo
+      files = await guardarImagenes(files);
       const imgsDisparo = [];
       if (files.imagenesDisparo) imgsDisparo.push(...files.imagenesDisparo.map(normalizarRuta));
       if (files.imagenesBala)     imgsDisparo.push(...files.imagenesBala.map(normalizarRuta));
@@ -235,7 +225,7 @@ router.put(
         return res.status(404).json({ error: "Carta no encontrada" });
       }
 
-      const files = req.files || {};
+      let files = req.files || {};
       const body = req.body || {};
       const toInt = (value, fallback = 0) =>
         value === undefined || value === null || value === ""
@@ -291,6 +281,7 @@ router.put(
         });
       }
 
+      files = await guardarImagenes(files);
       Object.assign(card, {
         titulo: body.titulo,
         descripcion: body.descripcion || "",
@@ -445,26 +436,11 @@ router.get("/user-cards/:userId/mazo", async (req, res) => {
   }
 });
 
-// 🧽 Ruta para renombrar archivos sin extensión
-router.get("/fix-extensions", async (req, res) => {
-  const dir = path.join(__dirname, "../uploads/cards");
-  let renombrados = [];
-
-  if (!fs.existsSync(dir)) {
-    return res.status(404).json({ error: "La carpeta no existe" });
-  }
-
-  fs.readdirSync(dir).forEach(file => {
-    const ext = path.extname(file);
-    if (!ext) {
-      const oldPath = path.join(dir, file);
-      const newPath = path.join(dir, file + ".png");
-      fs.renameSync(oldPath, newPath);
-      renombrados.push(`${file} → ${file}.png`);
-    }
+router.get("/fix-extensions", (_req, res) => {
+  res.json({
+    message: "Las imágenes nuevas se guardan en MongoDB y conservan su tipo original.",
+    renombrados: []
   });
-
-  res.json({ message: "✅ Archivos renombrados", renombrados });
 });
 
 module.exports = router;

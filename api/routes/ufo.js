@@ -2,32 +2,10 @@ const express = require('express');
 const router = express.Router();
 const Ufo = require('../models/Ufo');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const { saveImage } = require('../utils/mediaStorage');
 
-// Usa la misma base que server.js. En producción UPLOAD_BASE_DIR apunta al
-// disco persistente (por ejemplo /data/uploads), por lo que las imágenes no
-// desaparecen al reiniciar o desplegar el servicio.
-const uploadBaseDir =
-  process.env.UPLOAD_BASE_DIR || path.join(__dirname, '..', '..', 'uploads');
-const uploadDir = path.join(uploadBaseDir, 'ufo');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-// 📸 Configurar multer
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    const ext = path.extname(file.originalname);
-    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1E9)}${ext}`;
-    cb(null, uniqueName);
-  }
-});
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (!file.mimetype?.startsWith('image/')) {
@@ -43,8 +21,8 @@ router.post('/', upload.fields([
   { name: 'imagenBala', maxCount: 1 }
 ]), async (req, res) => {
   try {
-    const imagenOvniFilename = req.files?.imagenOvni?.[0]?.filename || '';
-    const imagenBalaFilename = req.files?.imagenBala?.[0]?.filename || '';
+    const imagenOvniFile = req.files?.imagenOvni?.[0];
+    const imagenBalaFile = req.files?.imagenBala?.[0];
 
     const {
       nombre,
@@ -62,15 +40,20 @@ router.post('/', upload.fields([
         duracionPantalla === undefined) {
       return res.status(400).json({ error: "Faltan datos requeridos" });
     }
-    if (!imagenOvniFilename) {
+    if (!imagenOvniFile) {
       return res.status(400).json({ error: "La imagen del OVNI es requerida" });
     }
 
+    const [imagenOvni, imagenBala] = await Promise.all([
+      saveImage(imagenOvniFile, 'ufo'),
+      imagenBalaFile ? saveImage(imagenBalaFile, 'ufo') : Promise.resolve('')
+    ]);
+
     const nuevoUfo = new Ufo({
       nombre,
-      imagenOvni: `/uploads/ufo/${imagenOvniFilename}`,
+      imagenOvni,
       vida,
-      imagenBala: `/uploads/ufo/${imagenBalaFilename}`,
+      imagenBala,
       velocidadBala,
       velocidadMovimiento,
       tiempoAparicion,
@@ -128,13 +111,13 @@ router.put('/:id', upload.fields([
       danoBala: Number(danoBala)
     });
 
-    const nuevaImagenOvni = req.files?.imagenOvni?.[0]?.filename;
-    const nuevaImagenBala = req.files?.imagenBala?.[0]?.filename;
+    const nuevaImagenOvni = req.files?.imagenOvni?.[0];
+    const nuevaImagenBala = req.files?.imagenBala?.[0];
     if (nuevaImagenOvni) {
-      ovni.imagenOvni = `/uploads/ufo/${nuevaImagenOvni}`;
+      ovni.imagenOvni = await saveImage(nuevaImagenOvni, 'ufo');
     }
     if (nuevaImagenBala) {
-      ovni.imagenBala = `/uploads/ufo/${nuevaImagenBala}`;
+      ovni.imagenBala = await saveImage(nuevaImagenBala, 'ufo');
     }
 
     await ovni.save();

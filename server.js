@@ -79,6 +79,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // 👉 Servir archivos subidos (mismo path en local y prod)
 //    - En prod, si UPLOAD_BASE_DIR=/data/uploads, esto sirve /uploads/* desde /data/uploads/*
 app.use('/uploads', express.static(UPLOAD_BASE_DIR, { fallthrough: false }));
+app.use('/api/media', require('./api/routes/media'));
 
 // 🔎 Ruta de salud
 app.get('/health', (_req, res) => res.json({ ok: true }));

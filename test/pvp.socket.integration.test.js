@@ -80,6 +80,7 @@ test('two players share presence, movement, one hit, life and explosions', async
             'card-life': {
               tipoArma: 'Vida',
               vidaQueDa: 150,
+              tiempoEspera: 40,
             },
             'card-mine': {
               tipoArma: 'Trampa',
@@ -507,12 +508,15 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.equal(healedLifeA.vida, 1000);
   assert.deepEqual(healedLifeA, healedLifeB);
   assert.equal(lifeByUser.get('507f191e810c19729de860ea'), 1000);
-  assert.equal(cardsByUser.get('507f191e810c19729de860ea').size, 0);
+  assert.equal(cardsByUser.get('507f191e810c19729de860ea').size, 1);
 
+  lifeByUser.set('507f191e810c19729de860ea', 900);
   const reusedLifeCardAck = await emitWithAck(playerB, 'card:use-life', {
     cardId: 'card-life',
   });
   assert.equal(reusedLifeCardAck.ok, false);
+  assert.match(reusedLifeCardAck.error, /tiempo de espera/i);
+  assert.equal(cardsByUser.get('507f191e810c19729de860ea').size, 1);
 
   let mineTriggers = 0;
   playerA.on('mine:trigger', () => mineTriggers++);
@@ -531,6 +535,10 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.equal(minePlaceAck.ok, true);
   assert.equal(spawnedMineA.mineId, 'mine-test-1');
   assert.deepEqual(spawnedMineA, spawnedMineB);
+  assert.equal(
+    spawnedMineA.imagenMapa,
+    '/uploads/cards/mine-explosion.webp'
+  );
   assert.deepEqual(spawnedMineA.imagenesExplosion, [
     '/uploads/cards/mine-explosion-final.webp',
   ]);

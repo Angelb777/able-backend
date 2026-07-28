@@ -63,7 +63,7 @@ module.exports = function(io, dependencies = {}) {
     dano: mine.dano,
     usoUnico: mine.usoUnico !== false,
     expiresAt: new Date(mine.expiresAt).toISOString(),
-    imagenPortada: mine.imagenPortada || '',
+    imagenMapa: mine.imagenesActivacion?.[0] || '',
     imagenesActivacion: mine.imagenesActivacion || [],
     imagenesExplosion: mine.imagenesExplosion || [],
   });
@@ -844,8 +844,8 @@ module.exports = function(io, dependencies = {}) {
       }
     });
 
-    // Consume una carta de Vida del mazo e inventario y aplica la curación
-    // en el servidor para que ningún cliente pueda elegir la cantidad.
+    // La carta de Vida es una habilidad permanente: debe estar en el mazo,
+    // aplica la curación en servidor y entra en cooldown, pero no se consume.
     socket.on('card:use-life', async (payload, cb) => {
       const p = players.get(socket.id);
       if (!p) return cb?.({ ok: false, error: 'No player' });
@@ -855,7 +855,6 @@ module.exports = function(io, dependencies = {}) {
         return cb?.({ ok: false, error: 'Carta de Vida inválida' });
       }
 
-      let cardConsumed = false;
       try {
         const card = await CardModel.findById(cardId).lean();
         if (!card || card.tipoArma !== 'Vida') {
@@ -868,21 +867,31 @@ module.exports = function(io, dependencies = {}) {
           throw new Error('La carta no tiene una curación válida');
         }
 
-        const user = await UserModel.findOneAndUpdate(
-          { _id: p.userId, cartas: cardId, mazo: cardId },
-          { $pull: { cartas: cardId, mazo: cardId } },
-          { new: true }
-        ).lean();
+        const user = await UserModel.findOne({
+          _id: p.userId,
+          cartas: cardId,
+          mazo: cardId,
+        }).lean();
         if (!user) {
           throw new Error('La carta ya no está disponible en tu mazo');
         }
-        cardConsumed = true;
+
+        const cooldownKey = `life:${cardId}`;
+        const cooldownMs =
+          Math.max(0, Number(card.tiempoEspera) || 0) * 1000;
+        const lastUsedAt = p.lastShotByCard?.[cooldownKey] || 0;
+        if (Date.now() - lastUsedAt < cooldownMs) {
+          throw new Error('Carta en tiempo de espera');
+        }
 
         const lifeDoc = await LifeModel.findOne({ userId: p.userId }).lean();
         const previousLife = Math.max(
           0,
           Math.min(MAX_PLAYER_LIFE, Number(lifeDoc?.vida ?? MAX_PLAYER_LIFE))
         );
+        if (previousLife >= MAX_PLAYER_LIFE) {
+          throw new Error('Ya tienes la vida al máximo');
+        }
         const vida = Math.min(
           MAX_PLAYER_LIFE,
           previousLife + Math.floor(configuredHealing)
@@ -896,6 +905,10 @@ module.exports = function(io, dependencies = {}) {
         );
         for (const sameUser of playersForUser(p.userId)) {
           sameUser.vida = vida;
+          sameUser.lastShotByCard = {
+            ...(sameUser.lastShotByCard || {}),
+            [cooldownKey]: Date.now(),
+          };
         }
 
         nsp.to(p.zoneId).emit('life:update', {
@@ -903,16 +916,11 @@ module.exports = function(io, dependencies = {}) {
           vida,
           vidaRecuperada,
           cardId,
+          cooldownMs,
           reason: 'life-card',
         });
-        cb?.({ ok: true, vida, vidaRecuperada, consumedCardId: cardId });
+        cb?.({ ok: true, vida, vidaRecuperada, cooldownMs });
       } catch (error) {
-        if (cardConsumed) {
-          await UserModel.updateOne(
-            { _id: p.userId },
-            { $addToSet: { cartas: cardId, mazo: cardId } }
-          ).catch(() => {});
-        }
         console.error(`[PVP][${instanceId}] life card error`, {
           socketId: socket.id,
           userId: p.userId,
@@ -977,10 +985,8 @@ module.exports = function(io, dependencies = {}) {
           dano: Math.floor(dano),
           usoUnico: card.usoUnico !== false,
           expiresAt: new Date(Date.now() + Math.floor(duracion) * 1000),
-          imagenPortada: card.imagenPortada || '',
-          imagenesActivacion: card.imagenesActivacion?.length
-            ? card.imagenesActivacion
-            : (card.imagenPortada ? [card.imagenPortada] : []),
+          imagenPortada: '',
+          imagenesActivacion: card.imagenesActivacion || [],
           imagenesExplosion: card.imagenesExplosionTrampa || [],
         });
         const mine = mineDoc.toObject();
