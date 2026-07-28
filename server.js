@@ -142,6 +142,7 @@ app.use('/api/skins', require('./api/routes/skins'));
 app.use('/api/cards', require('./api/routes/cards'));
 app.use('/api/life', require('./api/routes/life'));
 app.use('/api/ubicaciones', require('./api/routes/ubicaciones'));
+app.use('/api/mobility', require('./api/routes/mobility'));
 app.use('/api/ufo', require('./api/routes/ufo'));
 app.use('/api/promociones-negocio', require('./api/routes/promocionesNegocio'));
 app.use('/api/promo-contratada', require('./api/routes/promoContratada'));
