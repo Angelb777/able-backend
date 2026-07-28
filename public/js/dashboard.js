@@ -757,7 +757,7 @@ async function renderRewardsSection() {
       <button type="submit">Crear</button>
     </form>
 
-    <h3>Mis Anuncios</h3>
+    <h3>${role === "admin" ? "Todos los anuncios publicados y pendientes" : "Mis Anuncios"}</h3>
     <div id="misRewards" class="lista-rewards"></div>
   `;
 
@@ -779,7 +779,9 @@ async function crearReward(e) {
 
   const form = document.getElementById("formReward");
   const formData = new FormData(form);
-  formData.append("comercioId", userId);
+  if (role !== "admin") {
+    formData.append("comercioId", userId);
+  }
 
   const tipo = formData.get("tipo");
   if (tipo === "descuento") {
@@ -816,8 +818,17 @@ async function cargarMisRewards() {
   contenedor.innerHTML = "<p>Cargando...</p>";
 
   try {
-    const res = await fetch(`/api/rewards/mis/${userId}`);
+    const token = localStorage.getItem("token") || "";
+    const url = role === "admin"
+      ? "/api/rewards/gestion"
+      : `/api/rewards/mis/${userId}`;
+    const res = await fetch(url, {
+      headers: role === "admin"
+        ? { Authorization: `Bearer ${token}` }
+        : {}
+    });
     const rewards = await res.json();
+    if (!res.ok) throw new Error(rewards.error || "No se pudo cargar el catálogo");
     if (!Array.isArray(rewards)) throw new Error("Respuesta inválida");
 
     if (rewards.length === 0) {

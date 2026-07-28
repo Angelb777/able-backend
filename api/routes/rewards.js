@@ -5,7 +5,7 @@ const multer = require("multer");
 const path = require("path");
 const Reward = require("../models/Reward");
 const User = require("../models/User");
-const { verifyToken } = require("../middlewares/authMiddleware");
+const { verifyToken, checkRole } = require("../middlewares/authMiddleware");
 
 // El catálogo cambia desde el panel de administración. Evita que Flutter,
 // navegadores o proxies reutilicen una respuesta anterior después de un borrado.
@@ -126,6 +126,19 @@ router.get("/", async (req, res) => {
     res.json(rewards);
   } catch (err) {
     res.status(500).json({ error: "Error al obtener rewards" });
+  }
+});
+
+// Catálogo completo para la gestión del superadmin. La ruta /mis/:comercioId
+// solo contiene los anuncios de un propietario y no representa lo que Flutter
+// muestra en el catálogo público.
+router.get("/gestion", verifyToken, checkRole(["admin"]), async (req, res) => {
+  try {
+    const rewards = await Reward.find().sort({ fechaCreacion: -1 });
+    res.json(rewards);
+  } catch (err) {
+    console.error("Error al obtener el catálogo para gestión:", err);
+    res.status(500).json({ error: "Error al obtener el catálogo" });
   }
 });
 
