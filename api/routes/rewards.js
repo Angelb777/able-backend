@@ -36,8 +36,14 @@ const upload = multer({ storage });
 //     CREATE / READ
 // =========================
 
-// Crear nuevo descuento o premio
-router.post("/", upload.array("imagenes", 3), async (req, res) => {
+// Crear nuevo descuento o premio. Los creados por un administrador se
+// publican directamente; los de comercios requieren validación.
+router.post(
+  "/",
+  verifyToken,
+  checkRole(["admin", "comercio"]),
+  upload.array("imagenes", 3),
+  async (req, res) => {
   try {
     const {
       tipo,
@@ -46,9 +52,10 @@ router.post("/", upload.array("imagenes", 3), async (req, res) => {
       direccion,
       porcentaje,
       cantidadEuros,
-      stepcoins,
-      comercioId
+      stepcoins
     } = req.body;
+
+    const creadoPorAdmin = req.user.role === "admin";
 
     // ⚠️ Mantengo exactamente como lo tenías:
     const imagenes = (req.files || []).map((file) => file.path);
@@ -62,9 +69,9 @@ router.post("/", upload.array("imagenes", 3), async (req, res) => {
       cantidadEuros,
       stepcoins,
       imagenes,
-      comercioId: comercioId || null,
-      validado: false,
-      creadoPorAdmin: !comercioId // si no hay comercioId => creado por admin
+      comercioId: creadoPorAdmin ? null : req.user.id,
+      validado: creadoPorAdmin,
+      creadoPorAdmin
     });
 
     await nuevo.save();
@@ -73,12 +80,20 @@ router.post("/", upload.array("imagenes", 3), async (req, res) => {
     console.error("Error al crear reward:", err);
     res.status(500).json({ error: "Error interno del servidor" });
   }
-});
+  }
+);
 
 // Obtener rewards validados y ordenados por prioridad
 router.get("/validados", async (req, res) => {
   try {
-    const rewards = await Reward.find({ validado: true });
+    // Incluye también rewards antiguos del admin que quedaron guardados como
+    // pendientes antes de que la publicación automática estuviera corregida.
+    const rewards = await Reward.find({
+      $or: [
+        { validado: true },
+        { creadoPorAdmin: true }
+      ]
+    });
 
     const conPrioridad = rewards.map(r => {
       let prioridad = 0;
@@ -122,7 +137,12 @@ router.get("/validados", async (req, res) => {
 // Obtener todos los rewards validados (para clientes)
 router.get("/", async (req, res) => {
   try {
-    const rewards = await Reward.find({ validado: true }).sort({ fechaCreacion: -1 });
+    const rewards = await Reward.find({
+      $or: [
+        { validado: true },
+        { creadoPorAdmin: true }
+      ]
+    }).sort({ fechaCreacion: -1 });
     res.json(rewards);
   } catch (err) {
     res.status(500).json({ error: "Error al obtener rewards" });

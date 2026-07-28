@@ -779,9 +779,6 @@ async function crearReward(e) {
 
   const form = document.getElementById("formReward");
   const formData = new FormData(form);
-  if (role !== "admin") {
-    formData.append("comercioId", userId);
-  }
 
   const tipo = formData.get("tipo");
   if (tipo === "descuento") {
@@ -796,8 +793,10 @@ async function crearReward(e) {
   }
 
   try {
+    const token = localStorage.getItem("token") || "";
     const res = await fetch("/api/rewards", {
       method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
       body: formData,
     });
     const data = await res.json();
@@ -845,7 +844,7 @@ async function cargarMisRewards() {
         ${r.porcentaje ? `<p>💸 Descuento: ${r.porcentaje}%</p>` : ""}
         ${r.cantidadEuros ? `<p>💶 Descuento: ${r.cantidadEuros}€</p>` : ""}
         <p>📍 ${r.direccion}</p>
-        <p>🟢 Estado: ${r.validado ? "Publicado" : "Pendiente de validación"}</p>
+        <p>🟢 Estado: ${r.validado || r.creadoPorAdmin ? "Publicado" : "Pendiente de validación"}</p>
         ${r.imagenes.map(img => `<img src="${img}" width="100" style="margin:5px;">`).join("")}
         <br>
         <button onclick="eliminarReward('${r._id}')">🗑️ Eliminar</button>
