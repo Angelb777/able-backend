@@ -71,10 +71,10 @@ module.exports = function(io, dependencies = {}) {
     const target = { lat: airstrike.lat, lng: airstrike.lng };
     const from = geo.computeOffset(
       target,
-      2000,
+      250,
       (airstrike.heading + 180) % 360
     );
-    const to = geo.computeOffset(target, 2000, airstrike.heading);
+    const to = geo.computeOffset(target, 250, airstrike.heading);
     return {
       airstrikeId: String(airstrike._id),
       ownerUserId: String(airstrike.ownerUserId),
@@ -89,8 +89,8 @@ module.exports = function(io, dependencies = {}) {
       heading: airstrike.heading,
       from,
       to,
-      planeDurationMs: 4000,
-      bombDropDelayMs: 2000,
+      planeDurationMs: 6000,
+      bombDropDelayMs: 4000,
       bombDurationMs: 2000,
       imagenesAvion: airstrike.imagenesAvion || [],
       imagenesBomba: airstrike.imagenesBomba || [],
@@ -1058,7 +1058,7 @@ module.exports = function(io, dependencies = {}) {
         const attackAt = new Date(
           now + Math.floor(tiempoHastaAtaque * 1000)
         );
-        const impactAt = new Date(attackAt.getTime() + 4000);
+        const impactAt = new Date(attackAt.getTime() + 6000);
         const airstrikeDoc = await AirstrikeModel.create({
           ownerUserId: p.userId,
           cardId,

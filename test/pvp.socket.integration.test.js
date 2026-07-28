@@ -633,8 +633,8 @@ test('two players share presence, movement, one hit, life and explosions', async
   const airstrikeSpawnB = waitForEvent(playerB, 'airstrike:spawn');
   const airstrikeLaunchA = waitForEvent(playerA, 'airstrike:launch', 2500);
   const airstrikeLaunchB = waitForEvent(playerB, 'airstrike:launch', 2500);
-  const airstrikeImpactA = waitForEvent(playerA, 'airstrike:impact', 7000);
-  const airstrikeImpactB = waitForEvent(playerB, 'airstrike:impact', 7000);
+  const airstrikeImpactA = waitForEvent(playerA, 'airstrike:impact', 9000);
+  const airstrikeImpactB = waitForEvent(playerB, 'airstrike:impact', 9000);
   const airstrikePlacedAt = Date.now();
   const airstrikeAck = await emitWithAck(playerA, 'airstrike:place', {
     cardId: 'card-airstrike',
@@ -677,6 +677,9 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.deepEqual(launchedAirstrikeA.imagenesBomba, [
     '/uploads/cards/bomb.webp',
   ]);
+  assert.equal(launchedAirstrikeA.planeDurationMs, 6000);
+  assert.equal(launchedAirstrikeA.bombDropDelayMs, 4000);
+  assert.equal(launchedAirstrikeA.bombDurationMs, 2000);
 
   const [impactedAirstrikeA, impactedAirstrikeB] = await Promise.all([
     airstrikeImpactA,
