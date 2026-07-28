@@ -2,10 +2,11 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 const Reward = require("../models/Reward");
 const User = require("../models/User");
 const { verifyToken, checkRole } = require("../middlewares/authMiddleware");
-const { saveImage } = require("../utils/mediaStorage");
 
 // El catálogo cambia desde el panel de administración. Evita que Flutter,
 // navegadores o proxies reutilicen una respuesta anterior después de un borrado.
@@ -20,18 +21,31 @@ router.use((req, res, next) => {
   next();
 });
 
-// Las imágenes se guardan en GridFS, igual que las cartas y los OVNIs, para
-// que sobrevivan a reinicios y nuevos despliegues del backend.
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    if (!file.mimetype?.startsWith("image/")) {
-      return cb(new Error("Sólo se permiten archivos de imagen"));
-    }
-    cb(null, true);
+// Usa la misma base persistente que server.js y las skins.
+const UPLOAD_BASE_DIR =
+  process.env.UPLOAD_BASE_DIR || path.join(__dirname, "../../uploads");
+const REWARDS_DIR = path.join(UPLOAD_BASE_DIR, "rewards");
+fs.mkdirSync(REWARDS_DIR, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, REWARDS_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, unique + ext);
   }
 });
+const upload = multer({ storage });
+
+function uploadRewardImages(req, res, next) {
+  upload.array("imagenes", 3)(req, res, (error) => {
+    if (error) {
+      console.error("Error subiendo imágenes del reward:", error);
+      return res.status(400).json({ error: `No se pudo subir la imagen: ${error.message}` });
+    }
+    next();
+  });
+}
 
 // =========================
 //     CREATE / READ
@@ -43,7 +57,7 @@ router.post(
   "/",
   verifyToken,
   checkRole(["admin", "comercio"]),
-  upload.array("imagenes", 3),
+  uploadRewardImages,
   async (req, res) => {
   try {
     const {
@@ -58,11 +72,9 @@ router.post(
 
     const creadoPorAdmin = req.user.role === "admin";
 
-    const imagenesPersistentes = await Promise.all(
-      (req.files || []).map((file) => saveImage(file, "rewards"))
+    const imagenes = (req.files || []).map(
+      (file) => `uploads/rewards/${file.filename}`
     );
-    // Flutter compone las rutas relativas con Env.baseUrl y una barra.
-    const imagenes = imagenesPersistentes.map((url) => url.replace(/^\/+/, ""));
 
     const nuevo = new Reward({
       tipo,
@@ -82,7 +94,7 @@ router.post(
     res.status(201).json({ message: "Descuento/Premio creado correctamente" });
   } catch (err) {
     console.error("Error al crear reward:", err);
-    res.status(500).json({ error: "Error interno del servidor" });
+    res.status(500).json({ error: `Error al guardar el reward: ${err.message}` });
   }
   }
 );

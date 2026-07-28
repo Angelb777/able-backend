@@ -61,6 +61,7 @@ const ensureDirs = [
   path.join(UPLOAD_BASE_DIR, 'skins'),
   path.join(UPLOAD_BASE_DIR, 'cards'),
   path.join(UPLOAD_BASE_DIR, 'ufo'),
+  path.join(UPLOAD_BASE_DIR, 'rewards'),
 ];
 for (const d of ensureDirs) {
   try {

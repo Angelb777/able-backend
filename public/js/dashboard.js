@@ -807,7 +807,7 @@ async function crearReward(e) {
     actualizarCampos();
     cargarMisRewards();
   } catch (err) {
-    alert("❌ Error al crear reward");
+    alert(`❌ ${err.message || "Error al crear reward"}`);
     console.error(err);
   }
 }
