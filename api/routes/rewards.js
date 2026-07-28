@@ -2,10 +2,10 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
-const path = require("path");
 const Reward = require("../models/Reward");
 const User = require("../models/User");
 const { verifyToken, checkRole } = require("../middlewares/authMiddleware");
+const { saveImage } = require("../utils/mediaStorage");
 
 // El catálogo cambia desde el panel de administración. Evita que Flutter,
 // navegadores o proxies reutilicen una respuesta anterior después de un borrado.
@@ -20,17 +20,18 @@ router.use((req, res, next) => {
   next();
 });
 
-// Configuración de Multer para subir imágenes localmente
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads/rewards");
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  },
+// Las imágenes se guardan en GridFS, igual que las cartas y los OVNIs, para
+// que sobrevivan a reinicios y nuevos despliegues del backend.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (!file.mimetype?.startsWith("image/")) {
+      return cb(new Error("Sólo se permiten archivos de imagen"));
+    }
+    cb(null, true);
+  }
 });
-const upload = multer({ storage });
 
 // =========================
 //     CREATE / READ
@@ -57,8 +58,11 @@ router.post(
 
     const creadoPorAdmin = req.user.role === "admin";
 
-    // ⚠️ Mantengo exactamente como lo tenías:
-    const imagenes = (req.files || []).map((file) => file.path);
+    const imagenesPersistentes = await Promise.all(
+      (req.files || []).map((file) => saveImage(file, "rewards"))
+    );
+    // Flutter compone las rutas relativas con Env.baseUrl y una barra.
+    const imagenes = imagenesPersistentes.map((url) => url.replace(/^\/+/, ""));
 
     const nuevo = new Reward({
       tipo,
