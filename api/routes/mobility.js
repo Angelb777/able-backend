@@ -9,10 +9,17 @@ const {
   ZaragozaBusProviderError,
   ZaragozaBusStopNotFoundError,
 } = require("../services/zaragozaBusProvider");
+const { createTramStopService } = require("../services/tramStopService");
+const {
+  TRAM_STOP_ID_PATTERN,
+  ZaragozaTramProviderError,
+  ZaragozaTramStopNotFoundError,
+} = require("../services/zaragozaTramProvider");
 
 function createMobilityRouter({
   biziStations = createBiziStationService(),
   busStops = createBusStopService(),
+  tramStops = createTramStopService(),
 } = {}) {
   const router = express.Router();
 
@@ -74,6 +81,51 @@ function createMobilityRouter({
       return res.status(502).json({
         error: "BUS_ARRIVALS_UNAVAILABLE",
         message: "Los tiempos de autobús no están disponibles temporalmente",
+      });
+    }
+  });
+
+  router.get("/tram/stops", async (_req, res) => {
+    try {
+      res.json(await tramStops.getStops());
+    } catch (error) {
+      const controlledError =
+        error instanceof ZaragozaTramProviderError
+          ? error.message
+          : "Error inesperado consultando las paradas de tranvía";
+      console.error(`[mobility:tram:stops] ${controlledError}`);
+      res.status(502).json({
+        error: "TRAM_STOPS_UNAVAILABLE",
+        message: "Las paradas de tranvía no están disponibles temporalmente",
+      });
+    }
+  });
+
+  router.get("/tram/stops/:stopId/arrivals", async (req, res) => {
+    const stopId = String(req.params.stopId ?? "").trim();
+    if (!TRAM_STOP_ID_PATTERN.test(stopId)) {
+      return res.status(400).json({
+        error: "INVALID_TRAM_STOP_ID",
+        message: "El identificador de parada de tranvía no es válido",
+      });
+    }
+    try {
+      return res.json(await tramStops.getArrivals(stopId));
+    } catch (error) {
+      if (error instanceof ZaragozaTramStopNotFoundError) {
+        return res.status(404).json({
+          error: "TRAM_STOP_NOT_FOUND",
+          message: "La parada de tranvía no existe",
+        });
+      }
+      const controlledError =
+        error instanceof ZaragozaTramProviderError
+          ? error.message
+          : "Error inesperado consultando los tiempos de tranvía";
+      console.error(`[mobility:tram:arrivals] ${controlledError}`);
+      return res.status(502).json({
+        error: "TRAM_ARRIVALS_UNAVAILABLE",
+        message: "Los tiempos de tranvía no están disponibles temporalmente",
       });
     }
   });

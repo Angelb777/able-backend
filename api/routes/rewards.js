@@ -2,11 +2,10 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
 const Reward = require("../models/Reward");
 const User = require("../models/User");
 const { verifyToken, checkRole } = require("../middlewares/authMiddleware");
+const { saveImage } = require("../utils/mediaStorage");
 
 // El catálogo cambia desde el panel de administración. Evita que Flutter,
 // navegadores o proxies reutilicen una respuesta anterior después de un borrado.
@@ -21,21 +20,19 @@ router.use((req, res, next) => {
   next();
 });
 
-// Usa la misma base persistente que server.js y las skins.
-const UPLOAD_BASE_DIR =
-  process.env.UPLOAD_BASE_DIR || path.join(__dirname, "../../uploads");
-const REWARDS_DIR = path.join(UPLOAD_BASE_DIR, "rewards");
-fs.mkdirSync(REWARDS_DIR, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, REWARDS_DIR),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, unique + ext);
+// Guarda las imágenes temporalmente en memoria y después en MongoDB/GridFS.
+// Así no dependen del sistema de archivos efímero del servidor y sobreviven
+// a commits, reinicios y nuevos despliegues, igual que cartas y OVNIs.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (!file.mimetype?.startsWith("image/")) {
+      return cb(new Error("Sólo se permiten archivos de imagen"));
+    }
+    cb(null, true);
   }
 });
-const upload = multer({ storage });
 
 function uploadRewardImages(req, res, next) {
   upload.array("imagenes", 3)(req, res, (error) => {
@@ -72,9 +69,11 @@ router.post(
 
     const creadoPorAdmin = req.user.role === "admin";
 
-    const imagenes = (req.files || []).map(
-      (file) => `uploads/rewards/${file.filename}`
+    const imagenesPersistentes = await Promise.all(
+      (req.files || []).map((file) => saveImage(file, "rewards"))
     );
+    // La app móvil compone las rutas relativas con la URL del backend.
+    const imagenes = imagenesPersistentes.map((url) => url.replace(/^\/+/, ""));
 
     const nuevo = new Reward({
       tipo,
