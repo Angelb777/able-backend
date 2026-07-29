@@ -128,12 +128,12 @@ module.exports = function(io, dependencies = {}) {
   const TICK_MS = 50;
   const BULLET_START_DELAY_MS = 180;
   const PLAYER_HIT_RADIUS_M = 8;
-  // El icono del OVNI se dibuja a 160 px lógicos y ocupa bastante más superficie
+  // El icono del OVNI se dibuja a 420 px lógicos y ocupa bastante más superficie
   // visual que un jugador. Un radio propio evita que un disparo que lo roza
   // claramente en pantalla se considere un fallo en el servidor.
-  const UFO_HIT_RADIUS_M = 60;
-  const UFO_MIN_DISTANCE_M = 300;
-  const UFO_MAX_DISTANCE_M = 400;
+  const UFO_HIT_RADIUS_M = 90;
+  const UFO_MIN_DISTANCE_M = 200;
+  const UFO_MAX_DISTANCE_M = 280;
 
   // Devuelve el primer punto en el que el segmento de la bala entra en el
   // radio del jugador. La aproximación plana es precisa para estos recorridos
