@@ -849,7 +849,7 @@ test('ufo starts after first shot, is shared and awards its killer', async (t) =
         lean: async () => ({
           _id: 'card-ufo',
           tipoArma: 'Proyectil',
-          alcance: 120,
+          alcance: 900,
           dano: 60,
           tiempoEspera: 0,
         }),
@@ -983,16 +983,16 @@ test('ufo starts after first shot, is shared and awards its killer', async (t) =
     heading + Math.asin(20 / ufoDistance) * 180 / Math.PI
   ) % 360;
 
-  const destroyOnShooter = waitForEvent(shooter, 'ufo:destroy');
-  const destroyOnObserver = waitForEvent(observer, 'ufo:destroy');
-  const explosionOnShooter = waitForEvent(shooter, 'bullet:explode');
+  const destroyOnShooter = waitForEvent(shooter, 'ufo:destroy', 7000);
+  const destroyOnObserver = waitForEvent(observer, 'ufo:destroy', 7000);
+  const explosionOnShooter = waitForEvent(shooter, 'bullet:explode', 7000);
   const killAck = await emitWithAck(shooter, 'bullet:spawn', {
     clientShotId: 'ufo-kill-shot',
     cardId: 'card-ufo',
     from: origin,
     heading: visualGrazeHeading,
     speed: 180,
-    alcance: 120,
+    alcance: 900,
     dano: 60,
     spriteUrl: '/uploads/cards/bullet.webp',
     explosionFrames: ['/uploads/cards/explosion.webp'],

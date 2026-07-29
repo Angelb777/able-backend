@@ -128,10 +128,12 @@ module.exports = function(io, dependencies = {}) {
   const TICK_MS = 50;
   const BULLET_START_DELAY_MS = 180;
   const PLAYER_HIT_RADIUS_M = 8;
-  // El icono del OVNI se dibuja a 90 px y ocupa bastante más superficie
+  // El icono del OVNI se dibuja a 180 px y ocupa bastante más superficie
   // visual que un jugador. Un radio propio evita que un disparo que lo roza
   // claramente en pantalla se considere un fallo en el servidor.
-  const UFO_HIT_RADIUS_M = 30;
+  const UFO_HIT_RADIUS_M = 60;
+  const UFO_MIN_DISTANCE_M = 500;
+  const UFO_MAX_DISTANCE_M = 800;
 
   // Devuelve el primer punto en el que el segmento de la bala entra en el
   // radio del jugador. La aproximación plana es precisa para estos recorridos
@@ -161,6 +163,16 @@ module.exports = function(io, dependencies = {}) {
       lng: from.lng + (to.lng - from.lng) * t,
       t,
     };
+  };
+
+  const bearingDegrees = (from, to) => {
+    const lat1 = from.lat * Math.PI / 180;
+    const lat2 = to.lat * Math.PI / 180;
+    const deltaLng = (to.lng - from.lng) * Math.PI / 180;
+    const y = Math.sin(deltaLng) * Math.cos(lat2);
+    const x = Math.cos(lat1) * Math.sin(lat2) -
+      Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng);
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
   };
 
   const emitBulletExplosion = (bulletId, bullet, reason, hit = {}) => {
@@ -209,8 +221,9 @@ module.exports = function(io, dependencies = {}) {
         const key = `${zoneId}:${ufoId}`;
         const position = geo.computeOffset(
           origin,
-          45 + Math.random() * 45,
-          Math.random() * 360
+          UFO_MIN_DISTANCE_M +
+            Math.random() * (UFO_MAX_DISTANCE_M - UFO_MIN_DISTANCE_M),
+          (Number(origin.heading) || 0) + Math.random() * 60 - 30
         );
         const state = {
           key,
@@ -395,13 +408,21 @@ module.exports = function(io, dependencies = {}) {
         12,
         Math.max(0.5, Number(state.ufo.velocidadMovimiento) || 0.5)
       );
+      let heading = Math.random() * 360;
       let next = geo.computeOffset(
         state,
         movementSpeed,
-        Math.random() * 360
+        heading
       );
-      if (geo.distanceMeters(next, state.anchor) > 120) {
-        next = geo.computeOffset(state.anchor, 80, Math.random() * 360);
+      const distanceFromAnchor = geo.distanceMeters(next, state.anchor);
+      if (distanceFromAnchor > UFO_MAX_DISTANCE_M) {
+        heading = bearingDegrees(state, state.anchor) +
+          (Math.random() * 90 - 45);
+        next = geo.computeOffset(state, movementSpeed, heading);
+      } else if (distanceFromAnchor < UFO_MIN_DISTANCE_M) {
+        heading = bearingDegrees(state.anchor, state) +
+          (Math.random() * 90 - 45);
+        next = geo.computeOffset(state, movementSpeed, heading);
       }
       state.lat = next.lat;
       state.lng = next.lng;
@@ -1205,7 +1226,10 @@ module.exports = function(io, dependencies = {}) {
           createdAt: Date.now(),
           startsAt: Date.now() + BULLET_START_DELAY_MS,
         });
-        scheduleUfosAfterFirstShot(p.zoneId, authoritativeFrom).catch((error) => {
+        scheduleUfosAfterFirstShot(p.zoneId, {
+          ...authoritativeFrom,
+          heading: Number(p.heading) || 0,
+        }).catch((error) => {
           console.error(`[PVP][${instanceId}] ufo schedule error`, error);
         });
 
