@@ -5,11 +5,18 @@ const stepcoinTransactionSchema = new mongoose.Schema({
   cantidad: { type: Number, required: true }, // positivo o negativo
   tipo: {
     type: String,
-    enum: ["canje", "recompensa", "compra", "admin", "ruleta", "muerte"],
+    enum: ["canje", "recompensa", "compra", "admin", "ruleta", "muerte", "burla", "reembolso_burla", "recompensa_pvp", "devolucion_recompensa", "cobro_recompensa"],
     required: true
   },
   descripcion: { type: String },
-  fecha: { type: Date, default: Date.now }
+  fecha: { type: Date, default: Date.now },
+  operationKey: { type: String, trim: true, maxlength: 200 },
+  metadata: { type: mongoose.Schema.Types.Mixed, default: {} }
 });
+
+stepcoinTransactionSchema.index(
+  { operationKey: 1 },
+  { unique: true, partialFilterExpression: { operationKey: { $type: "string" } } }
+);
 
 module.exports = mongoose.model("StepcoinTransaction", stepcoinTransactionSchema);

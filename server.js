@@ -141,6 +141,8 @@ app.use('/api/stepcoins', require('./api/routes/stepcoins'));
 app.use('/api/skins', require('./api/routes/skins'));
 app.use('/api/cards', require('./api/routes/cards'));
 app.use('/api/life', require('./api/routes/life'));
+app.use('/api/clans', require('./api/routes/clans'));
+app.use('/api/social', require('./api/routes/social'));
 app.use('/api/ubicaciones', require('./api/routes/ubicaciones'));
 app.use('/api/mobility', require('./api/routes/mobility'));
 app.use('/api/ufo', require('./api/routes/ufo'));
@@ -200,6 +202,7 @@ mongoose.connect(uri)
     console.log('🟢 Conectado a MongoDB');
     console.log(`   Host: ${conn.host}`);
     console.log(`   DB:   ${conn.name}`);
+    require('./api/services/bountyService').startExpiryWorker();
 
     // ⬇️⬇️⬇️  USAR server.listen (no app.listen)  ⬇️⬇️⬇️
     server.listen(PORT, () => {

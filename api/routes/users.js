@@ -2,12 +2,19 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const Skin = require('../models/Skin'); // necesario para fallback
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+const { publicNickname } = require('../utils/publicIdentity');
+
+function requireSelfOrAdmin(req, res, next) {
+  if (req.user.role === 'admin' || String(req.user.id) === String(req.params.id)) return next();
+  return res.status(403).json({ error: 'Acceso denegado' });
+}
 
 // Obtener datos de perfil del usuario autenticado
-router.get('/data', /*ensureAuth,*/ async (req, res) => {
+router.get('/data', verifyToken, async (req, res) => {
   try {
     // Si tienes JWT, usa req.user.id; si no, temporal: req.query.userId
-    const userId = /*req.user?.id ||*/ req.query.userId;
+    const userId = req.user.id;
     if (!userId) return res.status(400).json({ error: 'Falta userId o token' });
 
     const user = await User.findById(userId).select('-password');
@@ -33,10 +40,10 @@ router.get('/data', /*ensureAuth,*/ async (req, res) => {
 });
 
 // Guardar/actualizar perfil del usuario autenticado
-router.post('/update', /*ensureAuth,*/ async (req, res) => {
+router.post('/update', verifyToken, async (req, res) => {
   try {
     // Si tienes JWT, usa req.user.id; si no, temporal: req.body.userId
-    const userId = /*req.user?.id ||*/ req.body.userId;
+    const userId = req.user.id;
     if (!userId) return res.status(400).json({ error: 'Falta userId o token' });
 
     const {
@@ -69,7 +76,7 @@ router.post('/update', /*ensureAuth,*/ async (req, res) => {
 });
 
 // Obtener todos los usuarios (sin contraseña)
-router.get('/', async (req, res) => {
+router.get('/', verifyToken, checkRole(['admin']), async (req, res) => {
   try {
     const users = await User.find().select('-password');
     res.json(users);
@@ -79,7 +86,7 @@ router.get('/', async (req, res) => {
 });
 
 // Eliminar usuario
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', verifyToken, checkRole(['admin']), async (req, res) => {
   try {
     await User.findByIdAndDelete(req.params.id);
     res.json({ message: 'Usuario eliminado' });
@@ -89,7 +96,7 @@ router.delete('/:id', async (req, res) => {
 });
 
 // Obtener estadísticas generales de usuarios
-router.get('/stats', async (req, res) => {
+router.get('/stats', verifyToken, checkRole(['admin']), async (req, res) => {
   try {
     const total = await User.countDocuments();
     const clientes = await User.countDocuments({ role: 'cliente' });
@@ -102,7 +109,7 @@ router.get('/stats', async (req, res) => {
 });
 
 // Obtener usuario con cartas pobladas
-router.get('/con-cartas/:id', async (req, res) => {
+router.get('/con-cartas/:id', verifyToken, requireSelfOrAdmin, async (req, res) => {
   try {
     const user = await User.findById(req.params.id)
       .select('-password')
@@ -114,15 +121,34 @@ router.get('/con-cartas/:id', async (req, res) => {
   }
 });
 
-// Obtener un usuario por ID (sin contraseña y con skins pobladas)
-router.get('/:id', async (req, res) => {
+router.get('/:id/skins', verifyToken, requireSelfOrAdmin, async (req, res) => {
   try {
     const user = await User.findById(req.params.id)
-      .select('-password')
-      .populate('skinsCompradas')
+      .select('skinsCompradas')
+      .populate('skinsCompradas');
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+    res.json({ skins: user.skinsCompradas || [] });
+  } catch (_error) {
+    res.status(500).json({ error: 'Error al obtener skins' });
+  }
+});
+
+// Obtener un usuario por ID (sin contraseña y con skins pobladas)
+router.get('/:id', verifyToken, requireSelfOrAdmin, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id)
+      .select('nickname fotoPerfil stepcoins skinSeleccionada')
       .populate('skinSeleccionada');
     if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
-    res.json(user);
+    res.json({
+      id: String(user._id),
+      nickname: publicNickname(user),
+      hasChosenNickname: Boolean(user.nickname),
+      needsNickname: !user.nickname,
+      avatarUrl: user.fotoPerfil || '',
+      stepcoins: user.stepcoins || 0,
+      skinSeleccionada: user.skinSeleccionada || null,
+    });
   } catch (err) {
     res.status(500).json({ error: 'Error al obtener usuario' });
   }
@@ -131,7 +157,7 @@ router.get('/:id', async (req, res) => {
 
 
 // ✅ Actualizar nombre de usuario
-router.put('/:id', async (req, res) => {
+router.put('/:id', verifyToken, requireSelfOrAdmin, async (req, res) => {
   try {
     const { nombre } = req.body;
     if (!nombre) {
@@ -204,7 +230,7 @@ router.get('/:id/skin', async (req, res) => {
 });
 
 // ✅ Asignar una skin como seleccionada al usuario
-router.put('/:id/skin', async (req, res) => {
+router.put('/:id/skin', verifyToken, requireSelfOrAdmin, async (req, res) => {
   try {
     const userId = req.params.id;
     const { skinId } = req.body;

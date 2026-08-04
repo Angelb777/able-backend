@@ -3,6 +3,7 @@ const router = express.Router();
 const User = require("../models/User");
 const StepcoinTransaction = require("../models/StepcoinTransaction");
 const Card = require("../models/Card");
+const { publicNickname } = require('../utils/publicIdentity');
 
 // Añadir o quitar stepcoins (positivo o negativo)
 router.post("/adjust", async (req, res) => {
@@ -95,8 +96,6 @@ router.post("/comprar-skin", async (req, res) => {
         stepcoins: user.stepcoins,
         skinsCompradas: user.skinsCompradas,
         id: user._id,
-        nombre: user.nombre,
-        email: user.email,
         role: user.role
       }
     });
@@ -248,10 +247,15 @@ router.get("/ranking", async (req, res) => {
   try {
     const topUsuarios = await User.find({ role: "cliente" }) // solo clientes, puedes quitarlo si quieres incluir todos
       .sort({ stepcoins: -1 })
-      .select("nombre stepcoins") // solo lo necesario
-      .limit(100); // puedes ajustar el límite
+      .select("nickname stepcoins")
+      .limit(100)
+      .lean();
 
-    res.json(topUsuarios);
+    res.json(topUsuarios.map((user) => ({
+      id: String(user._id),
+      nickname: publicNickname(user),
+      stepcoins: user.stepcoins || 0,
+    })));
   } catch (err) {
     console.error("❌ Error obteniendo ranking:", err);
     res.status(500).json({ error: "Error interno" });

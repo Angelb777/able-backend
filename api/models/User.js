@@ -16,7 +16,10 @@ const profileSchema = new mongoose.Schema({
 }, { _id: false });
 
 const userSchema = new mongoose.Schema({
-  nombre: { type: String, required: true },   // Nombre básico (login, display)
+  nickname: { type: String, trim: true, maxlength: 20 },
+  normalizedNickname: { type: String, trim: true, maxlength: 20 },
+  // Dato privado heredado. Nunca debe utilizarse como identidad social.
+  nombre: { type: String, default: '' },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
 
@@ -44,5 +47,14 @@ const userSchema = new mongoose.Schema({
   profile: { type: profileSchema, default: () => ({}) }
 
 }, { timestamps: true });
+
+userSchema.index(
+  { normalizedNickname: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { normalizedNickname: { $type: 'string' } },
+    name: 'normalizedNickname_unique_partial',
+  }
+);
 
 module.exports = mongoose.model('User', userSchema);

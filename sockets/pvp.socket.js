@@ -7,8 +7,13 @@ const Mine = require('../api/models/Mine');
 const Airstrike = require('../api/models/Airstrike');
 const User = require('../api/models/User');
 const Ufo = require('../api/models/Ufo');
+const jwt = require('jsonwebtoken');
+const clanMembershipCache = require('../api/services/clanMembershipCache');
+const bountyService = require('../api/services/bountyService');
+const socialRealtime = require('../api/services/socialRealtime');
 
 module.exports = function(io, dependencies = {}) {
+  const hasInjectedDependencies = Object.keys(dependencies).length > 0;
   const CardModel = dependencies.CardModel || Card;
   const LifeModel = dependencies.LifeModel || UserLife;
   const TurretModel = dependencies.TurretModel || Turret;
@@ -16,7 +21,23 @@ module.exports = function(io, dependencies = {}) {
   const AirstrikeModel = dependencies.AirstrikeModel || Airstrike;
   const UserModel = dependencies.UserModel || User;
   const UfoModel = dependencies.UfoModel || Ufo;
+  const ClanMembershipService = dependencies.ClanMembershipService ||
+    (hasInjectedDependencies
+      ? {
+          getClanIds: async () => new Set(),
+          shareActiveClan: async () => false,
+          events: { on() {} },
+        }
+      : clanMembershipCache);
+  const BountyService = dependencies.BountyService ||
+    (hasInjectedDependencies
+      ? {
+          totalForTarget: async () => 0,
+          claimForKill: async () => ({ paid: 0, claimed: 0 }),
+        }
+      : bountyService);
   const nsp = io.of('/pvp');
+  const requireSocketAuth = dependencies.requireAuth ?? !hasInjectedDependencies;
   const instanceId =
     process.env.RENDER_INSTANCE_ID || process.env.HOSTNAME || `pid-${process.pid}`;
 
@@ -123,6 +144,95 @@ module.exports = function(io, dependencies = {}) {
 
   const playersForUser = (userId) =>
     [...players.values()].filter((player) => player.userId === userId);
+
+  const updateSocialPresence = async (userIds) => {
+    for (const userId of userIds) {
+      const clanIds = [...await ClanMembershipService.getClanIds(userId)];
+      for (const player of playersForUser(String(userId))) player.clanIds = clanIds;
+      const player = playersForUser(String(userId))[0];
+      if (player) {
+        nsp.to(player.zoneId).emit('presence:social', {
+          userId: String(userId),
+          clanIds,
+        });
+      }
+    }
+  };
+  ClanMembershipService.events.on('invalidated', (userIds) => {
+    updateSocialPresence(userIds).catch((error) => {
+      console.error(`[PVP][${instanceId}] social presence refresh error`, error);
+    });
+  });
+  socialRealtime.events.on('nickname-changed', ({ userId, nickname }) => {
+    for (const player of playersForUser(String(userId))) {
+      player.nickname = nickname;
+      nsp.to(player.zoneId).emit('presence:identity', {
+        userId: String(userId),
+        nickname,
+      });
+    }
+  });
+
+  async function applyPlayerDamage({
+    attackerUserId,
+    target,
+    damage,
+    zoneId,
+    source,
+    killEventId,
+    eventData = {},
+  }) {
+    const attackerId = String(attackerUserId || '');
+    const targetUserId = String(target.userId || '');
+    if (attackerId && attackerId !== targetUserId &&
+        await ClanMembershipService.shareActiveClan(attackerId, targetUserId)) {
+      nsp.to(zoneId).emit('life:protected', {
+        attackerUserId: attackerId,
+        targetUserId,
+        source,
+        ...eventData,
+      });
+      return { protected: true, vida: target.vida ?? MAX_PLAYER_LIFE, killed: false };
+    }
+
+    const previousLife = target.vida ?? MAX_PLAYER_LIFE;
+    const nuevaVida = Math.max(0, previousLife - damage);
+    for (const sameUser of playersForUser(targetUserId)) sameUser.vida = nuevaVida;
+    await LifeModel.updateOne(
+      { userId: targetUserId },
+      { $set: { vida: nuevaVida }, $setOnInsert: { yaPenalizado: false } },
+      { upsert: true }
+    );
+    nsp.to(zoneId).emit('life:update', {
+      userId: targetUserId,
+      vida: nuevaVida,
+      dano: damage,
+      byUserId: attackerId || null,
+      reason: source,
+      ...eventData,
+    });
+
+    const killed = previousLife > 0 && nuevaVida === 0;
+    if (killed && attackerId && attackerId !== targetUserId) {
+      const bounty = await BountyService.claimForKill({
+        attackerUserId: attackerId,
+        targetUserId,
+        killEventId,
+        source,
+      }).catch((error) => {
+        console.error(`[PVP][${instanceId}] bounty claim error`, { killEventId, error: error.message });
+        return { paid: 0, claimed: 0, error: true };
+      });
+      nsp.to(zoneId).emit('combat:death', {
+        killEventId,
+        attackerUserId: attackerId,
+        targetUserId,
+        source,
+        bountyPaid: bounty.paid || 0,
+      });
+    }
+    return { protected: false, vida: nuevaVida, killed };
+  }
 
   // Tick de balas (server-authoritative)
   const TICK_MS = 50;
@@ -239,9 +349,9 @@ module.exports = function(io, dependencies = {}) {
     });
   };
 
-  const bulletTimer = setInterval(() => {
+  const bulletTimer = setInterval(async () => {
     for (const [id, b] of bullets) {
-      if (Date.now() < b.startsAt) continue;
+      if (Date.now() < b.startsAt || b.processing) continue;
 
       const previous = { lat: b.lat, lng: b.lng };
       const remainingM = Math.max(0, b.alcance - (b.recorrido || 0));
@@ -289,29 +399,31 @@ module.exports = function(io, dependencies = {}) {
         b.recorrido = (b.recorrido || 0) + stepM * impact.t;
 
         if (collision.type === 'player') {
-          const nuevaVida = Math.max(0, (target.vida ?? 1000) - b.dano);
-          for (const sameUser of playersForUser(target.userId)) {
-            sameUser.vida = nuevaVida;
-          }
-          LifeModel.updateOne(
-            { userId: target.userId },
-            { $set: { vida: nuevaVida }, $setOnInsert: { yaPenalizado: false } },
-            { upsert: true }
-          ).catch((error) => {
-            console.error(`[PVP][${instanceId}] life persist error`, {
+          b.processing = true;
+          try {
+            const damageResult = await applyPlayerDamage({
+              attackerUserId: b.byUserId,
+              target,
+              damage: b.dano,
+              zoneId: b.zoneId,
+              source: 'bullet',
+              killEventId: `bullet:${id}`,
+              eventData: { bulletId: id },
+            });
+            emitBulletExplosion(
+              id,
+              b,
+              damageResult.protected ? 'protected' : 'hit',
+              { userId: target.userId }
+            );
+          } catch (error) {
+            console.error(`[PVP][${instanceId}] bullet damage error`, {
               bulletId: id,
               userId: target.userId,
               error: error.message,
             });
-          });
-          nsp.to(b.zoneId).emit('life:update', {
-            bulletId: id,
-            byUserId: b.byUserId,
-            userId: target.userId,
-            vida: nuevaVida,
-            dano: b.dano,
-          });
-          emitBulletExplosion(id, b, 'hit', { userId: target.userId });
+            emitBulletExplosion(id, b, 'error', { userId: target.userId });
+          }
         } else if (collision.type === 'turret') {
           target.vida = Math.max(0, target.vida - b.dano);
           TurretModel.updateOne(
@@ -439,13 +551,20 @@ module.exports = function(io, dependencies = {}) {
       setTimeout(async () => {
         const current = playersForUser(target.userId)[0];
         if (!turrets.has(turretId) || !current || geo.distanceMeters(current, { lat: target.lat, lng: target.lng }) > PLAYER_HIT_RADIUS_M) return;
-        const previousLife = current.vida ?? 1000;
-        const nuevaVida = Math.max(0, previousLife - turret.dano);
-        playersForUser(target.userId).forEach((p) => { p.vida = nuevaVida; });
-        await LifeModel.updateOne({ userId: target.userId }, { $set: { vida: nuevaVida } }, { upsert: true }).catch(() => {});
-        nsp.to(turret.zoneId).emit('life:update', { userId: target.userId, vida: nuevaVida, dano: turret.dano, byTurretId: turretId, byUserId: String(turret.ownerUserId) });
+        const result = await applyPlayerDamage({
+          attackerUserId: String(turret.ownerUserId),
+          target: current,
+          damage: turret.dano,
+          zoneId: turret.zoneId,
+          source: 'turret',
+          killEventId: `turret:${shotId}`,
+          eventData: { byTurretId: turretId, shotId },
+        }).catch((error) => {
+          console.error(`[PVP][${instanceId}] turret damage error`, error);
+          return null;
+        });
         nsp.to(turret.zoneId).emit('turret:shot:explode', { shotId, turretId, lat: target.lat, lng: target.lng });
-        if (previousLife > 0 && nuevaVida === 0) {
+        if (result?.killed) {
           await UserModel.updateOne({ _id: turret.ownerUserId }, { $inc: { stepcoinsTorretaPendientes: turret.premioBaja || 0 } }).catch(() => {});
         }
       }, Math.max(100, distance / TURRET_BULLET_SPEED * 1000));
@@ -494,16 +613,18 @@ module.exports = function(io, dependencies = {}) {
       if (!target) continue;
       mine.processing = true;
 
-      const previousLife = target.vida ?? MAX_PLAYER_LIFE;
-      const nuevaVida = Math.max(0, previousLife - mine.dano);
-      for (const sameUser of playersForUser(target.userId)) {
-        sameUser.vida = nuevaVida;
-      }
-      await LifeModel.updateOne(
-        { userId: target.userId },
-        { $set: { vida: nuevaVida } },
-        { upsert: true }
-      ).catch(() => {});
+      const damageResult = await applyPlayerDamage({
+        attackerUserId: String(mine.ownerUserId),
+        target,
+        damage: mine.dano,
+        zoneId: mine.zoneId,
+        source: 'mine',
+        killEventId: `mine:${mineId}:${target.userId}`,
+        eventData: { byMineId: mineId },
+      }).catch((error) => {
+        console.error(`[PVP][${instanceId}] mine damage error`, error);
+        return { protected: false, vida: target.vida ?? MAX_PLAYER_LIFE };
+      });
 
       // Una mina siempre se destruye al detonar.
       const removeAfterTrigger = true;
@@ -513,16 +634,9 @@ module.exports = function(io, dependencies = {}) {
       nsp.to(mine.zoneId).emit('mine:trigger', {
         ...minePayload(mine),
         targetUserId: target.userId,
-        vida: nuevaVida,
+        vida: damageResult.vida,
+        protected: damageResult.protected,
         removed: removeAfterTrigger,
-      });
-      nsp.to(mine.zoneId).emit('life:update', {
-        userId: target.userId,
-        vida: nuevaVida,
-        dano: mine.dano,
-        byMineId: mineId,
-        byUserId: String(mine.ownerUserId),
-        reason: 'mine',
       });
     }
   }, 250);
@@ -563,26 +677,22 @@ module.exports = function(io, dependencies = {}) {
 
       const hits = [];
       for (const target of targetsByUser.values()) {
-        const nuevaVida = Math.max(
-          0,
-          (target.vida ?? MAX_PLAYER_LIFE) - airstrike.dano
-        );
-        for (const sameUser of playersForUser(target.userId)) {
-          sameUser.vida = nuevaVida;
-        }
-        await LifeModel.updateOne(
-          { userId: target.userId },
-          { $set: { vida: nuevaVida } },
-          { upsert: true }
-        ).catch(() => {});
-        hits.push({ userId: target.userId, vida: nuevaVida });
-        nsp.to(airstrike.zoneId).emit('life:update', {
+        const damageResult = await applyPlayerDamage({
+          attackerUserId: String(airstrike.ownerUserId),
+          target,
+          damage: airstrike.dano,
+          zoneId: airstrike.zoneId,
+          source: 'airstrike',
+          killEventId: `airstrike:${airstrikeId}:${target.userId}`,
+          eventData: { byAirstrikeId: airstrikeId },
+        }).catch((error) => {
+          console.error(`[PVP][${instanceId}] airstrike damage error`, error);
+          return { protected: false, vida: target.vida ?? MAX_PLAYER_LIFE };
+        });
+        hits.push({
           userId: target.userId,
-          vida: nuevaVida,
-          dano: airstrike.dano,
-          byAirstrikeId: airstrikeId,
-          byUserId: String(airstrike.ownerUserId),
-          reason: 'airstrike',
+          vida: damageResult.vida,
+          protected: damageResult.protected,
         });
       }
 
@@ -605,6 +715,14 @@ module.exports = function(io, dependencies = {}) {
     const card = await CardModel.findById(cardId).lean();
     if (!card) throw new Error('Carta no existe');
     if (card.tipoArma !== 'Proyectil') throw new Error('Carta no es Proyectil');
+    if (requireSocketAuth) {
+      const owner = await UserModel.findOne({
+        _id: byUserId,
+        cartas: cardId,
+        mazo: cardId,
+      }).select('_id').lean();
+      if (!owner) throw new Error('La carta no está disponible en tu mazo');
+    }
 
     // Alcance / Daño / Velocidad máximos
     if (intento.alcance > (card.alcance||0) + 5) throw new Error('Alcance inválido');
@@ -628,6 +746,27 @@ module.exports = function(io, dependencies = {}) {
     };
   }
 
+  nsp.use((socket, next) => {
+    if (!requireSocketAuth) return next();
+    const raw = String(
+      socket.handshake.auth?.token ||
+      socket.handshake.headers?.authorization ||
+      ''
+    );
+    const token = raw.startsWith('Bearer ') ? raw.slice(7) : raw;
+    if (!token) return next(new Error('Token PVP no proporcionado'));
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.id || decoded._id || decoded.sub;
+      if (!userId) return next(new Error('Token PVP sin usuario'));
+      socket.data.authUserId = String(userId);
+      socket.data.authRole = decoded.role;
+      next();
+    } catch (_error) {
+      next(new Error('Token PVP inválido'));
+    }
+  });
+
   nsp.on('connection', (socket) => {
     log('socket connected', {
       socketId: socket.id,
@@ -643,9 +782,13 @@ module.exports = function(io, dependencies = {}) {
           lng,
           heading,
           skinUrl = '',
-          nombre = 'Jugador',
+          nickname: requestedNickname = 'Jugador',
         } = payload || {};
-        const userId = rawUserId?.toString().trim();
+        const requestedUserId = rawUserId?.toString().trim();
+        const userId = socket.data.authUserId || requestedUserId;
+        if (socket.data.authUserId && requestedUserId && requestedUserId !== socket.data.authUserId) {
+          return cb?.({ ok: false, error: 'El userId no coincide con el token' });
+        }
         if (!userId || typeof lat!=='number' || typeof lng!=='number') {
           log('presence rejected', {
             socketId: socket.id,
@@ -655,6 +798,16 @@ module.exports = function(io, dependencies = {}) {
             error: 'payload inválido',
           });
           return cb?.({ ok:false, error:'payload inválido' });
+        }
+
+        let authoritativeNickname = requestedNickname;
+        if (socket.data.authUserId) {
+          const user = await UserModel.findById(userId).select('nickname').lean();
+          if (!user) return cb?.({ ok: false, error: 'Usuario no encontrado' });
+          if (!user.nickname) {
+            return cb?.({ ok: false, error: 'Debes elegir un nickname', code: 'NICKNAME_REQUIRED' });
+          }
+          authoritativeNickname = user.nickname;
         }
 
         const zoneId = toZoneId(lat, lng);
@@ -676,6 +829,8 @@ module.exports = function(io, dependencies = {}) {
           return null;
         });
         const vida = lifeDoc?.vida ?? 1000;
+        const clanIds = [...await ClanMembershipService.getClanIds(userId)];
+        const bountyTotal = await BountyService.totalForTarget(userId).catch(() => 0);
 
         players.set(socket.id, {
           userId,
@@ -683,11 +838,14 @@ module.exports = function(io, dependencies = {}) {
           lng,
           heading: typeof heading === 'number' ? heading : 0,
           skinUrl,
-          nombre,
+          nickname: authoritativeNickname,
           zoneId,
           lastShotByCard: previous?.lastShotByCard || {},
           vida,
+          clanIds,
+          bountyTotal,
         });
+        socialRealtime.register(userId, socket);
 
         // Enviar al que entra el estado de la sala (jugadores ya presentes)
         const othersByUserId = new Map();
@@ -701,8 +859,10 @@ module.exports = function(io, dependencies = {}) {
               lng:p.lng,
               heading:p.heading,
               skinUrl:p.skinUrl,
-              nombre:p.nombre,
+              nickname:p.nickname,
               vida:p.vida??1000,
+              clanIds:p.clanIds || [],
+              bountyTotal:p.bountyTotal || 0,
             });
           }
         }
@@ -739,6 +899,8 @@ module.exports = function(io, dependencies = {}) {
           airstrikes: roomAirstrikes,
           ufos: roomUfos,
           claimedStepcoins,
+          clanIds,
+          bountyTotal,
           instanceId,
         });
         log('presence registered', {
@@ -748,14 +910,24 @@ module.exports = function(io, dependencies = {}) {
           lat,
           lng,
           skinUrl,
-          nombre,
+          nickname: authoritativeNickname,
           vida,
           roomSockets: roomIndex.get(zoneId).size,
           playersReturned: others.map((p) => p.userId),
         });
 
         // Notificar a los demás tu spawn
-        socket.to(zoneId).emit('presence:spawn', { userId, lat, lng, heading, skinUrl, nombre, vida });
+        socket.to(zoneId).emit('presence:spawn', {
+          userId,
+          lat,
+          lng,
+          heading,
+          skinUrl,
+          nickname: authoritativeNickname,
+          vida,
+          clanIds,
+          bountyTotal,
+        });
       } catch (e) {
         console.error(`[PVP][${instanceId}] presence hello error`, {
           socketId: socket.id,
@@ -770,7 +942,7 @@ module.exports = function(io, dependencies = {}) {
       const p = players.get(socket.id);
       if (!p) return;
 
-      const { lat, lng, heading, skinUrl, nombre } = payload || {};
+      const { lat, lng, heading, skinUrl } = payload || {};
       if (typeof lat!=='number' || typeof lng!=='number') return;
 
       const newZone = toZoneId(lat, lng);
@@ -791,17 +963,16 @@ module.exports = function(io, dependencies = {}) {
       if (typeof skinUrl === 'string' && skinUrl.trim()) {
         p.skinUrl = skinUrl.trim();
       }
-      if (typeof nombre === 'string' && nombre.trim()) {
-        p.nombre = nombre.trim();
-      }
       nsp.to(p.zoneId).emit('presence:move', {
         userId: p.userId,
         lat,
         lng,
         heading: p.heading,
         skinUrl: p.skinUrl,
-        nombre: p.nombre,
+        nickname: p.nickname,
         vida: p.vida,
+        clanIds: p.clanIds || [],
+        bountyTotal: p.bountyTotal || 0,
       });
       log('presence move', {
         socketId: socket.id,
@@ -810,7 +981,7 @@ module.exports = function(io, dependencies = {}) {
         lng,
         heading: p.heading,
         skinUrl: p.skinUrl,
-        nombre: p.nombre,
+        nickname: p.nickname,
       });
     });
 
@@ -1267,6 +1438,7 @@ module.exports = function(io, dependencies = {}) {
 
       roomIndex.get(p.zoneId)?.delete(socket.id);
       players.delete(socket.id);
+      socialRealtime.unregister(p.userId, socket);
       const stillConnected = playersForUser(p.userId).length > 0;
       if (!stillConnected) {
         nsp.to(p.zoneId).emit('presence:leave', { userId: p.userId });

@@ -5,6 +5,8 @@ const { Server } = require('socket.io');
 const { io: createClient } = require('socket.io-client');
 const registerPvp = require('../sockets/pvp.socket');
 const geo = require('../utils/geo');
+const jwt = require('jsonwebtoken');
+const socialRealtime = require('../api/services/socialRealtime');
 
 const waitForEvent = (socket, event, timeoutMs = 2000) =>
   new Promise((resolve, reject) => {
@@ -272,7 +274,7 @@ test('two players share presence, movement, one hit, life and explosions', async
     lng: -0.8785,
     heading: 0,
     skinUrl: 'https://example.test/skin-a.png',
-    nombre: 'Alice',
+    nickname: 'Alice',
   });
   assert.equal(helloA.ok, true);
   assert.deepEqual(helloA.players, []);
@@ -286,13 +288,13 @@ test('two players share presence, movement, one hit, life and explosions', async
     lng: -0.8785,
     heading: 0,
     skinUrl: 'https://example.test/skin-b.png',
-    nombre: 'Bob',
+    nickname: 'Bob',
   });
   const spawnedB = await spawnOnA;
   assert.equal(helloB.ok, true);
   assert.equal(helloB.players.length, 1);
   assert.equal(helloB.players[0].userId, '507f1f77bcf86cd799439011');
-  assert.equal(helloB.players[0].nombre, 'Alice');
+  assert.equal(helloB.players[0].nickname, 'Alice');
   assert.equal(helloB.players[0].vida, 1000);
   assert.equal(spawnedB.userId, '507f191e810c19729de860ea');
   assert.equal(spawnedB.skinUrl, 'https://example.test/skin-b.png');
@@ -305,7 +307,7 @@ test('two players share presence, movement, one hit, life and explosions', async
   });
   const movedA = await moveOnB;
   assert.equal(movedA.userId, '507f1f77bcf86cd799439011');
-  assert.equal(movedA.nombre, 'Alice');
+  assert.equal(movedA.nickname, 'Alice');
   assert.equal(movedA.skinUrl, 'https://example.test/skin-a.png');
 
   const skinMoveOnB = waitForEvent(playerB, 'presence:move');
@@ -314,7 +316,7 @@ test('two players share presence, movement, one hit, life and explosions', async
     lng: -0.8785,
     heading: 5,
     skinUrl: 'https://example.test/skin-a-new.png',
-    nombre: 'Alice',
+    nickname: 'Alice',
   });
   const skinMovedA = await skinMoveOnB;
   assert.equal(skinMovedA.skinUrl, 'https://example.test/skin-a-new.png');
@@ -814,7 +816,7 @@ test('two players share presence, movement, one hit, life and explosions', async
     lng: -0.8785,
     heading: 0,
     skinUrl: 'https://example.test/skin-b.png',
-    nombre: 'Bob',
+    nickname: 'Bob',
   });
   await duplicateSpawnOnA;
   assert.equal(duplicateHello.ok, true);
@@ -1010,4 +1012,269 @@ test('ufo starts after first shot, is shared and awards its killer', async (t) =
   assert.equal(explosion.reason, 'ufo');
   assert.equal(explosion.hitUfoId, 'ufo-shared');
   assert.equal(awarded.get('507f1f77bcf86cd799439011'), 77);
+});
+
+test('shared clan protects immediately and damage resumes after last shared clan is left', async (t) => {
+  const lifeByUser = new Map();
+  let sharedClan = true;
+  let persistedDamage = 0;
+  let bountyClaims = 0;
+  const fakeLifeModel = {
+    findOne({ userId }) {
+      return { lean: async () => ({ vida: lifeByUser.get(String(userId)) ?? 1000 }) };
+    },
+    async updateOne({ userId }, update) {
+      persistedDamage++;
+      lifeByUser.set(String(userId), update.$set.vida);
+    },
+  };
+  const fakeCardModel = {
+    findById() {
+      return {
+        lean: async () => ({
+          _id: 'card-projectile',
+          tipoArma: 'Proyectil',
+          alcance: 45,
+          dano: 100,
+          tiempoEspera: 0,
+        }),
+      };
+    },
+  };
+  const emptyPersistentModel = {
+    find() { return { lean: async () => [] }; },
+    async updateOne() {},
+    async deleteOne() {},
+  };
+  const fakeUserModel = {
+    findOneAndUpdate() { return { lean: async () => null }; },
+    async updateOne() {},
+  };
+  const fakeUfoModel = { find() { return { lean: async () => [] }; } };
+  const fakeClanMembershipService = {
+    getClanIds: async () => new Set(sharedClan ? ['clan-shared'] : []),
+    shareActiveClan: async () => sharedClan,
+    events: { on() {} },
+  };
+  const fakeBountyService = {
+    totalForTarget: async () => 0,
+    claimForKill: async () => {
+      bountyClaims++;
+      return { paid: 0, claimed: 0 };
+    },
+  };
+
+  const httpServer = http.createServer();
+  const io = new Server(httpServer, { transports: ['websocket'] });
+  registerPvp(io, {
+    CardModel: fakeCardModel,
+    LifeModel: fakeLifeModel,
+    TurretModel: emptyPersistentModel,
+    MineModel: emptyPersistentModel,
+    AirstrikeModel: emptyPersistentModel,
+    UserModel: fakeUserModel,
+    UfoModel: fakeUfoModel,
+    ClanMembershipService: fakeClanMembershipService,
+    BountyService: fakeBountyService,
+  });
+  await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${httpServer.address().port}`;
+  const sockets = [];
+  t.after(async () => {
+    for (const socket of sockets) socket.disconnect();
+    await new Promise((resolve) => io.close(resolve));
+    if (httpServer.listening) await new Promise((resolve) => httpServer.close(resolve));
+  });
+
+  const origin = { lat: 41.65671, lng: -0.8785 };
+  const targetPosition = geo.computeOffset(origin, 12, 0);
+  const attacker = await connectClient(url);
+  const target = await connectClient(url);
+  sockets.push(attacker, target);
+  await emitWithAck(attacker, 'presence:hello', {
+    userId: '507f1f77bcf86cd799439011',
+    ...origin,
+  });
+  await emitWithAck(target, 'presence:hello', {
+    userId: '507f191e810c19729de860ea',
+    ...targetPosition,
+  });
+
+  let lifeUpdates = 0;
+  target.on('life:update', () => lifeUpdates++);
+  const protectedEvent = waitForEvent(target, 'life:protected');
+  const protectedExplosion = waitForEvent(target, 'bullet:explode');
+  await emitWithAck(attacker, 'bullet:spawn', {
+    clientShotId: 'protected-shot',
+    cardId: 'card-projectile',
+    from: origin,
+    heading: 0,
+    speed: 180,
+    alcance: 45,
+    dano: 100,
+    spriteUrl: '',
+    explosionFrames: [],
+  });
+  const [protection, explosion] = await Promise.all([protectedEvent, protectedExplosion]);
+  assert.equal(protection.targetUserId, '507f191e810c19729de860ea');
+  assert.equal(explosion.reason, 'protected');
+  assert.equal(persistedDamage, 0);
+  assert.equal(lifeUpdates, 0);
+  assert.equal(bountyClaims, 0);
+
+  sharedClan = false;
+  const lifeUpdate = waitForEvent(target, 'life:update');
+  await emitWithAck(attacker, 'bullet:spawn', {
+    clientShotId: 'unprotected-shot',
+    cardId: 'card-projectile',
+    from: origin,
+    heading: 0,
+    speed: 180,
+    alcance: 45,
+    dano: 100,
+    spriteUrl: '',
+    explosionFrames: [],
+  });
+  const damage = await lifeUpdate;
+  assert.equal(damage.vida, 900);
+  assert.equal(persistedDamage, 1);
+});
+
+test('PVP socket rejects missing tokens and manipulated presence identities', async (t) => {
+  const previousSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = 'pvp-test-secret';
+  const fakeLifeModel = {
+    findOne() { return { lean: async () => ({ vida: 1000 }) }; },
+    async updateOne() {},
+  };
+  const emptyPersistentModel = {
+    find() { return { lean: async () => [] }; },
+    async updateOne() {},
+    async deleteOne() {},
+  };
+  let authoritativeNickname = 'Alice';
+  const fakeUserModel = {
+    findById(userId) {
+      return {
+        select() {
+          return { lean: async () => ({ _id: userId, nickname: authoritativeNickname }) };
+        },
+      };
+    },
+    findOneAndUpdate() { return { lean: async () => null }; },
+    async updateOne() {},
+  };
+  const httpServer = http.createServer();
+  const io = new Server(httpServer, { transports: ['websocket'] });
+  registerPvp(io, {
+    requireAuth: true,
+    CardModel: { findById() { return { lean: async () => null }; } },
+    LifeModel: fakeLifeModel,
+    TurretModel: emptyPersistentModel,
+    MineModel: emptyPersistentModel,
+    AirstrikeModel: emptyPersistentModel,
+    UserModel: fakeUserModel,
+    UfoModel: { find() { return { lean: async () => [] }; } },
+    ClanMembershipService: {
+      getClanIds: async () => new Set(),
+      shareActiveClan: async () => false,
+      events: { on() {} },
+    },
+    BountyService: {
+      totalForTarget: async () => 0,
+      claimForKill: async () => ({ paid: 0 }),
+    },
+  });
+  await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${httpServer.address().port}`;
+  const sockets = [];
+  t.after(async () => {
+    if (previousSecret == null) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousSecret;
+    for (const socket of sockets) socket.disconnect();
+    await new Promise((resolve) => io.close(resolve));
+    if (httpServer.listening) await new Promise((resolve) => httpServer.close(resolve));
+  });
+
+  const missingTokenError = await new Promise((resolve) => {
+    const socket = createClient(`${url}/pvp`, {
+      transports: ['websocket'],
+      forceNew: true,
+      reconnection: false,
+    });
+    sockets.push(socket);
+    socket.once('connect_error', resolve);
+  });
+  assert.match(missingTokenError.message, /token/i);
+
+  const authenticatedUserId = '507f1f77bcf86cd799439011';
+  const token = jwt.sign({ id: authenticatedUserId, role: 'cliente' }, process.env.JWT_SECRET);
+  const socket = await new Promise((resolve, reject) => {
+    const client = createClient(`${url}/pvp`, {
+      transports: ['websocket'],
+      forceNew: true,
+      reconnection: false,
+      auth: { token },
+    });
+    sockets.push(client);
+    client.once('connect', () => resolve(client));
+    client.once('connect_error', reject);
+  });
+  const rejected = await emitWithAck(socket, 'presence:hello', {
+    userId: '507f191e810c19729de860ea',
+    lat: 41.65671,
+    lng: -0.8785,
+  });
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.error, /token/i);
+
+  const observerId = '507f191e810c19729de860ea';
+  const observerToken = jwt.sign({ id: observerId, role: 'cliente' }, process.env.JWT_SECRET);
+  const observer = await new Promise((resolve, reject) => {
+    const client = createClient(`${url}/pvp`, {
+      transports: ['websocket'], forceNew: true, reconnection: false,
+      auth: { token: observerToken },
+    });
+    sockets.push(client);
+    client.once('connect', () => resolve(client));
+    client.once('connect_error', reject);
+  });
+  await emitWithAck(observer, 'presence:hello', {
+    userId: observerId, lat: 41.65671, lng: -0.8785,
+  });
+
+  const spawn = waitForEvent(observer, 'presence:spawn');
+  const accepted = await emitWithAck(socket, 'presence:hello', {
+    userId: authenticatedUserId,
+    lat: 41.65671,
+    lng: -0.8785,
+    nickname: 'NombreFalsificado',
+  });
+  assert.equal(accepted.ok, true);
+  assert.equal((await spawn).nickname, 'Alice', 'server ignores the client nickname');
+
+  const identityUpdate = waitForEvent(observer, 'presence:identity');
+  socialRealtime.nicknameChanged(authenticatedUserId, 'AliceNueva');
+  assert.deepEqual(await identityUpdate, {
+    userId: authenticatedUserId,
+    nickname: 'AliceNueva',
+  });
+
+  authoritativeNickname = '';
+  const pendingId = '507f191e810c19729de860eb';
+  const pendingToken = jwt.sign({ id: pendingId, role: 'cliente' }, process.env.JWT_SECRET);
+  const pendingSocket = await new Promise((resolve, reject) => {
+    const client = createClient(`${url}/pvp`, {
+      transports: ['websocket'], forceNew: true, reconnection: false,
+      auth: { token: pendingToken },
+    });
+    sockets.push(client);
+    client.once('connect', () => resolve(client));
+    client.once('connect_error', reject);
+  });
+  const pendingPresence = await emitWithAck(pendingSocket, 'presence:hello', {
+    userId: pendingId, lat: 41.65671, lng: -0.8785,
+  });
+  assert.equal(pendingPresence.ok, false);
+  assert.equal(pendingPresence.code, 'NICKNAME_REQUIRED');
 });

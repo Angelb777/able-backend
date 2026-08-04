@@ -35,4 +35,23 @@ function checkRole(rolesPermitidos) {
   };
 }
 
-module.exports = { verifyToken, checkRole };
+async function requireNickname(req, res, next) {
+  try {
+    const User = require('../models/User');
+    const user = await User.findById(req.user.id).select('nickname').lean();
+    if (!user) return res.status(401).json({ error: 'Usuario no encontrado' });
+    if (!user.nickname) {
+      return res.status(428).json({
+        error: 'Debes elegir un nickname antes de utilizar funciones sociales',
+        code: 'NICKNAME_REQUIRED',
+        needsNickname: true,
+      });
+    }
+    req.publicUser = user;
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+module.exports = { verifyToken, checkRole, requireNickname };

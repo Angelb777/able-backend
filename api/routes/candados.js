@@ -115,7 +115,7 @@ router.post("/log", verifyToken, async (req, res) => {
 router.get("/log/:id", verifyToken, async (req, res) => {
   try {
     const logs = await CandadoLog.find({ candadoId: req.params.id })
-      .populate("usuarioId", "nombre")
+      .populate("usuarioId", "nickname")
       .sort({ createdAt: -1 });
     res.json(logs);
   } catch (err) {

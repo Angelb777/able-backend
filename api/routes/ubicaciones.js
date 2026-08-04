@@ -3,6 +3,7 @@
 const express = require("express");
 const router = express.Router();
 const UbicacionVisible = require("../models/UbicacionVisible");
+const { publicNickname } = require('../utils/publicIdentity');
 
 // 👉 POST /api/ubicaciones/compartir → Crear o actualizar tu ubicación visible
 router.post("/compartir", async (req, res) => {
@@ -31,9 +32,18 @@ router.get("/", async (req, res) => {
     const haceUnMinuto = new Date(Date.now() - 60000); // últimos 60s
     const visibles = await UbicacionVisible.find({
       actualizadoEn: { $gte: haceUnMinuto }
-    }).populate("userId", "nombre");
+    }).populate("userId", "nickname").lean();
 
-    res.json(visibles);
+    res.json(visibles.map((item) => ({
+      id: String(item._id),
+      user: item.userId ? {
+        id: String(item.userId._id),
+        nickname: publicNickname(item.userId),
+      } : null,
+      lat: item.lat,
+      lng: item.lng,
+      actualizadoEn: item.actualizadoEn,
+    })));
   } catch (err) {
     console.error("❌ Error al obtener ubicaciones visibles:", err);
     res.status(500).json({ error: "Error interno del servidor" });
