@@ -22,9 +22,9 @@ test('animated projectile and explosion keep complete Flame metadata', () => {
     columns: 4,
     rows: 2,
     frames: 4,
-    sourceWidth: 256,
+    sourceWidth: 2021,
     sourceHeight: 128,
-    frameWidth: 64,
+    frameWidth: 2021 / 4,
     frameHeight: 64,
     frameTime: 1 / 12,
     fps: 12,
@@ -45,6 +45,7 @@ test('animated projectile and explosion keep complete Flame metadata', () => {
 
   assert.equal(card.validateSync(), undefined);
   assert.equal(card.projectileSpritesheet.columns, 4);
+  assert.equal(card.projectileSpritesheet.frameWidth, 505.25);
   assert.equal(card.projectileSpritesheet.loop, true);
   assert.equal(card.explosionSpritesheet.loop, false);
   assert.deepEqual(card.projectileSpritesheet.frameOrder, [0, 1, 2, 3]);

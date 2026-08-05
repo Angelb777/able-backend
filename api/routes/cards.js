@@ -10,13 +10,19 @@ const SPRITESHEET_FIELDS = new Set([
   "explosionSpritesheetPng"
 ]);
 
+class SpritesheetValidationError extends Error {}
+
+function invalidSpritesheet(message) {
+  throw new SpritesheetValidationError(message);
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (SPRITESHEET_FIELDS.has(file.fieldname)) {
       const isPng = file.mimetype === "image/png";
-      return cb(isPng ? null : new Error("Los spritesheets deben ser PNG"), isPng);
+      return cb(isPng ? null : new SpritesheetValidationError("Los spritesheets deben ser PNG"), isPng);
     }
     if (!file.mimetype?.startsWith("image/")) {
       return cb(new Error("Sólo se permiten archivos de imagen"));
@@ -39,7 +45,7 @@ function pngDimensions(file) {
   const buffer = file?.buffer;
   if (!Buffer.isBuffer(buffer) || buffer.length < 24 ||
       buffer.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") {
-    throw new Error("El spritesheet no es un PNG válido");
+    invalidSpritesheet("El spritesheet no es un PNG válido");
   }
   return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
 }
@@ -51,10 +57,10 @@ function parseSpritesheetConfig(raw, label, url, uploadedFile, previous = null) 
       ? (typeof previous?.toObject === "function" ? previous.toObject() : previous)
       : (typeof raw === "string" ? JSON.parse(raw) : raw);
   } catch (_) {
-    throw new Error(`Configuración JSON no válida para ${label}`);
+    invalidSpritesheet(`Configuración JSON no válida para ${label}`);
   }
   if (!parsed || typeof parsed !== "object" || !url) {
-    throw new Error(`Falta el PNG o la configuración de ${label}`);
+    invalidSpritesheet(`Falta el PNG o la configuración de ${label}`);
   }
 
   const columns = Number(parsed.columns);
@@ -67,29 +73,23 @@ function parseSpritesheetConfig(raw, label, url, uploadedFile, previous = null) 
     : (fps > 0 ? 1 / fps : NaN);
   if (![columns, rows, frames].every(Number.isInteger) ||
       columns < 1 || rows < 1 || frames < 1 || !(frameTime > 0)) {
-    throw new Error(`Columnas, filas, frames y FPS/tiempo son obligatorios para ${label}`);
+    invalidSpritesheet(`Columnas, filas, frames y FPS/tiempo son obligatorios para ${label}`);
   }
 
   const dimensions = uploadedFile ? pngDimensions(uploadedFile) : null;
   const sourceWidth = dimensions?.width || previous?.sourceWidth;
   const sourceHeight = dimensions?.height || previous?.sourceHeight;
-  if (sourceWidth && sourceWidth % columns !== 0) {
-    throw new Error(`${label}: el ancho ${sourceWidth}px no es divisible entre ${columns} columnas`);
-  }
-  if (sourceHeight && sourceHeight % rows !== 0) {
-    throw new Error(`${label}: el alto ${sourceHeight}px no es divisible entre ${rows} filas`);
-  }
 
   const multipleOrientations = asBoolean(parsed.multipleOrientations, false);
   const readOrder = parsed.readOrder || "row-major";
   if (!["row-major", "row-major-reverse", "column-major"].includes(readOrder)) {
-    throw new Error(`${label}: orden de lectura no válido`);
+    invalidSpritesheet(`${label}: orden de lectura no válido`);
   }
   const availableFrames = multipleOrientations
     ? (readOrder === "column-major" ? rows : columns)
     : columns * rows;
   if (frames > availableFrames) {
-    throw new Error(`${label}: frames supera la cuadrícula configurada`);
+    invalidSpritesheet(`${label}: frames supera la cuadrícula configurada`);
   }
   const orientationRows = Array.isArray(parsed.orientationRows)
     ? parsed.orientationRows.map(String)
@@ -101,7 +101,7 @@ function parseSpritesheetConfig(raw, label, url, uploadedFile, previous = null) 
       .map((value) => value.trim()).filter(Boolean);
   const frameOrder = rawFrameOrder.map(Number).filter(Number.isInteger);
   if (frameOrder.some((frame) => frame < 0 || frame >= availableFrames)) {
-    throw new Error(`${label}: el orden de frames sale de la cuadrícula`);
+    invalidSpritesheet(`${label}: el orden de frames sale de la cuadrícula`);
   }
 
   return {
@@ -319,6 +319,9 @@ router.post(
       await card.save();
       return res.json({ message: "✅ Carta creada correctamente", card });
     } catch (err) {
+      if (err instanceof SpritesheetValidationError) {
+        return res.status(400).json({ error: err.message });
+      }
       // Si es validación de Mongoose, devuélvela clara al cliente
       if (err.name === "ValidationError") {
         console.error("❌ ValidationError:", err.message);
@@ -506,6 +509,9 @@ router.put(
       await card.save();
       return res.json({ message: "✅ Carta actualizada correctamente", card });
     } catch (err) {
+      if (err instanceof SpritesheetValidationError) {
+        return res.status(400).json({ error: err.message });
+      }
       if (err.name === "ValidationError") {
         return res.status(400).json({
           error: "Validación fallida",

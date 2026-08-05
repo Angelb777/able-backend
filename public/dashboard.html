@@ -319,10 +319,10 @@
       <p>Sube un único PNG spritesheet. Flame dividirá sus frames; no se generan archivos separados.</p>
       <input type="file" id="projectileSpritesheetPng" name="projectileSpritesheetPng" accept="image/png"><br>
       <img id="projectileSpritesheetPreview" alt="Vista previa del spritesheet del proyectil" style="display:none;max-width:320px;max-height:180px;margin:8px 0;"><br>
-      <label>Columnas: <input type="number" min="1" value="1" data-sheet="projectile" data-key="columns"></label>
-      <label>Filas: <input type="number" min="1" value="1" data-sheet="projectile" data-key="rows"></label>
-      <label>Frames usados: <input type="number" min="1" value="1" data-sheet="projectile" data-key="frames"></label>
-      <label>FPS: <input type="number" min="0.01" step="0.01" value="12" data-sheet="projectile" data-key="fps"></label><br><br>
+      <label>Columnas: <input type="number" min="1" value="1" required data-sheet="projectile" data-key="columns"></label>
+      <label>Filas: <input type="number" min="1" value="1" required data-sheet="projectile" data-key="rows"></label>
+      <label>Frames usados: <input type="number" min="1" value="1" required data-sheet="projectile" data-key="frames"></label>
+      <label>FPS: <input type="number" min="0.01" step="0.01" value="12" required data-sheet="projectile" data-key="fps"></label><br><br>
       <label><input type="checkbox" checked data-sheet="projectile" data-key="loop"> Reproducir en bucle</label>
       <label><input type="checkbox" data-sheet="projectile" data-key="multipleOrientations"> Contiene orientaciones</label><br><br>
       <label>Orden de lectura:
@@ -349,10 +349,10 @@
       <p>Sube un único PNG spritesheet para toda la animación de explosión.</p>
       <input type="file" id="explosionSpritesheetPng" name="explosionSpritesheetPng" accept="image/png"><br>
       <img id="explosionSpritesheetPreview" alt="Vista previa del spritesheet de explosión" style="display:none;max-width:320px;max-height:180px;margin:8px 0;"><br>
-      <label>Columnas: <input type="number" min="1" value="1" data-sheet="explosion" data-key="columns"></label>
-      <label>Filas: <input type="number" min="1" value="1" data-sheet="explosion" data-key="rows"></label>
-      <label>Frames usados: <input type="number" min="1" value="1" data-sheet="explosion" data-key="frames"></label>
-      <label>FPS: <input type="number" min="0.01" step="0.01" value="12" data-sheet="explosion" data-key="fps"></label><br><br>
+      <label>Columnas: <input type="number" min="1" value="1" required data-sheet="explosion" data-key="columns"></label>
+      <label>Filas: <input type="number" min="1" value="1" required data-sheet="explosion" data-key="rows"></label>
+      <label>Frames usados: <input type="number" min="1" value="1" required data-sheet="explosion" data-key="frames"></label>
+      <label>FPS: <input type="number" min="0.01" step="0.01" value="12" required data-sheet="explosion" data-key="fps"></label><br><br>
       <label><input type="checkbox" data-sheet="explosion" data-key="loop"> Reproducir en bucle</label>
       <label><input type="checkbox" data-sheet="explosion" data-key="multipleOrientations"> Contiene orientaciones</label><br><br>
       <label>Orden de lectura:

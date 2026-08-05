@@ -3549,6 +3549,9 @@ document.addEventListener("DOMContentLoaded", function () {
       if (el.type === "file") {
         // limpiar selección de archivos
         el.value = "";
+      } else if (el.dataset.sheet) {
+        // La cuadrícula Flame conserva sus valores. Al volver a mostrar la
+        // sección no debe acabar con columnas/frames/FPS convertidos a cero.
       } else if (el.tagName === "SELECT") {
         // deja el valor por defecto del select
       } else {
@@ -3604,10 +3607,19 @@ document.addEventListener("DOMContentLoaded", function () {
 
   const spritesheetConfig = (kind) => {
     const get = (key) => form.querySelector(`[data-sheet="${kind}"][data-key="${key}"]`);
-    const fps = Number(get("fps")?.value || 12);
+    const columns = Number(get("columns")?.value);
+    const rows = Number(get("rows")?.value);
+    const frames = Number(get("frames")?.value);
+    const fps = Number(get("fps")?.value);
+    if (!Number.isInteger(columns) || columns < 1 ||
+        !Number.isInteger(rows) || rows < 1 ||
+        !Number.isInteger(frames) || frames < 1 ||
+        !Number.isFinite(fps) || fps <= 0) {
+      const label = kind === "projectile" ? "proyectil" : "explosión";
+      throw new Error(`Completa columnas, filas, frames y FPS (> 0) para ${label}.`);
+    }
     return {
-      columns: Number(get("columns")?.value || 1), rows: Number(get("rows")?.value || 1),
-      frames: Number(get("frames")?.value || 1), fps, frameTime: 1 / fps,
+      columns, rows, frames, fps, frameTime: 1 / fps,
       loop: Boolean(get("loop")?.checked),
       multipleOrientations: Boolean(get("multipleOrientations")?.checked),
       readOrder: get("readOrder")?.value || "row-major",
@@ -3827,7 +3839,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const esEdicion = Boolean(cartaEditandoId);
 
     // 1) Normalizar todos los number vacíos -> "0" (evita NaN en backend)
-    form.querySelectorAll('input[type="number"]:not(:disabled)').forEach(inp => {
+    form.querySelectorAll('input[type="number"]:not(:disabled):not([data-sheet])').forEach(inp => {
       if (inp.value === "" || isNaN(Number(inp.value))) {
         inp.value = "0";
       }
