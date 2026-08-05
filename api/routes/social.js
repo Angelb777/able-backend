@@ -53,7 +53,7 @@ async function ensureDefaultTaunts() {
 
 router.get('/me', async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id).select('nickname fotoPerfil stepcoins').lean();
+    const user = await User.findById(req.user.id).select('nickname fotoPerfil stepcoins role').lean();
     if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
     res.json({
       id: String(user._id),
@@ -62,6 +62,7 @@ router.get('/me', async (req, res, next) => {
       needsNickname: !user.nickname,
       avatarUrl: user.fotoPerfil || '',
       stepcoins: user.stepcoins || 0,
+      role: user.role,
     });
   } catch (error) {
     next(error);

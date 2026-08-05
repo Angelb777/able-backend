@@ -194,6 +194,7 @@ router.get('/:id/skin', async (req, res) => {
         return res.json({
           skinUrl,
           skinId: user.skinSeleccionada._id,
+          skin: user.skinSeleccionada,
           isFallback: false
         });
       }
@@ -220,6 +221,7 @@ router.get('/:id/skin', async (req, res) => {
     return res.json({
       skinUrl,
       skinId: fallback._id,
+      skin: fallback,
       isFallback: true
     });
 
@@ -251,7 +253,12 @@ router.put('/:id/skin', verifyToken, requireSelfOrAdmin, async (req, res) => {
     user.skinSeleccionada = skinObjectId;
     await user.save();
 
-    res.json({ message: '✅ Skin seleccionada correctamente', skinSeleccionada: skinObjectId });
+    const selectedSkin = await Skin.findById(skinObjectId);
+    res.json({
+      message: '✅ Skin seleccionada correctamente',
+      skinSeleccionada: skinObjectId,
+      skin: selectedSkin
+    });
   } catch (err) {
     console.error('❌ Error al asignar skin:', err);
     res.status(500).json({ error: 'Error interno al seleccionar skin' });

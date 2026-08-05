@@ -31,6 +31,7 @@ test('social me and users/:id expose only minimal public/self fields', async (t)
     email: 'secret@example.test',
     fotoPerfil: '/avatar.png',
     stepcoins: 321,
+    role: 'cliente',
     profile: { address: 'Dirección privada' },
     skinSeleccionada: null,
   };
@@ -54,10 +55,11 @@ test('social me and users/:id expose only minimal public/self fields', async (t)
   const socialResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/social/me`, { headers });
   const social = await socialResponse.json();
   assert.deepEqual(Object.keys(social).sort(), [
-    'avatarUrl', 'hasChosenNickname', 'id', 'needsNickname', 'nickname', 'stepcoins',
+    'avatarUrl', 'hasChosenNickname', 'id', 'needsNickname', 'nickname', 'role', 'stepcoins',
   ]);
   assert.equal(social.nickname, `Jugador-${String(id).slice(-5).toUpperCase()}`);
   assert.equal(social.needsNickname, true);
+  assert.equal(social.role, 'cliente');
   assert.doesNotMatch(JSON.stringify(social), /Nombre Real|secret@example|Dirección/);
 
   const publicWithoutToken = await fetch(`http://127.0.0.1:${server.address().port}/api/users/${id}`);

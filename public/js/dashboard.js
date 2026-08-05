@@ -1428,6 +1428,130 @@ async function eliminarUfo(id) {
   }
 }
 
+const SKIN_ACTIONS = [
+  ["idle", "Parado / Idle", false, true],
+  ["walk", "Moviéndose / Walk", false, true],
+  ["shoot", "Disparando / Shoot", false, false],
+  ["die", "Muriendo / Die", false, false],
+  ["run", "Rápido / Run", true, true],
+  ["damage", "Recibiendo daño / Damage", true, false],
+  ["getUp", "Reapareciendo / GetUp", true, false]
+];
+let skinsAdminCache = [];
+
+function inicializarFormularioSkins() {
+  const container = document.getElementById("skinAnimationFields");
+  if (!container || container.dataset.ready) return;
+  container.innerHTML = SKIN_ACTIONS.map(([key, label, optional, loopsByDefault]) => `
+    <div class="skin-animation-field" data-action="${key}" style="border-top:1px solid #555;padding:12px 0">
+      <strong>${label}${optional ? " (opcional)" : ""}</strong><br>
+      <label>Un único PNG spritesheet:</label>
+      <input type="file" name="${key}" accept="image/png"><br>
+      <img data-preview="${key}" alt="Previsualización ${label}" style="display:none;max-width:280px;max-height:180px;margin:8px 0"><br>
+      <label>Columnas <input type="number" min="1" data-config="columns"></label>
+      <label>Filas <input type="number" min="1" data-config="rows"></label>
+      <label>Frames usados por orientación <input type="number" min="1" data-config="frames"></label>
+      <label>FPS <input type="number" min="0.01" step="0.01" value="8" data-config="fps"></label><br>
+      <label><input type="checkbox" ${loopsByDefault ? "checked" : ""} data-config="loop"> Bucle</label>
+      <label><input type="checkbox" checked data-config="multipleOrientations"> Varias orientaciones</label>
+      <label>Orden
+        <select data-config="readOrder">
+          <option value="row-major">Por filas</option>
+          <option value="row-major-reverse">Por filas, inverso</option>
+          <option value="column-major">Por columnas</option>
+        </select>
+      </label><br>
+      <label>Orientaciones (una por fila)
+        <input type="text" value="south,southWest,west,northWest,north" data-config="orientationRows">
+      </label>
+      <label>Orden explícito de frames (opcional)
+        <input type="text" placeholder="0,1,2,3" data-config="frameOrder">
+      </label>
+    </div>
+  `).join("");
+  container.querySelectorAll('input[type="file"]').forEach(input => {
+    input.addEventListener("change", () => {
+      const preview = container.querySelector(`[data-preview="${input.name}"]`);
+      const file = input.files?.[0];
+      if (!preview || !file) return;
+      preview.src = URL.createObjectURL(file);
+      preview.style.display = "block";
+    });
+  });
+  const coverInput = document.querySelector('#formCrearSkin input[name="portada"]');
+  coverInput?.addEventListener("change", () => {
+    const preview = document.getElementById("previewSkinPortada");
+    const file = coverInput.files?.[0];
+    if (!preview || !file) return;
+    preview.src = URL.createObjectURL(file);
+    preview.style.display = "block";
+  });
+  document.getElementById("cancelarEdicionSkin")?.addEventListener("click", cancelarEdicionSkin);
+  container.dataset.ready = "true";
+}
+
+function configSpritesheetDesdeCampo(field) {
+  const value = name => field.querySelector(`[data-config="${name}"]`);
+  const frameOrder = value("frameOrder").value.split(",")
+    .map(item => Number(item.trim())).filter(Number.isInteger);
+  return {
+    columns: Number(value("columns").value),
+    rows: Number(value("rows").value),
+    frames: Number(value("frames").value),
+    fps: Number(value("fps").value),
+    loop: value("loop").checked,
+    multipleOrientations: value("multipleOrientations").checked,
+    readOrder: value("readOrder").value,
+    orientationRows: value("orientationRows").value.split(",")
+      .map(item => item.trim()).filter(Boolean),
+    frameOrder
+  };
+}
+
+function cancelarEdicionSkin() {
+  const form = document.getElementById("formCrearSkin");
+  if (!form) return;
+  form.reset();
+  form.skinEditandoId.value = "";
+  form.portada.required = true;
+  document.getElementById("guardarSkinBtn").textContent = "Crear Skin";
+  document.getElementById("cancelarEdicionSkin").style.display = "none";
+  form.querySelectorAll("img").forEach(img => img.style.display = "none");
+}
+
+function editarSkin(id) {
+  inicializarFormularioSkins();
+  const skin = skinsAdminCache.find(item => item._id === id);
+  const form = document.getElementById("formCrearSkin");
+  if (!skin || !form) return;
+  form.skinEditandoId.value = skin._id;
+  form.titulo.value = skin.titulo || "";
+  form.descripcion.value = skin.descripcion || "";
+  form.precio.value = skin.precio ?? 0;
+  form.renderType.value = skin.renderType || "classic";
+  form.portada.required = false;
+  const cover = document.getElementById("previewSkinPortada");
+  cover.src = skin.portada;
+  cover.style.display = "block";
+  SKIN_ACTIONS.forEach(([key]) => {
+    const config = skin.spritesheets?.[key];
+    const field = document.querySelector(`[data-action="${key}"]`);
+    if (!config || !field) return;
+    Object.entries(config).forEach(([name, value]) => {
+      const input = field.querySelector(`[data-config="${name}"]`);
+      if (!input) return;
+      if (input.type === "checkbox") input.checked = Boolean(value);
+      else input.value = Array.isArray(value) ? value.join(",") : value;
+    });
+    const preview = field.querySelector(`[data-preview="${key}"]`);
+    preview.src = config.url;
+    preview.style.display = "block";
+  });
+  document.getElementById("guardarSkinBtn").textContent = "Guardar cambios";
+  document.getElementById("cancelarEdicionSkin").style.display = "inline-block";
+  form.scrollIntoView({ behavior: "smooth" });
+}
+
 // 🔄 REEMPLAZA la función renderGestionJuego COMPLETAMENTE por esto:
 
 async function renderGestionJuego() {
@@ -1443,27 +1567,41 @@ async function renderGestionJuego() {
 
   // 🎨 FORMULARIO CREAR SKIN
   const formSkin = document.getElementById("formCrearSkin");
+  inicializarFormularioSkins();
   if (formSkin && !formSkin.dataset.listenerAdded) {
     formSkin.addEventListener("submit", async (e) => {
       e.preventDefault();
 
       const formData = new FormData(formSkin);
+      const skinId = formSkin.skinEditandoId.value;
+      if (formSkin.renderType.value === "flame_spritesheet") {
+        formSkin.querySelectorAll("[data-action]").forEach(field => {
+          const action = field.dataset.action;
+          const file = field.querySelector('input[type="file"]').files?.[0];
+          const hasExisting = Boolean(
+            skinsAdminCache.find(skin => skin._id === skinId)?.spritesheets?.[action]
+          );
+          if (file || hasExisting) {
+            formData.set(`config_${action}`, JSON.stringify(configSpritesheetDesdeCampo(field)));
+          }
+        });
+      }
 
       try {
-        const res = await fetch("/api/skins", {
-          method: "POST",
+        const res = await fetch(skinId ? `/api/skins/${skinId}` : "/api/skins", {
+          method: skinId ? "PUT" : "POST",
           body: formData
         });
 
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
 
-        alert("✅ Skin creada correctamente");
-        formSkin.reset();
+        alert(skinId ? "✅ Skin actualizada correctamente" : "✅ Skin creada correctamente");
+        cancelarEdicionSkin();
         cargarSkins();
       } catch (err) {
-        console.error("❌ Error al crear skin:", err);
-        alert("❌ Error al crear skin");
+        console.error("❌ Error al guardar skin:", err);
+        alert(`❌ ${err.message || "Error al guardar skin"}`);
       }
     });
     formSkin.dataset.listenerAdded = "true";
@@ -1578,29 +1716,42 @@ async function cargarSkins() {
   try {
     const res = await fetch("/api/skins");
     const skins = await res.json();
+    skinsAdminCache = Array.isArray(skins) ? skins : [];
 
     if (!Array.isArray(skins) || skins.length === 0) {
       contenedor.innerHTML = "<p>No hay skins creadas todavía.</p>";
       return;
     }
 
-    contenedor.innerHTML = skins.map(s => `
+    contenedor.innerHTML = skins.map(s => {
+      const animated = s.renderType === "flame_spritesheet";
+      const animationSummary = animated
+        ? SKIN_ACTIONS.map(([key, label]) => {
+            const config = s.spritesheets?.[key];
+            if (!config) return `<li>${label}: no configurado</li>`;
+            return `<li>${label}: ${config.columns}×${config.rows}, ${config.frames} frames, ${config.fps || (1 / config.frameTime).toFixed(2)} FPS</li>`;
+          }).join("")
+        : `
+          <li>Muriendo: ${s.scripts?.muriendo?.length || 0} imágenes</li>
+          <li>Moviéndose: ${s.scripts?.moviendose?.length || 0} imágenes</li>
+          <li>Parado: ${s.scripts?.parado?.length || 0} imágenes</li>
+          <li>Disparando: ${s.scripts?.disparando?.length || 0} imágenes</li>
+          <li>Rápido: ${s.scripts?.rapido?.length || 0} imágenes</li>`;
+      return `
       <div class="reward-card">
         <h4>${s.titulo}</h4>
         <p>${s.descripcion}</p>
         <img src="${toSrc(s.portada)}" alt="Portada" style="width: 150px; display:block; margin:5px 0;">
         <p>🎯 Precio: ${s.precio} Stepcoins</p>
-        <p><strong>Scripts:</strong></p>
+        <p><strong>Render:</strong> ${animated ? "Flame spritesheet (v2)" : "Clásico"}</p>
         <ul>
-          <li>Muriendo: ${s.scripts.muriendo.length} imágenes</li>
-          <li>Moviéndose: ${s.scripts.moviendose.length} imágenes</li>
-          <li>Parado: ${s.scripts.parado.length} imágenes</li>
-          <li>Disparando: ${s.scripts.disparando.length} imágenes</li>
-          <li>Rápido: ${s.scripts.rapido.length} imágenes</li>
+          ${animationSummary}
         </ul>
+        <button onclick="editarSkin('${s._id}')">✏️ Editar</button>
         <button onclick="eliminarSkin('${s._id}')">🗑️ Eliminar</button>
       </div>
-    `).join("");
+    `;
+    }).join("");
 
   } catch (err) {
     console.error("❌ Error al cargar skins:", err);

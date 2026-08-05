@@ -223,6 +223,7 @@
     <section id="gestionJuego" class="seccion" style="display:none;">
       <h2>Skins</h2>
       <form id="formCrearSkin" enctype="multipart/form-data">
+        <input type="hidden" id="skinEditandoId" name="skinEditandoId">
         <label>Título:</label>
         <input type="text" name="titulo" required><br><br>
 
@@ -234,27 +235,22 @@
 
         <label>Portada:</label>
         <input type="file" name="portada" accept="image/*" required><br><br>
+        <img id="previewSkinPortada" alt="Previsualización de portada" style="display:none;max-width:160px;max-height:160px"><br><br>
 
-        <fieldset>
-          <legend>Imágenes de Scripts (máx 4 cada una)</legend>
+        <label>Tipo de render:</label>
+        <select name="renderType" id="skinRenderType">
+          <option value="classic">Skin clásica</option>
+          <option value="flame_spritesheet">Skin animada con Flame</option>
+        </select><br><br>
 
-          <label>Muriendo:</label><br>
-          <input type="file" name="muriendo" accept="image/*" multiple><br><br>
-
-          <label>Moviéndose:</label><br>
-          <input type="file" name="moviendose" accept="image/*" multiple><br><br>
-
-          <label>Parado:</label><br>
-          <input type="file" name="parado" accept="image/*" multiple><br><br>
-
-          <label>Disparando:</label><br>
-          <input type="file" name="disparando" accept="image/*" multiple><br><br>
-
-          <label>Rápido (+12km/h):</label><br>
-          <input type="file" name="rapido" accept="image/*" multiple><br><br>
+        <fieldset id="skinSpritesheets">
+          <legend>Un único spritesheet PNG por acción</legend>
+          <p>Configura cada PNG según su cuadrícula real. Run, Damage y GetUp son opcionales.</p>
+          <div id="skinAnimationFields"></div>
         </fieldset>
 
-        <button type="submit">Crear Skin</button>
+        <button type="submit" id="guardarSkinBtn">Crear Skin</button>
+        <button type="button" id="cancelarEdicionSkin" style="display:none">Cancelar edición</button>
       </form>
 
       <hr>
