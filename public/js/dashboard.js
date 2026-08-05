@@ -3699,7 +3699,8 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!ya) archivosPorCampo[c.name].push(file);
       }
       renderPreview(c.name, preview);
-      input.value = ""; // evita duplicados
+      // Conserva el nombre visible en el selector. Los archivos acumulados se
+      // reconstruyen desde archivosPorCampo al enviar el formulario.
     });
   });
 
@@ -3860,6 +3861,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // 3) Añadir los archivos múltiples desde archivosPorCampo con el NOMBRE correcto
     for (const nombreCampo in archivosPorCampo) {
+      // FormData ya incluye la selección visible del input. La sustituimos por
+      // el búfer completo para no duplicar la última selección.
+      formData.delete(nombreCampo);
       archivosPorCampo[nombreCampo].forEach(file => {
         formData.append(nombreCampo, file);
       });

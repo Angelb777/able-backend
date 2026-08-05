@@ -273,6 +273,7 @@ module.exports = function(io, dependencies = {}) {
   const TICK_MS = 50;
   const BULLET_START_DELAY_MS = 180;
   const PLAYER_HIT_RADIUS_M = 8;
+  const ANIMATED_PLAYER_HIT_RADIUS_M = 16;
   // El icono del OVNI se dibuja a 90 px y ocupa bastante más superficie
   // visual que un jugador. Un radio propio evita que un disparo que lo roza
   // claramente en pantalla se considere un fallo en el servidor.
@@ -406,7 +407,12 @@ module.exports = function(io, dependencies = {}) {
             seenUsers.has(player.userId)) continue;
         seenUsers.add(player.userId);
         const impact = segmentCircleIntersection(
-          previous, next, player, PLAYER_HIT_RADIUS_M
+          previous,
+          next,
+          player,
+          player.skinDefinition?.renderType === 'flame_spritesheet'
+            ? ANIMATED_PLAYER_HIT_RADIUS_M
+            : PLAYER_HIT_RADIUS_M
         );
         if (impact) candidates.push({ type: 'player', target: player, impact });
       }
