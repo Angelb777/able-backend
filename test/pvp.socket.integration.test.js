@@ -1153,13 +1153,25 @@ test('PVP socket rejects missing tokens and manipulated presence identities', as
     async deleteOne() {},
   };
   let authoritativeNickname = 'Alice';
+  let authoritativeSkin = {
+    _id: '68a000000000000000000001',
+    renderType: 'classic',
+    renderVersion: 1,
+    scripts: { parado: ['/uploads/skins/classic.png'] },
+    spritesheets: {},
+  };
   const fakeUserModel = {
     findById(userId) {
-      return {
-        select() {
-          return { lean: async () => ({ _id: userId, nickname: authoritativeNickname }) };
-        },
+      const query = {
+        select() { return query; },
+        populate() { return query; },
+        lean: async () => ({
+          _id: userId,
+          nickname: authoritativeNickname,
+          skinSeleccionada: authoritativeSkin,
+        }),
       };
+      return query;
     },
     findOneAndUpdate() { return { lean: async () => null }; },
     async updateOne() {},
@@ -1251,7 +1263,39 @@ test('PVP socket rejects missing tokens and manipulated presence identities', as
     nickname: 'NombreFalsificado',
   });
   assert.equal(accepted.ok, true);
-  assert.equal((await spawn).nickname, 'Alice', 'server ignores the client nickname');
+  const spawnedPlayer = await spawn;
+  assert.equal(spawnedPlayer.nickname, 'Alice', 'server ignores the client nickname');
+  assert.equal(spawnedPlayer.skinUrl, '/uploads/skins/classic.png');
+
+  authoritativeSkin = {
+    _id: '68a000000000000000000002',
+    renderType: 'flame_spritesheet',
+    renderVersion: 2,
+    scripts: {},
+    spritesheets: {
+      idle: {
+        url: '/uploads/skins/idle.png',
+        columns: 4,
+        rows: 1,
+        frames: 4,
+        fps: 8,
+        loop: true,
+      },
+    },
+  };
+  const skinUpdate = waitForEvent(observer, 'presence:skin');
+  socket.emit('presence:update', {
+    lat: 41.65671,
+    lng: -0.8785,
+    heading: 90,
+    skinId: authoritativeSkin._id,
+    skinUrl: '',
+  });
+  const changedSkin = await skinUpdate;
+  assert.equal(changedSkin.skinUrl, '');
+  assert.equal(changedSkin.skinId, authoritativeSkin._id);
+  assert.equal(changedSkin.skinDefinition.renderType, 'flame_spritesheet');
+  assert.equal(changedSkin.skinDefinition.spritesheets.idle.columns, 4);
 
   const identityUpdate = waitForEvent(observer, 'presence:identity');
   socialRealtime.nicknameChanged(authenticatedUserId, 'AliceNueva');

@@ -55,6 +55,41 @@ module.exports = function(io, dependencies = {}) {
   const DEFAULT_TURRET_RANGE_M = 100;
   const DEFAULT_TURRET_DAMAGE = 10;
   const MAX_PLAYER_LIFE = 1000;
+  const publicSkinPayload = (rawSkin) => {
+    if (!rawSkin) return null;
+    const skin = typeof rawSkin.toObject === 'function'
+      ? rawSkin.toObject()
+      : rawSkin;
+    return {
+      _id: String(skin._id || skin.id || ''),
+      renderType: skin.renderType || 'classic',
+      renderVersion: Number(skin.renderVersion) || 1,
+      scripts: skin.scripts || {},
+      spritesheets: skin.spritesheets || {},
+    };
+  };
+  const classicSkinUrl = (skin) => {
+    if (!skin || skin.renderType === 'flame_spritesheet') return '';
+    const idle = skin.scripts?.parado;
+    return Array.isArray(idle) && typeof idle[0] === 'string' ? idle[0] : '';
+  };
+  const loadAuthoritativeIdentityAndSkin = async (userId) => {
+    let query = UserModel.findById(userId).select('nickname skinSeleccionada');
+    if (typeof query.populate === 'function') {
+      query = query.populate({
+        path: 'skinSeleccionada',
+        select: 'renderType renderVersion scripts spritesheets',
+      });
+    }
+    const user = await query.lean();
+    const skinDefinition = publicSkinPayload(user?.skinSeleccionada);
+    return {
+      user,
+      skinDefinition,
+      skinId: skinDefinition?._id || '',
+      skinUrl: classicSkinUrl(skinDefinition),
+    };
+  };
   const normalizeTurretCombatStats = (turret) => {
     const alcance = Number(turret.alcance);
     const dano = Number(turret.dano);
@@ -811,13 +846,20 @@ module.exports = function(io, dependencies = {}) {
         }
 
         let authoritativeNickname = requestedNickname;
+        let authoritativeSkinUrl = typeof skinUrl === 'string' ? skinUrl.trim() : '';
+        let skinDefinition = null;
+        let skinId = '';
         if (socket.data.authUserId) {
-          const user = await UserModel.findById(userId).select('nickname').lean();
+          const authoritative = await loadAuthoritativeIdentityAndSkin(userId);
+          const user = authoritative.user;
           if (!user) return cb?.({ ok: false, error: 'Usuario no encontrado' });
           if (!user.nickname) {
             return cb?.({ ok: false, error: 'Debes elegir un nickname', code: 'NICKNAME_REQUIRED' });
           }
           authoritativeNickname = user.nickname;
+          authoritativeSkinUrl = authoritative.skinUrl;
+          skinDefinition = authoritative.skinDefinition;
+          skinId = authoritative.skinId;
         }
 
         const zoneId = toZoneId(lat, lng);
@@ -847,7 +889,9 @@ module.exports = function(io, dependencies = {}) {
           lat,
           lng,
           heading: typeof heading === 'number' ? heading : 0,
-          skinUrl,
+          skinUrl: authoritativeSkinUrl,
+          skinId,
+          skinDefinition,
           nickname: authoritativeNickname,
           zoneId,
           lastShotByCard: previous?.lastShotByCard || {},
@@ -869,6 +913,8 @@ module.exports = function(io, dependencies = {}) {
               lng:p.lng,
               heading:p.heading,
               skinUrl:p.skinUrl,
+              skinId:p.skinId || '',
+              skinDefinition:p.skinDefinition || null,
               nickname:p.nickname,
               vida:p.vida??1000,
               clanIds:p.clanIds || [],
@@ -919,7 +965,7 @@ module.exports = function(io, dependencies = {}) {
           zoneId,
           lat,
           lng,
-          skinUrl,
+          skinUrl: authoritativeSkinUrl,
           nickname: authoritativeNickname,
           vida,
           roomSockets: roomIndex.get(zoneId).size,
@@ -932,7 +978,9 @@ module.exports = function(io, dependencies = {}) {
           lat,
           lng,
           heading,
-          skinUrl,
+          skinUrl: authoritativeSkinUrl,
+          skinId,
+          skinDefinition,
           nickname: authoritativeNickname,
           vida,
           clanIds,
@@ -948,12 +996,34 @@ module.exports = function(io, dependencies = {}) {
     });
 
     // 2) Movimiento/presencia contínua
-    socket.on('presence:update', (payload) => {
+    socket.on('presence:update', async (payload) => {
       const p = players.get(socket.id);
       if (!p) return;
 
-      const { lat, lng, heading, skinUrl } = payload || {};
+      const { lat, lng, heading, skinUrl, skinId: requestedSkinId } = payload || {};
       if (typeof lat!=='number' || typeof lng!=='number') return;
+
+      const normalizedRequestedSkinId = String(requestedSkinId || '');
+      if (socket.data.authUserId && normalizedRequestedSkinId !== String(p.skinId || '')) {
+        try {
+          const authoritative = await loadAuthoritativeIdentityAndSkin(p.userId);
+          p.skinUrl = authoritative.skinUrl;
+          p.skinId = authoritative.skinId;
+          p.skinDefinition = authoritative.skinDefinition;
+          nsp.to(p.zoneId).emit('presence:skin', {
+            userId: p.userId,
+            skinUrl: p.skinUrl,
+            skinId: p.skinId,
+            skinDefinition: p.skinDefinition,
+          });
+        } catch (error) {
+          console.error(`[PVP][${instanceId}] skin refresh error`, {
+            socketId: socket.id,
+            userId: p.userId,
+            error: error.message,
+          });
+        }
+      }
 
       const newZone = toZoneId(lat, lng);
       if (newZone !== p.zoneId) {
@@ -970,7 +1040,7 @@ module.exports = function(io, dependencies = {}) {
       p.lat = lat;
       p.lng = lng;
       if (typeof heading === 'number') p.heading = heading;
-      if (typeof skinUrl === 'string' && skinUrl.trim()) {
+      if (!socket.data.authUserId && typeof skinUrl === 'string') {
         p.skinUrl = skinUrl.trim();
       }
       nsp.to(p.zoneId).emit('presence:move', {
@@ -979,6 +1049,8 @@ module.exports = function(io, dependencies = {}) {
         lng,
         heading: p.heading,
         skinUrl: p.skinUrl,
+        skinId: p.skinId || '',
+        skinDefinition: p.skinDefinition || null,
         nickname: p.nickname,
         vida: p.vida,
         clanIds: p.clanIds || [],
