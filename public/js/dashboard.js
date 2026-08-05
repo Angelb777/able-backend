@@ -1709,7 +1709,7 @@ async function cargarSkins() {
   const toSrc = (u) => {
     if (!u) return "/img/placeholder.png"; // imagen por defecto
     if (u.startsWith("http")) return u;     // URLs absolutas externas
-    if (u.startsWith("/uploads/")) return u; // caso normal en Mongo
+    if (u.startsWith("/")) return u;         // /uploads legado o /api/media persistente
     return `/uploads/skins/${u}`;           // fallback si solo guardaste el nombre
   };
 

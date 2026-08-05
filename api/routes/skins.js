@@ -2,19 +2,9 @@ const express = require("express");
 const router = express.Router();
 const multer = require("multer");
 const path = require("path");
-const fs = require("fs");
 const Skin = require("../models/Skin");
 const User = require("../models/User");
-
-const UPLOAD_BASE_DIR =
-  process.env.UPLOAD_BASE_DIR || path.join(__dirname, "../../uploads");
-const SKINS_DIR = path.join(UPLOAD_BASE_DIR, "skins");
-
-if (!fs.existsSync(SKINS_DIR)) {
-  fs.mkdirSync(SKINS_DIR, { recursive: true });
-}
-
-const publicPath = (filename) => `/uploads/skins/${filename}`;
+const { saveImage } = require("../utils/mediaStorage");
 const ACTIONS = [
   { key: "idle", legacy: "parado" },
   { key: "walk", legacy: "moviendose" },
@@ -25,18 +15,9 @@ const ACTIONS = [
   { key: "getUp", legacy: "reapareciendo" }
 ];
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, SKINS_DIR),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    cb(null, unique + ext);
-  }
-});
-
 const animationFields = new Set(ACTIONS.flatMap(({ key, legacy }) => [key, legacy]));
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (animationFields.has(file.fieldname)) {
@@ -62,19 +43,14 @@ function asBoolean(value, fallback) {
   return value === true || value === "true" || value === "1" || value === "on";
 }
 
-function pngDimensions(filePath) {
-  const fd = fs.openSync(filePath, "r");
-  try {
-    const header = Buffer.alloc(24);
-    fs.readSync(fd, header, 0, header.length, 0);
-    const pngSignature = "89504e470d0a1a0a";
-    if (header.subarray(0, 8).toString("hex") !== pngSignature) {
-      throw new Error("El archivo no es un PNG válido");
-    }
-    return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
-  } finally {
-    fs.closeSync(fd);
+function pngDimensions(file) {
+  const buffer = file?.buffer;
+  const pngSignature = "89504e470d0a1a0a";
+  if (!Buffer.isBuffer(buffer) || buffer.length < 24 ||
+      buffer.subarray(0, 8).toString("hex") !== pngSignature) {
+    throw new Error("El archivo no es un PNG válido");
   }
+  return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
 }
 
 function parseConfig(raw, action, url, uploadedFile, previous = null) {
@@ -102,7 +78,7 @@ function parseConfig(raw, action, url, uploadedFile, previous = null) {
   }
 
   let dimensions = null;
-  if (uploadedFile) dimensions = pngDimensions(uploadedFile.path);
+  if (uploadedFile) dimensions = pngDimensions(uploadedFile);
   const sourceWidth = dimensions?.width || previous?.sourceWidth;
   const sourceHeight = dimensions?.height || previous?.sourceHeight;
   if (sourceWidth && sourceWidth % columns !== 0) {
@@ -150,15 +126,31 @@ function firstFile(files, action) {
   return files[action.key]?.[0] || files[action.legacy]?.[0] || null;
 }
 
+async function saveUploadedImages(files) {
+  const entries = await Promise.all(
+    Object.entries(files).map(async ([field, uploadedFiles]) => {
+      const persistentFiles = await Promise.all(
+        uploadedFiles.map(async (file) => ({
+          ...file,
+          path: await saveImage(file, "skins")
+        }))
+      );
+      return [field, persistentFiles];
+    })
+  );
+  return Object.fromEntries(entries);
+}
+
 async function saveSkin(req, res, existing = null) {
   try {
-    const files = req.files || {};
+    let files = req.files || {};
     const renderType = req.body.renderType === "flame_spritesheet"
       ? "flame_spritesheet"
       : "classic";
+    files = await saveUploadedImages(files);
     const portadaFile = files.portada?.[0];
     const portada = portadaFile
-      ? publicPath(portadaFile.filename)
+      ? portadaFile.path
       : existing?.portada;
     if (!portada) return res.status(400).json({ error: "La portada es obligatoria" });
 
@@ -171,7 +163,7 @@ async function saveSkin(req, res, existing = null) {
 
     for (const action of ACTIONS) {
       const uploadedFile = firstFile(files, action);
-      const url = uploadedFile ? publicPath(uploadedFile.filename) :
+      const url = uploadedFile ? uploadedFile.path :
         spritesheets[action.key]?.url;
       if (uploadedFile) scripts[action.legacy] = [url];
 
