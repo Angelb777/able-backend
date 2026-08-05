@@ -286,6 +286,8 @@ module.exports = function(io, dependencies = {}) {
       lng: bullet.lng,
       spriteUrl: bullet.spriteUrl,
       explosionFrames: bullet.explosionFrames,
+      explosionRenderType: bullet.explosionRenderType,
+      explosionSpritesheet: bullet.explosionSpritesheet,
     });
   };
 
@@ -743,6 +745,14 @@ module.exports = function(io, dependencies = {}) {
       alcance: card.alcance || 0,
       dano: card.dano || 0,
       cooldownMs: cd,
+      spriteUrl: card.projectileRenderType === 'flame_spritesheet'
+        ? card.projectileSpritesheet?.url
+        : card.imagenesArma?.[0],
+      explosionFrames: Array.isArray(card.imagenesExplosion) ? card.imagenesExplosion : [],
+      projectileRenderType: card.projectileRenderType || 'classic',
+      explosionRenderType: card.explosionRenderType || 'classic',
+      projectileSpritesheet: card.projectileSpritesheet || null,
+      explosionSpritesheet: card.explosionSpritesheet || null,
     };
   }
 
@@ -1358,8 +1368,11 @@ module.exports = function(io, dependencies = {}) {
         const authoritativeFrom = { lat: p.lat, lng: p.lng };
         const authoritativeHeading = ((heading % 360) + 360) % 360;
         const authoritativeSpeed = Math.min(Math.max(speed, 0), 180);
-        const normalizedExplosionFrames = Array.isArray(explosionFrames)
-          ? explosionFrames.filter((frame) => typeof frame === 'string' && frame.trim())
+        const authoritativeExplosionFrames = Array.isArray(validated.explosionFrames) && validated.explosionFrames.length
+          ? validated.explosionFrames
+          : explosionFrames;
+        const normalizedExplosionFrames = Array.isArray(authoritativeExplosionFrames)
+          ? authoritativeExplosionFrames.filter((frame) => typeof frame === 'string' && frame.trim())
           : [];
         bullets.set(bulletId, {
           clientShotId,
@@ -1371,8 +1384,12 @@ module.exports = function(io, dependencies = {}) {
           speed: authoritativeSpeed,
           alcance: validated.alcance,
           dano: validated.dano,
-          spriteUrl,
+          spriteUrl: validated.spriteUrl || spriteUrl,
           explosionFrames: normalizedExplosionFrames,
+          projectileRenderType: validated.projectileRenderType,
+          explosionRenderType: validated.explosionRenderType,
+          projectileSpritesheet: validated.projectileSpritesheet,
+          explosionSpritesheet: validated.explosionSpritesheet,
           createdAt: Date.now(),
           startsAt: Date.now() + BULLET_START_DELAY_MS,
         });
@@ -1389,8 +1406,12 @@ module.exports = function(io, dependencies = {}) {
           speed: authoritativeSpeed,
           alcance: validated.alcance,
           dano: validated.dano,
-          spriteUrl,
+          spriteUrl: validated.spriteUrl || spriteUrl,
           explosionFrames: normalizedExplosionFrames,
+          projectileRenderType: validated.projectileRenderType,
+          explosionRenderType: validated.explosionRenderType,
+          projectileSpritesheet: validated.projectileSpritesheet,
+          explosionSpritesheet: validated.explosionSpritesheet,
           startDelayMs: BULLET_START_DELAY_MS,
         });
 

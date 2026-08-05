@@ -2199,6 +2199,8 @@ async function cargarCartas() {
         <p>${carta.descripcion || "Sin descripción"}</p>
         <p><strong>Tipo:</strong> ${carta.tipoArma}</p>
         ${carta.tipoArma === "Proyectil" ? `<p><strong>Alcance:</strong> ${carta.alcance}m</p>` : ""}
+        ${carta.tipoArma === "Proyectil" ? `<p><strong>Render proyectil:</strong> ${carta.projectileRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p>` : ""}
+        ${carta.tipoArma === "Proyectil" ? `<p><strong>Render explosión:</strong> ${carta.explosionRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p>` : ""}
         <p><strong>Daño:</strong> ${carta.dano}</p>
         <p><strong>Dispositivo:</strong> ${carta.dispositivo || "Ambos"}</p>
         <p><strong>Tiempo de espera:</strong> ${carta.tiempoEspera || 0} segundos</p>
@@ -3569,6 +3571,51 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   };
 
+  const setRenderFields = (kind) => {
+    const mode = document.getElementById(`${kind}RenderType`)?.value || "classic";
+    const classic = document.getElementById(`${kind}ClassicFields`);
+    const flame = document.getElementById(`${kind}FlameFields`);
+    if (!classic || !flame) return;
+    const animated = mode === "flame_spritesheet";
+    classic.style.display = animated ? "none" : "block";
+    flame.style.display = animated ? "block" : "none";
+    classic.querySelectorAll("input,select,textarea").forEach(el => { el.disabled = animated; });
+    flame.querySelectorAll("input,select,textarea").forEach(el => { el.disabled = !animated; });
+  };
+
+  ["projectile", "explosion"].forEach((kind) => {
+    document.getElementById(`${kind}RenderType`)?.addEventListener("change", () => setRenderFields(kind));
+    const file = document.getElementById(`${kind}SpritesheetPng`);
+    const preview = document.getElementById(`${kind}SpritesheetPreview`);
+    file?.addEventListener("change", () => {
+      if (!preview) return;
+      const selected = file.files?.[0];
+      preview.style.display = selected ? "block" : "none";
+      if (selected) preview.src = URL.createObjectURL(selected);
+    });
+  });
+
+  const readJsonArray = (value, label) => {
+    if (!String(value || "").trim()) return [];
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) throw new Error(`${label} debe ser un array JSON.`);
+    return parsed;
+  };
+
+  const spritesheetConfig = (kind) => {
+    const get = (key) => form.querySelector(`[data-sheet="${kind}"][data-key="${key}"]`);
+    const fps = Number(get("fps")?.value || 12);
+    return {
+      columns: Number(get("columns")?.value || 1), rows: Number(get("rows")?.value || 1),
+      frames: Number(get("frames")?.value || 1), fps, frameTime: 1 / fps,
+      loop: Boolean(get("loop")?.checked),
+      multipleOrientations: Boolean(get("multipleOrientations")?.checked),
+      readOrder: get("readOrder")?.value || "row-major",
+      orientationRows: readJsonArray(get("orientationRows")?.value, "Orientaciones"),
+      frameOrder: readJsonArray(get("frameOrder")?.value, "Orden de frames")
+    };
+  };
+
   // --- Mostrar/ocultar secciones y gestionar required/valores ---
   tipoSelect.addEventListener("change", () => {
     const tipo = tipoSelect.value;
@@ -3581,6 +3628,10 @@ document.addEventListener("DOMContentLoaded", function () {
       if (visible) {
         seccion.style.display = "block";
         restoreRequiredIfNeeded(seccion);
+        if (key === "Proyectil") {
+          setRenderFields("projectile");
+          setRenderFields("explosion");
+        }
       } else {
         seccion.style.display = "none";
         clearInputs(seccion); // ← limpia valores y quita required
@@ -3595,8 +3646,6 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     });
   });
-
-  tipoSelect.dispatchEvent(new Event("change"));
 
   // =================== Gestión de múltiples imágenes ===================
   // Mapeo id ↔ name ↔ previewId (name = lo que espera multer)
@@ -3619,6 +3668,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   const archivosPorCampo = {}; // clave = name que espera multer
   camposMultiples.forEach(c => { archivosPorCampo[c.name] = []; });
+  tipoSelect.dispatchEvent(new Event("change"));
 
   // Listeners de cada input file múltiple
   camposMultiples.forEach(c => {
@@ -3679,6 +3729,13 @@ document.addEventListener("DOMContentLoaded", function () {
     form.querySelectorAll('div[id^="preview"]').forEach((div) => {
       div.innerHTML = "";
     });
+    ["projectile", "explosion"].forEach((kind) => {
+      const preview = document.getElementById(`${kind}SpritesheetPreview`);
+      if (preview) {
+        preview.removeAttribute("src");
+        preview.style.display = "none";
+      }
+    });
     form.querySelector('[name="imagenPortada"]').required = true;
     tipoSelect.value = "";
     tipoSelect.dispatchEvent(new Event("change"));
@@ -3730,6 +3787,25 @@ document.addEventListener("DOMContentLoaded", function () {
       });
     });
 
+    ["projectile", "explosion"].forEach((kind) => {
+      const mode = carta[`${kind}RenderType`] || "classic";
+      const config = carta[`${kind}Spritesheet`] || {};
+      const modeInput = document.getElementById(`${kind}RenderType`);
+      if (modeInput) modeInput.value = mode;
+      Object.entries(config).forEach(([key, value]) => {
+        const input = form.querySelector(`[data-sheet="${kind}"][data-key="${key}"]`);
+        if (!input) return;
+        if (input.type === "checkbox") input.checked = Boolean(value);
+        else input.value = Array.isArray(value) ? JSON.stringify(value) : (value ?? "");
+      });
+      const preview = document.getElementById(`${kind}SpritesheetPreview`);
+      if (preview && config.url) {
+        preview.src = config.url;
+        preview.style.display = "block";
+      }
+      setRenderFields(kind);
+    });
+
     form.querySelector('[name="imagenPortada"]').required = false;
 
     const submit = document.getElementById("submitCarta");
@@ -3759,6 +3835,16 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // 2) Construir el FormData
     const formData = new FormData(form);
+    try {
+      ["projectile", "explosion"].forEach((kind) => {
+        if (document.getElementById(`${kind}RenderType`)?.value === "flame_spritesheet") {
+          formData.set(`${kind}SpritesheetConfig`, JSON.stringify(spritesheetConfig(kind)));
+        }
+      });
+    } catch (configError) {
+      alert(`❌ ${configError.message}`);
+      return;
+    }
 
     // 3) Añadir los archivos múltiples desde archivosPorCampo con el NOMBRE correcto
     for (const nombreCampo in archivosPorCampo) {

@@ -303,13 +303,65 @@
 
 <!-- 🎯 Proyectil -->
 <div id="seccionProyectil" style="display:none;">
-  <label>Imágenes de arma (máx 4):</label>
-  <input type="file" id="imagenesArma" name="imagenesArma" accept="image/*" multiple><br>
-  <div id="previewImagenesArma"></div><br>
+  <fieldset>
+    <legend>Visual del proyectil</legend>
+    <label>Tipo de render:</label>
+    <select id="projectileRenderType" name="projectileRenderType">
+      <option value="classic">Clásico (imagen)</option>
+      <option value="flame_spritesheet">Animado con Flame (spritesheet)</option>
+    </select><br><br>
+    <div id="projectileClassicFields">
+      <label>Imágenes del proyectil clásico (máx. 4):</label>
+      <input type="file" id="imagenesArma" name="imagenesArma" accept="image/*" multiple><br>
+      <div id="previewImagenesArma"></div><br>
+    </div>
+    <div id="projectileFlameFields" style="display:none;">
+      <p>Sube un único PNG spritesheet. Flame dividirá sus frames; no se generan archivos separados.</p>
+      <input type="file" id="projectileSpritesheetPng" name="projectileSpritesheetPng" accept="image/png"><br>
+      <img id="projectileSpritesheetPreview" alt="Vista previa del spritesheet del proyectil" style="display:none;max-width:320px;max-height:180px;margin:8px 0;"><br>
+      <label>Columnas: <input type="number" min="1" value="1" data-sheet="projectile" data-key="columns"></label>
+      <label>Filas: <input type="number" min="1" value="1" data-sheet="projectile" data-key="rows"></label>
+      <label>Frames usados: <input type="number" min="1" value="1" data-sheet="projectile" data-key="frames"></label>
+      <label>FPS: <input type="number" min="0.01" step="0.01" value="12" data-sheet="projectile" data-key="fps"></label><br><br>
+      <label><input type="checkbox" checked data-sheet="projectile" data-key="loop"> Reproducir en bucle</label>
+      <label><input type="checkbox" data-sheet="projectile" data-key="multipleOrientations"> Contiene orientaciones</label><br><br>
+      <label>Orden de lectura:
+        <select data-sheet="projectile" data-key="readOrder"><option value="row-major">Por filas</option><option value="column-major">Por columnas</option><option value="row-major-reverse">Por filas, inverso</option></select>
+      </label>
+      <label>Orientaciones/filas (JSON): <input type="text" placeholder='["north","east","south","west"]' data-sheet="projectile" data-key="orientationRows"></label>
+      <label>Orden de frames (JSON, opcional): <input type="text" placeholder="[0,1,2,3]" data-sheet="projectile" data-key="frameOrder"></label>
+    </div>
+  </fieldset><br>
 
-  <label>Imágenes de explosión (máx 4):</label>
-  <input type="file" id="imagenesExplosion" name="imagenesExplosion" accept="image/*" multiple><br>
-  <div id="previewImagenesExplosion"></div><br>
+  <fieldset>
+    <legend>Visual de la explosión</legend>
+    <label>Tipo de render:</label>
+    <select id="explosionRenderType" name="explosionRenderType">
+      <option value="classic">Clásico (imágenes)</option>
+      <option value="flame_spritesheet">Animado con Flame (spritesheet)</option>
+    </select><br><br>
+    <div id="explosionClassicFields">
+      <label>Imágenes de explosión clásica (máx. 4):</label>
+      <input type="file" id="imagenesExplosion" name="imagenesExplosion" accept="image/*" multiple><br>
+      <div id="previewImagenesExplosion"></div><br>
+    </div>
+    <div id="explosionFlameFields" style="display:none;">
+      <p>Sube un único PNG spritesheet para toda la animación de explosión.</p>
+      <input type="file" id="explosionSpritesheetPng" name="explosionSpritesheetPng" accept="image/png"><br>
+      <img id="explosionSpritesheetPreview" alt="Vista previa del spritesheet de explosión" style="display:none;max-width:320px;max-height:180px;margin:8px 0;"><br>
+      <label>Columnas: <input type="number" min="1" value="1" data-sheet="explosion" data-key="columns"></label>
+      <label>Filas: <input type="number" min="1" value="1" data-sheet="explosion" data-key="rows"></label>
+      <label>Frames usados: <input type="number" min="1" value="1" data-sheet="explosion" data-key="frames"></label>
+      <label>FPS: <input type="number" min="0.01" step="0.01" value="12" data-sheet="explosion" data-key="fps"></label><br><br>
+      <label><input type="checkbox" data-sheet="explosion" data-key="loop"> Reproducir en bucle</label>
+      <label><input type="checkbox" data-sheet="explosion" data-key="multipleOrientations"> Contiene orientaciones</label><br><br>
+      <label>Orden de lectura:
+        <select data-sheet="explosion" data-key="readOrder"><option value="row-major">Por filas</option><option value="column-major">Por columnas</option><option value="row-major-reverse">Por filas, inverso</option></select>
+      </label>
+      <label>Orientaciones/filas (JSON): <input type="text" placeholder='["north","east","south","west"]' data-sheet="explosion" data-key="orientationRows"></label>
+      <label>Orden de frames (JSON, opcional): <input type="text" placeholder="[0,1,2,3]" data-sheet="explosion" data-key="frameOrder"></label>
+    </div>
+  </fieldset><br>
 
   <label>Alcance:</label>
   <input type="number" name="alcance" required><br><br>

@@ -5,10 +5,19 @@ const Card = require("../models/Card");
 const User = require("../models/User");
 const { saveImage } = require("../utils/mediaStorage");
 
+const SPRITESHEET_FIELDS = new Set([
+  "projectileSpritesheetPng",
+  "explosionSpritesheetPng"
+]);
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
+    if (SPRITESHEET_FIELDS.has(file.fieldname)) {
+      const isPng = file.mimetype === "image/png";
+      return cb(isPng ? null : new Error("Los spritesheets deben ser PNG"), isPng);
+    }
     if (!file.mimetype?.startsWith("image/")) {
       return cb(new Error("Sólo se permiten archivos de imagen"));
     }
@@ -18,7 +27,104 @@ const upload = multer({
 
 // 🔧 Normalizar rutas
 function normalizarRuta(file) {
-  return file.path;
+  return file?.path || "";
+}
+
+function asBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === "") return fallback;
+  return value === true || value === "true" || value === "1" || value === "on";
+}
+
+function pngDimensions(file) {
+  const buffer = file?.buffer;
+  if (!Buffer.isBuffer(buffer) || buffer.length < 24 ||
+      buffer.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") {
+    throw new Error("El spritesheet no es un PNG válido");
+  }
+  return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+}
+
+function parseSpritesheetConfig(raw, label, url, uploadedFile, previous = null) {
+  let parsed;
+  try {
+    parsed = raw === undefined || raw === null || raw === ""
+      ? (typeof previous?.toObject === "function" ? previous.toObject() : previous)
+      : (typeof raw === "string" ? JSON.parse(raw) : raw);
+  } catch (_) {
+    throw new Error(`Configuración JSON no válida para ${label}`);
+  }
+  if (!parsed || typeof parsed !== "object" || !url) {
+    throw new Error(`Falta el PNG o la configuración de ${label}`);
+  }
+
+  const columns = Number(parsed.columns);
+  const rows = Number(parsed.rows);
+  const frames = Number(parsed.frames);
+  const fps = Number(parsed.fps);
+  const explicitFrameTime = Number(parsed.frameTime);
+  const frameTime = explicitFrameTime > 0
+    ? explicitFrameTime
+    : (fps > 0 ? 1 / fps : NaN);
+  if (![columns, rows, frames].every(Number.isInteger) ||
+      columns < 1 || rows < 1 || frames < 1 || !(frameTime > 0)) {
+    throw new Error(`Columnas, filas, frames y FPS/tiempo son obligatorios para ${label}`);
+  }
+
+  const dimensions = uploadedFile ? pngDimensions(uploadedFile) : null;
+  const sourceWidth = dimensions?.width || previous?.sourceWidth;
+  const sourceHeight = dimensions?.height || previous?.sourceHeight;
+  if (sourceWidth && sourceWidth % columns !== 0) {
+    throw new Error(`${label}: el ancho ${sourceWidth}px no es divisible entre ${columns} columnas`);
+  }
+  if (sourceHeight && sourceHeight % rows !== 0) {
+    throw new Error(`${label}: el alto ${sourceHeight}px no es divisible entre ${rows} filas`);
+  }
+
+  const multipleOrientations = asBoolean(parsed.multipleOrientations, false);
+  const readOrder = parsed.readOrder || "row-major";
+  if (!["row-major", "row-major-reverse", "column-major"].includes(readOrder)) {
+    throw new Error(`${label}: orden de lectura no válido`);
+  }
+  const availableFrames = multipleOrientations
+    ? (readOrder === "column-major" ? rows : columns)
+    : columns * rows;
+  if (frames > availableFrames) {
+    throw new Error(`${label}: frames supera la cuadrícula configurada`);
+  }
+  const orientationRows = Array.isArray(parsed.orientationRows)
+    ? parsed.orientationRows.map(String)
+    : String(parsed.orientationRows || "").split(",")
+      .map((value) => value.trim()).filter(Boolean);
+  const rawFrameOrder = Array.isArray(parsed.frameOrder)
+    ? parsed.frameOrder
+    : String(parsed.frameOrder || "").split(",")
+      .map((value) => value.trim()).filter(Boolean);
+  const frameOrder = rawFrameOrder.map(Number).filter(Number.isInteger);
+  if (frameOrder.some((frame) => frame < 0 || frame >= availableFrames)) {
+    throw new Error(`${label}: el orden de frames sale de la cuadrícula`);
+  }
+
+  return {
+    url,
+    columns,
+    rows,
+    frames,
+    sourceWidth,
+    sourceHeight,
+    frameWidth: sourceWidth ? sourceWidth / columns : undefined,
+    frameHeight: sourceHeight ? sourceHeight / rows : undefined,
+    frameTime,
+    fps: fps > 0 ? fps : 1 / frameTime,
+    loop: asBoolean(parsed.loop, true),
+    multipleOrientations,
+    readOrder,
+    orientationRows,
+    frameOrder
+  };
+}
+
+function normalizedRenderType(value) {
+  return value === "flame_spritesheet" ? "flame_spritesheet" : "classic";
 }
 
 async function guardarImagenes(files) {
@@ -42,6 +148,8 @@ router.post(
     { name: "imagenPortada", maxCount: 1 },
     { name: "imagenesArma", maxCount: 4 },
     { name: "imagenesExplosion", maxCount: 4 },
+    { name: "projectileSpritesheetPng", maxCount: 1 },
+    { name: "explosionSpritesheetPng", maxCount: 1 },
     { name: "imagenesExtras", maxCount: 5 },
 
     { name: "imagenesMovimiento", maxCount: 4 },
@@ -70,6 +178,8 @@ router.post(
       // Helpers de parseo seguro
       const toInt   = (v, d=0) => (v === undefined || v === null || v === "" ? d : parseInt(v, 10));
       const toFloat = (v, d=0) => (v === undefined || v === null || v === "" ? d : parseFloat(v));
+      const projectileRenderType = normalizedRenderType(body.projectileRenderType);
+      const explosionRenderType = normalizedRenderType(body.explosionRenderType);
 
       // ✅ Validaciones mínimas (evita 500 de Mongoose)
       if (!body.titulo || !body.tipoArma) {
@@ -78,8 +188,14 @@ router.post(
       if (!files.imagenPortada || files.imagenPortada.length === 0) {
         return res.status(400).json({ error: "Debes subir una imagen de portada." });
       }
-      if (body.tipoArma === "Proyectil" && (!files.imagenesArma || files.imagenesArma.length === 0)) {
+      if (body.tipoArma === "Proyectil" && projectileRenderType === "classic" && (!files.imagenesArma || files.imagenesArma.length === 0)) {
         return res.status(400).json({ error: "Debes subir al menos una imagen del proyectil (imagenesArma)." });
+      }
+      if (body.tipoArma === "Proyectil" && projectileRenderType === "flame_spritesheet" && !files.projectileSpritesheetPng?.length) {
+        return res.status(400).json({ error: "Debes subir un PNG spritesheet para el proyectil Flame." });
+      }
+      if (body.tipoArma === "Proyectil" && explosionRenderType === "flame_spritesheet" && !files.explosionSpritesheetPng?.length) {
+        return res.status(400).json({ error: "Debes subir un PNG spritesheet para la explosión Flame." });
       }
       if (body.tipoArma === "Arrastre" &&
           (toInt(body.alcance, 0) <= 0 || toInt(body.dano, 0) <= 0)) {
@@ -120,6 +236,14 @@ router.post(
 
       // Unificar imágenes de disparo
       files = await guardarImagenes(files);
+      const projectileSheetFile = files.projectileSpritesheetPng?.[0];
+      const explosionSheetFile = files.explosionSpritesheetPng?.[0];
+      const projectileSpritesheet = projectileRenderType === "flame_spritesheet"
+        ? parseSpritesheetConfig(body.projectileSpritesheetConfig, "proyectil", normalizarRuta(projectileSheetFile), projectileSheetFile)
+        : undefined;
+      const explosionSpritesheet = explosionRenderType === "flame_spritesheet"
+        ? parseSpritesheetConfig(body.explosionSpritesheetConfig, "explosión", normalizarRuta(explosionSheetFile), explosionSheetFile)
+        : undefined;
       const imgsDisparo = [];
       if (files.imagenesDisparo) imgsDisparo.push(...files.imagenesDisparo.map(normalizarRuta));
       if (files.imagenesBala)     imgsDisparo.push(...files.imagenesBala.map(normalizarRuta));
@@ -158,6 +282,10 @@ router.post(
           (files.imagenesExplosionInvocacion || []).map(normalizarRuta),
         imagenesVida:        (files.imagenesVida        || []).map(normalizarRuta),
         imagenesDefensa:     (files.imagenesDefensa     || []).map(normalizarRuta),
+        projectileRenderType,
+        explosionRenderType,
+        projectileSpritesheet,
+        explosionSpritesheet,
 
         // Específicos
         vida: toInt(body.vida, 0),
@@ -180,7 +308,12 @@ router.post(
 
       // Por si faltó imagen en Proyectil (fallback)
       if (card.tipoArma === "Proyectil" && card.imagenesArma.length === 0) {
-        card.imagenesArma = ["/img/arrow.png"];
+        card.imagenesArma = projectileSpritesheet?.url
+          ? [projectileSpritesheet.url]
+          : ["/img/arrow.png"];
+      }
+      if (card.imagenesExplosion.length === 0 && explosionSpritesheet?.url) {
+        card.imagenesExplosion = [explosionSpritesheet.url];
       }
 
       await card.save();
@@ -204,6 +337,8 @@ router.put(
     { name: "imagenPortada", maxCount: 1 },
     { name: "imagenesArma", maxCount: 4 },
     { name: "imagenesExplosion", maxCount: 4 },
+    { name: "projectileSpritesheetPng", maxCount: 1 },
+    { name: "explosionSpritesheetPng", maxCount: 1 },
     { name: "imagenesExtras", maxCount: 5 },
     { name: "imagenesMovimiento", maxCount: 4 },
     { name: "imagenesDisparo", maxCount: 4 },
@@ -282,6 +417,16 @@ router.put(
       }
 
       files = await guardarImagenes(files);
+      const projectileRenderType = normalizedRenderType(body.projectileRenderType || card.projectileRenderType);
+      const explosionRenderType = normalizedRenderType(body.explosionRenderType || card.explosionRenderType);
+      const projectileSheetFile = files.projectileSpritesheetPng?.[0];
+      const explosionSheetFile = files.explosionSpritesheetPng?.[0];
+      const projectileSpritesheet = projectileRenderType === "flame_spritesheet"
+        ? parseSpritesheetConfig(body.projectileSpritesheetConfig, "proyectil", normalizarRuta(projectileSheetFile) || card.projectileSpritesheet?.url, projectileSheetFile, card.projectileSpritesheet)
+        : card.projectileSpritesheet;
+      const explosionSpritesheet = explosionRenderType === "flame_spritesheet"
+        ? parseSpritesheetConfig(body.explosionSpritesheetConfig, "explosión", normalizarRuta(explosionSheetFile) || card.explosionSpritesheet?.url, explosionSheetFile, card.explosionSpritesheet)
+        : card.explosionSpritesheet;
       Object.assign(card, {
         titulo: body.titulo,
         descripcion: body.descripcion || "",
@@ -312,7 +457,11 @@ router.put(
         iaComportamiento: body.iaComportamiento || undefined,
         duracionDefensa: toInt(body.duracionDefensa, 0),
         tipoDefensa: body.tipoDefensa || "Inmunidad",
-        porcentajeReduccion: toInt(body.porcentajeReduccion, 0)
+        porcentajeReduccion: toInt(body.porcentajeReduccion, 0),
+        projectileRenderType,
+        explosionRenderType,
+        projectileSpritesheet,
+        explosionSpritesheet
       });
 
       if (files.imagenPortada?.length) {
@@ -346,6 +495,12 @@ router.put(
       ];
       if (imagenesDisparo.length) {
         card.imagenesDisparo = imagenesDisparo.map(normalizarRuta);
+      }
+      if ((!card.imagenesArma || card.imagenesArma.length === 0) && projectileSpritesheet?.url) {
+        card.imagenesArma = [projectileSpritesheet.url];
+      }
+      if ((!card.imagenesExplosion || card.imagenesExplosion.length === 0) && explosionSpritesheet?.url) {
+        card.imagenesExplosion = [explosionSpritesheet.url];
       }
 
       await card.save();
