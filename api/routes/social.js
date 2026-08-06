@@ -17,7 +17,10 @@ const router = express.Router();
 router.use(verifyToken);
 
 const TAUNT_COOLDOWN_MS = Number(process.env.TAUNT_COOLDOWN_MS) || 15 * 1000;
-const MIN_BOUNTY = Number(process.env.MIN_BOUNTY_STEPCOINS) || 10;
+const MIN_BOUNTY = Math.max(
+  1000,
+  Number(process.env.MIN_BOUNTY_STEPCOINS) || 1000
+);
 const MAX_BOUNTY = Number(process.env.MAX_BOUNTY_STEPCOINS) || 1000000;
 const tauntCooldowns = new Map();
 const rateLimits = new Map();

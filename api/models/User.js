@@ -15,6 +15,11 @@ const profileSchema = new mongoose.Schema({
   licenseBack: { type: String, default: '' },
 }, { _id: false });
 
+const cardUpgradeSchema = new mongoose.Schema({
+  card: { type: mongoose.Schema.Types.ObjectId, ref: 'Card', required: true },
+  upgradeLevel: { type: Number, min: 0, max: 3, default: 0 },
+}, { _id: false });
+
 const userSchema = new mongoose.Schema({
   nickname: { type: String, trim: true, maxlength: 20 },
   normalizedNickname: { type: String, trim: true, maxlength: 20 },
@@ -33,6 +38,8 @@ const userSchema = new mongoose.Schema({
   stepcoinsTorretaPendientes: { type: Number, default: 0 },
 
   cartas: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Card' }],
+  cardUpgrades: { type: [cardUpgradeSchema], default: [] },
+  cardUpgradeRequestIds: { type: [String], default: [], select: false },
   rewardsComprados: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Reward' }],
   skinsCompradas: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Skin' }],
   mazo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Card' }],

@@ -11,6 +11,10 @@ const jwt = require('jsonwebtoken');
 const clanMembershipCache = require('../api/services/clanMembershipCache');
 const bountyService = require('../api/services/bountyService');
 const socialRealtime = require('../api/services/socialRealtime');
+const {
+  effectiveCard,
+  upgradeLevelForUser,
+} = require('../api/services/cardUpgrades');
 
 module.exports = function(io, dependencies = {}) {
   const hasInjectedDependencies = Object.keys(dependencies).length > 0;
@@ -755,19 +759,24 @@ module.exports = function(io, dependencies = {}) {
 
   // Validar spawn de bala contra su carta (anti-cheat)
   async function validateBullet(byUserId, cardId, intento) {
-    const card = await CardModel.findById(cardId).lean();
-    if (!card) throw new Error('Carta no existe');
-    if (card.tipoArma !== 'Proyectil') throw new Error('Carta no es Proyectil');
+    const baseCard = await CardModel.findById(cardId).lean();
+    if (!baseCard) throw new Error('Carta no existe');
+    if (baseCard.tipoArma !== 'Proyectil') throw new Error('Carta no es Proyectil');
+    let owner = null;
     if (requireSocketAuth) {
-      const owner = await UserModel.findOne({
+      owner = await UserModel.findOne({
         _id: byUserId,
         cartas: cardId,
         mazo: cardId,
-      }).select('_id').lean();
+      }).select('_id cardUpgrades').lean();
       if (!owner) throw new Error('La carta no está disponible en tu mazo');
     }
 
     // Alcance / Daño / Velocidad máximos
+    const card = effectiveCard(
+      baseCard,
+      upgradeLevelForUser(owner, cardId),
+    );
     if (intento.alcance > (card.alcance||0) + 5) throw new Error('Alcance inválido');
     if (intento.dano    > (card.dano||0) + 1)    throw new Error('Daño inválido');
     if (intento.speed   > 180)                   throw new Error('Velocidad inválida'); // cap servidor
@@ -1112,17 +1121,12 @@ module.exports = function(io, dependencies = {}) {
       }
 
       try {
-        const card = await CardModel.findById(cardId).lean();
-        if (!card || card.tipoArma !== 'Vida') {
+        const baseCard = await CardModel.findById(cardId).lean();
+        if (!baseCard || baseCard.tipoArma !== 'Vida') {
           throw new Error('Carta de Vida inválida');
         }
 
         // Compatibilidad con cartas Vida creadas antes de persistir vidaQueDa.
-        const configuredHealing = Number(card.vidaQueDa || card.vida);
-        if (!Number.isFinite(configuredHealing) || configuredHealing <= 0) {
-          throw new Error('La carta no tiene una curación válida');
-        }
-
         const user = await UserModel.findOne({
           _id: p.userId,
           cartas: cardId,
@@ -1130,6 +1134,15 @@ module.exports = function(io, dependencies = {}) {
         }).lean();
         if (!user) {
           throw new Error('La carta ya no está disponible en tu mazo');
+        }
+
+        const card = effectiveCard(
+          baseCard,
+          upgradeLevelForUser(user, cardId),
+        );
+        const configuredHealing = Number(card.vidaQueDa || card.vida);
+        if (!Number.isFinite(configuredHealing) || configuredHealing <= 0) {
+          throw new Error('La carta no tiene una curación válida');
         }
 
         const cooldownKey = `life:${cardId}`;
@@ -1206,7 +1219,7 @@ module.exports = function(io, dependencies = {}) {
         }
 
         const radioActivacion = Number(card.radioActivacion);
-        const dano = Number(card.dano);
+        let dano = Number(card.dano);
         const duracion = Number(card.duracion);
         if (!Number.isFinite(radioActivacion) || radioActivacion <= 0 ||
             !Number.isFinite(dano) || dano <= 0 ||
@@ -1222,6 +1235,10 @@ module.exports = function(io, dependencies = {}) {
         if (!user) {
           throw new Error('La carta ya no está disponible en tu mazo');
         }
+        dano = Number(effectiveCard(
+          card,
+          upgradeLevelForUser(user, cardId),
+        ).dano);
 
         const cooldownKey = `mine:${cardId}`;
         const cooldownMs =
@@ -1288,7 +1305,7 @@ module.exports = function(io, dependencies = {}) {
         }
 
         const radioExplosion = Number(card.radioExplosion);
-        const dano = Number(card.dano);
+        let dano = Number(card.dano);
         const tiempoHastaAtaque = Number(card.tiempoHastaAtaque);
         if (!Number.isFinite(radioExplosion) || radioExplosion <= 0 ||
             !Number.isFinite(dano) || dano <= 0 ||
@@ -1304,6 +1321,10 @@ module.exports = function(io, dependencies = {}) {
         if (!user) {
           throw new Error('La carta no está disponible en tu mazo');
         }
+        dano = Number(effectiveCard(
+          card,
+          upgradeLevelForUser(user, cardId),
+        ).dano);
 
         const cooldownKey = `airstrike:${cardId}`;
         const cooldownMs =
@@ -1365,8 +1386,22 @@ module.exports = function(io, dependencies = {}) {
       try {
         const p = players.get(socket.id);
         if (!p) throw new Error('No player');
-        const card = await CardModel.findById(payload?.cardId).lean();
-        if (!card || card.tipoArma !== 'Arrastre') throw new Error('Carta de arrastre inválida');
+        const cardId = String(payload?.cardId || '');
+        const baseCard = await CardModel.findById(cardId).lean();
+        if (!baseCard || baseCard.tipoArma !== 'Arrastre') throw new Error('Carta de arrastre inválida');
+        let owner = null;
+        if (requireSocketAuth) {
+          owner = await UserModel.findOne({
+            _id: p.userId,
+            cartas: cardId,
+            mazo: cardId,
+          }).lean();
+          if (!owner) throw new Error('La carta no está disponible en tu mazo');
+        }
+        const card = effectiveCard(
+          baseCard,
+          upgradeLevelForUser(owner, cardId),
+        );
         const lat = Number(payload?.lat);
         const lng = Number(payload?.lng);
         if (!Number.isFinite(lat) || !Number.isFinite(lng) ||

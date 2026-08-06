@@ -1,8 +1,16 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
+const mongoose = require("mongoose");
 const Card = require("../models/Card");
 const User = require("../models/User");
+const { verifyToken } = require("../middlewares/authMiddleware");
+const {
+  MAX_UPGRADE_LEVEL,
+  UPGRADE_COSTS,
+  effectiveCard,
+  upgradeLevelForUser,
+} = require("../services/cardUpgrades");
 const { saveImage } = require("../utils/mediaStorage");
 
 const SPRITESHEET_FIELDS = new Set([
@@ -550,12 +558,151 @@ router.delete("/:id", async (req, res) => {
 });
 
 // 🧠 Obtener cartas del usuario
+// Mejora una carta del usuario. Nivel y coste se calculan exclusivamente aqui.
+router.post("/user-cards/:cardId/upgrade", verifyToken, async (req, res) => {
+  const userId = String(req.user.id || "");
+  const cardId = String(req.params.cardId || "");
+  const requestId = String(req.body?.requestId || "").trim();
+
+  if (!mongoose.isValidObjectId(cardId)) {
+    return res.status(400).json({ error: "Carta invalida" });
+  }
+  if (!requestId || requestId.length > 120) {
+    return res.status(400).json({ error: "Falta un identificador de operacion valido" });
+  }
+
+  try {
+    const cardObjectId = new mongoose.Types.ObjectId(cardId);
+    const baseCard = await Card.findById(cardObjectId).lean();
+    if (!baseCard) return res.status(404).json({ error: "Carta no encontrada" });
+
+    const upgradesExpression = { $ifNull: ["$cardUpgrades", []] };
+    const currentLevelExpression = {
+      $ifNull: [
+        {
+          $arrayElemAt: [
+            {
+              $map: {
+                input: {
+                  $filter: {
+                    input: upgradesExpression,
+                    as: "upgrade",
+                    cond: { $eq: ["$$upgrade.card", cardObjectId] },
+                  },
+                },
+                as: "upgrade",
+                in: "$$upgrade.upgradeLevel",
+              },
+            },
+            0,
+          ],
+        },
+        0,
+      ],
+    };
+    const costExpression = {
+      $arrayElemAt: [UPGRADE_COSTS, currentLevelExpression],
+    };
+
+    const user = await User.findOneAndUpdate(
+      {
+        _id: userId,
+        cartas: cardObjectId,
+        cardUpgradeRequestIds: { $ne: requestId },
+        $expr: {
+          $and: [
+            { $lt: [currentLevelExpression, MAX_UPGRADE_LEVEL] },
+            { $gte: ["$stepcoins", costExpression] },
+          ],
+        },
+      },
+      [
+        {
+          $set: {
+            stepcoins: { $subtract: ["$stepcoins", costExpression] },
+            cardUpgrades: {
+              $concatArrays: [
+                {
+                  $filter: {
+                    input: upgradesExpression,
+                    as: "upgrade",
+                    cond: { $ne: ["$$upgrade.card", cardObjectId] },
+                  },
+                },
+                [{
+                  card: cardObjectId,
+                  upgradeLevel: { $add: [currentLevelExpression, 1] },
+                }],
+              ],
+            },
+            cardUpgradeRequestIds: {
+              $slice: [
+                {
+                  $concatArrays: [
+                    { $ifNull: ["$cardUpgradeRequestIds", []] },
+                    [requestId],
+                  ],
+                },
+                -100,
+              ],
+            },
+          },
+        },
+      ],
+      { new: true }
+    ).select("stepcoins cardUpgrades").lean();
+
+    if (user) {
+      const upgradeLevel = upgradeLevelForUser(user, cardId);
+      return res.json({
+        card: effectiveCard(baseCard, upgradeLevel),
+        upgradeLevel,
+        cost: UPGRADE_COSTS[upgradeLevel - 1],
+        stepcoins: user.stepcoins,
+      });
+    }
+
+    const currentUser = await User.findById(userId)
+      .select("+cardUpgradeRequestIds stepcoins cardUpgrades cartas")
+      .lean();
+    if (!currentUser) return res.status(404).json({ error: "Usuario no encontrado" });
+    if (!currentUser.cartas.some((id) => String(id) === cardId)) {
+      return res.status(403).json({ error: "La carta no pertenece al usuario" });
+    }
+
+    const currentLevel = upgradeLevelForUser(currentUser, cardId);
+    if (currentUser.cardUpgradeRequestIds?.includes(requestId)) {
+      return res.json({
+        card: effectiveCard(baseCard, currentLevel),
+        upgradeLevel: currentLevel,
+        cost: 0,
+        stepcoins: currentUser.stepcoins,
+        duplicate: true,
+      });
+    }
+    if (currentLevel >= MAX_UPGRADE_LEVEL) {
+      return res.status(409).json({ error: "Nivel m\u00e1ximo", code: "MAX_LEVEL" });
+    }
+    return res.status(409).json({
+      error: "No tienes suficientes Stepcoins",
+      code: "INSUFFICIENT_STEPCOINS",
+      required: UPGRADE_COSTS[currentLevel],
+      stepcoins: currentUser.stepcoins,
+    });
+  } catch (err) {
+    console.error("Error al mejorar carta:", err);
+    return res.status(500).json({ error: "No se pudo mejorar la carta" });
+  }
+});
+
 router.get("/user-cards/:userId", async (req, res) => {
   try {
     const user = await User.findById(req.params.userId).populate("cartas");
     if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
 
-    res.json(user.cartas);
+    res.json(user.cartas.map((card) =>
+      effectiveCard(card, upgradeLevelForUser(user, card._id))
+    ));
   } catch (err) {
     console.error("❌ Error al obtener cartas del usuario:", err.message);
     res.status(500).json({ error: "Error interno del servidor" });
@@ -590,7 +737,9 @@ router.get("/user-cards/:userId/mazo", async (req, res) => {
     const user = await User.findById(req.params.userId).populate("mazo");
     if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
 
-    res.json(user.mazo);
+    res.json(user.mazo.map((card) =>
+      effectiveCard(card, upgradeLevelForUser(user, card._id))
+    ));
   } catch (err) {
     console.error("❌ Error al obtener el mazo:", err.message);
     res.status(500).json({ error: "Error al obtener el mazo" });

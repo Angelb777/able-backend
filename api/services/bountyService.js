@@ -40,20 +40,20 @@ async function emitBountyTotal(targetUserId) {
 
 async function claimForKill({ attackerUserId, targetUserId, killEventId, source }) {
   if (!attackerUserId || !targetUserId || attackerUserId === targetUserId) {
-    return { paid: 0, claimed: 0, duplicate: false };
+    return { paid: 0, refunded: 0, claimed: 0, duplicate: false };
   }
   if (await clanMembershipCache.shareActiveClan(attackerUserId, targetUserId)) {
-    return { paid: 0, claimed: 0, protected: true };
+    return { paid: 0, refunded: 0, claimed: 0, protected: true };
   }
 
   const session = await mongoose.startSession();
-  let result = { paid: 0, claimed: 0, duplicate: false };
+  let result = { paid: 0, refunded: 0, claimed: 0, duplicate: false };
   let claimedBounties = [];
   try {
     await session.withTransaction(async () => {
       const existing = await CombatKillEvent.findOne({ killEventId }).session(session).lean();
       if (existing) {
-        result = { paid: existing.bountyPaid || 0, claimed: 0, duplicate: true };
+        result = { paid: existing.bountyPaid || 0, refunded: 0, claimed: 0, duplicate: true };
         return;
       }
 
@@ -61,34 +61,67 @@ async function claimForKill({ attackerUserId, targetUserId, killEventId, source 
         targetUserId,
         status: 'active',
         expiresAt: { $gt: new Date() },
-        createdByUserId: { $ne: attackerUserId },
       }).session(session);
-      claimedBounties = candidates.map((item) => ({
-        id: String(item._id),
-        creatorId: String(item.createdByUserId),
-        amount: item.amount,
-      }));
+      claimedBounties = candidates
+        .filter((item) => String(item.createdByUserId) !== String(attackerUserId))
+        .map((item) => ({
+          id: String(item._id),
+          creatorId: String(item.createdByUserId),
+          amount: item.amount,
+        }));
 
       let paid = 0;
+      let refunded = 0;
       for (const bounty of candidates) {
-        bounty.status = 'claimed';
-        bounty.claimedByUserId = attackerUserId;
-        bounty.claimedAt = new Date();
+        const isOwnBounty =
+          String(bounty.createdByUserId) === String(attackerUserId);
+        if (isOwnBounty) {
+          bounty.status = 'cancelled';
+          bounty.refundedAt = new Date();
+          refunded += bounty.amount;
+        } else {
+          bounty.status = 'claimed';
+          bounty.claimedByUserId = attackerUserId;
+          bounty.claimedAt = new Date();
+          paid += bounty.amount;
+        }
         bounty.killEventId = killEventId;
         await bounty.save({ session });
-        paid += bounty.amount;
       }
 
-      if (paid > 0) {
-        await User.updateOne({ _id: attackerUserId }, { $inc: { stepcoins: paid } }, { session });
-        await StepcoinTransaction.create([{
-          userId: attackerUserId,
-          cantidad: paid,
-          tipo: 'cobro_recompensa',
-          descripcion: `Recompensas cobradas por eliminar a ${targetUserId}`,
-          operationKey: `bounty-claim:${killEventId}`,
-          metadata: { targetUserId, killEventId, bountyIds: candidates.map((item) => item._id) },
-        }], { session });
+      const credited = paid + refunded;
+      if (credited > 0) {
+        await User.updateOne(
+          { _id: attackerUserId },
+          { $inc: { stepcoins: credited } },
+          { session }
+        );
+        const transactions = [];
+        if (paid > 0) {
+          transactions.push({
+            userId: attackerUserId,
+            cantidad: paid,
+            tipo: 'cobro_recompensa',
+            descripcion: `Recompensas cobradas por eliminar a ${targetUserId}`,
+            operationKey: `bounty-claim:${killEventId}`,
+            metadata: {
+              targetUserId,
+              killEventId,
+              bountyIds: claimedBounties.map((item) => item.id),
+            },
+          });
+        }
+        if (refunded > 0) {
+          transactions.push({
+            userId: attackerUserId,
+            cantidad: refunded,
+            tipo: 'devolucion_recompensa',
+            descripcion: `Devolución de recompensa propia sobre ${targetUserId}`,
+            operationKey: `bounty-self-refund:${killEventId}`,
+            metadata: { targetUserId, killEventId },
+          });
+        }
+        await StepcoinTransaction.create(transactions, { session });
       }
 
       await CombatKillEvent.create([{
@@ -98,7 +131,12 @@ async function claimForKill({ attackerUserId, targetUserId, killEventId, source 
         source,
         bountyPaid: paid,
       }], { session });
-      result = { paid, claimed: candidates.length, duplicate: false };
+      result = {
+        paid,
+        refunded,
+        claimed: candidates.length,
+        duplicate: false,
+      };
     });
   } finally {
     await session.endSession();
@@ -114,7 +152,6 @@ async function claimForKill({ attackerUserId, targetUserId, killEventId, source 
         data: { targetUserId, killEventId, amount: result.paid },
         dedupeKey: `bounty-claimed:${killEventId}:${attackerUserId}`,
       }).catch(() => {});
-      socialRealtime.emitToUser(attackerUserId, 'stepcoins:update', { delta: result.paid, reason: 'bounty_claimed' });
       await Promise.all(claimedBounties.map((item) =>
         notificationService.createNotification({
           userId: item.creatorId,
@@ -125,6 +162,23 @@ async function claimForKill({ attackerUserId, targetUserId, killEventId, source 
           dedupeKey: `bounty-creator-claimed:${item.id}`,
         }).catch(() => null)
       ));
+    }
+    if (result.refunded > 0) {
+      await notificationService.createNotification({
+        userId: attackerUserId,
+        type: 'bounty_cancelled',
+        title: 'Recompensa propia recuperada',
+        message: `Has recuperado ${result.refunded} Stepcoins de tu propia recompensa.`,
+        data: { targetUserId, killEventId, amount: result.refunded },
+        dedupeKey: `bounty-self-refund:${killEventId}:${attackerUserId}`,
+      }).catch(() => {});
+    }
+    const credited = result.paid + result.refunded;
+    if (credited > 0) {
+      socialRealtime.emitToUser(attackerUserId, 'stepcoins:update', {
+        delta: credited,
+        reason: result.paid > 0 ? 'bounty_claimed' : 'bounty_self_refund',
+      });
     }
     await emitBountyTotal(targetUserId).catch(() => {});
   }
