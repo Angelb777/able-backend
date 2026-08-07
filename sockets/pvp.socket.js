@@ -58,6 +58,10 @@ module.exports = function(io, dependencies = {}) {
   const TURRET_BULLET_SPEED = 80;
   const DEFAULT_TURRET_RANGE_M = 100;
   const DEFAULT_TURRET_DAMAGE = 10;
+  const UFO_SPAWN_MIN_DISTANCE_M = 150;
+  const UFO_SPAWN_MAX_DISTANCE_M = 260;
+  const UFO_ROAM_MAX_DISTANCE_M = 300;
+  const UFO_ROAM_RETURN_DISTANCE_M = 220;
   const MAX_PLAYER_LIFE = 1000;
   const publicSkinPayload = (rawSkin) => {
     if (!rawSkin) return null;
@@ -361,7 +365,9 @@ module.exports = function(io, dependencies = {}) {
         const key = `${zoneId}:${ufoId}`;
         const position = geo.computeOffset(
           origin,
-          45 + Math.random() * 45,
+          UFO_SPAWN_MIN_DISTANCE_M +
+            Math.random() *
+              (UFO_SPAWN_MAX_DISTANCE_M - UFO_SPAWN_MIN_DISTANCE_M),
           Math.random() * 360
         );
         const state = {
@@ -559,8 +565,12 @@ module.exports = function(io, dependencies = {}) {
         movementSpeed,
         Math.random() * 360
       );
-      if (geo.distanceMeters(next, state.anchor) > 120) {
-        next = geo.computeOffset(state.anchor, 80, Math.random() * 360);
+      if (geo.distanceMeters(next, state.anchor) > UFO_ROAM_MAX_DISTANCE_M) {
+        next = geo.computeOffset(
+          state.anchor,
+          UFO_ROAM_RETURN_DISTANCE_M,
+          Math.random() * 360
+        );
       }
       state.lat = next.lat;
       state.lng = next.lng;

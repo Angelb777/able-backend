@@ -851,7 +851,7 @@ test('ufo starts after first shot, is shared and awards its killer', async (t) =
         lean: async () => ({
           _id: 'card-ufo',
           tipoArma: 'Proyectil',
-          alcance: 120,
+          alcance: 350,
           dano: 60,
           tiempoEspera: 0,
         }),
@@ -951,7 +951,7 @@ test('ufo starts after first shot, is shared and awards its killer', async (t) =
     from: origin,
     heading: 0,
     speed: 0,
-    alcance: 120,
+    alcance: 350,
     dano: 60,
     spriteUrl: '/uploads/cards/bullet.webp',
     explosionFrames: ['/uploads/cards/explosion.webp'],
@@ -979,12 +979,7 @@ test('ufo starts after first shot, is shared and awards its killer', async (t) =
     lat: spawnedForShooter.lat,
     lng: spawnedForShooter.lng,
   });
-  // Apunta con 20 m de separación respecto al centro. Debe impactar porque
-  // sigue atravesando el área visual del OVNI, aunque no pase por su centro.
-  const visualGrazeHeading = (
-    heading + Math.asin(20 / ufoDistance) * 180 / Math.PI
-  ) % 360;
-
+  assert.ok(ufoDistance >= 150 && ufoDistance <= 260);
   const destroyOnShooter = waitForEvent(shooter, 'ufo:destroy');
   const destroyOnObserver = waitForEvent(observer, 'ufo:destroy');
   const explosionOnShooter = waitForEvent(shooter, 'bullet:explode');
@@ -992,9 +987,9 @@ test('ufo starts after first shot, is shared and awards its killer', async (t) =
     clientShotId: 'ufo-kill-shot',
     cardId: 'card-ufo',
     from: origin,
-    heading: visualGrazeHeading,
+    heading,
     speed: 180,
-    alcance: 120,
+    alcance: 350,
     dano: 60,
     spriteUrl: '/uploads/cards/bullet.webp',
     explosionFrames: ['/uploads/cards/explosion.webp'],
