@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const spritesheetSchema = require('./spritesheetSchema');
 
 const turretSchema = new mongoose.Schema({
   ownerUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
@@ -17,6 +18,13 @@ const turretSchema = new mongoose.Schema({
   imagenesMovimiento: [String],
   imagenesDisparo: [String],
   imagenesMuerte: [String],
+  renderType: {
+    type: String,
+    enum: ['classic', 'flame_spritesheet'],
+    default: 'classic',
+  },
+  idleSpritesheet: spritesheetSchema,
+  deathSpritesheet: spritesheetSchema,
 }, { timestamps: true });
 
 module.exports = mongoose.model('Turret', turretSchema);

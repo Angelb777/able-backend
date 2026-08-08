@@ -1,26 +1,5 @@
 const mongoose = require("mongoose");
-
-const cardSpritesheetSchema = new mongoose.Schema({
-  url: { type: String, required: true },
-  columns: { type: Number, required: true, min: 1 },
-  rows: { type: Number, required: true, min: 1 },
-  frames: { type: Number, required: true, min: 1 },
-  sourceWidth: { type: Number, min: 1 },
-  sourceHeight: { type: Number, min: 1 },
-  frameWidth: { type: Number, min: 1 },
-  frameHeight: { type: Number, min: 1 },
-  frameTime: { type: Number, required: true, min: 0.001 },
-  fps: { type: Number, min: 0.001 },
-  loop: { type: Boolean, default: true },
-  multipleOrientations: { type: Boolean, default: false },
-  readOrder: {
-    type: String,
-    enum: ["row-major", "row-major-reverse", "column-major"],
-    default: "row-major"
-  },
-  orientationRows: [{ type: String }],
-  frameOrder: [{ type: Number, min: 0 }]
-}, { _id: false });
+const cardSpritesheetSchema = require("./spritesheetSchema");
 
 const CardSchema = new mongoose.Schema({
   // Información básica
@@ -69,6 +48,13 @@ const CardSchema = new mongoose.Schema({
   imagenesMovimiento: [String],   // 4 imágenes de movimiento
   imagenesDisparo: [String],      // si dispara proyectiles
   imagenesMuerte: [String],       // 4 imágenes al morir
+  turretRenderType: {
+    type: String,
+    enum: ["classic", "flame_spritesheet"],
+    default: "classic"
+  },
+  turretIdleSpritesheet: cardSpritesheetSchema,
+  turretDeathSpritesheet: cardSpritesheetSchema,
   vida: { type: Number, default: 0 },
   cadenciaDisparo: { type: Number, default: 10 }, // segundos entre disparos
   premioBajaTorreta: { type: Number, default: 100 },

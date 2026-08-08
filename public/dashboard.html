@@ -372,9 +372,57 @@
 
 <!-- 🛡️ Arrastre -->
 <div id="seccionArrastre" style="display:none;">
-  <label>Imágenes de movimiento (máx 4):</label>
-  <input type="file" id="imagenesMovimiento" name="imagenesMovimiento" accept="image/*" multiple><br>
-  <div id="previewImagenesMovimiento"></div><br>
+  <fieldset>
+    <legend>Visual de la torre</legend>
+    <label>Tipo de render:</label>
+    <select id="turretRenderType" name="turretRenderType">
+      <option value="classic">Clásico (imágenes)</option>
+      <option value="flame_spritesheet">Animado con Flame (spritesheets)</option>
+    </select><br><br>
+
+    <div id="turretClassicFields">
+      <label>Imágenes de movimiento (máx 4):</label>
+      <input type="file" id="imagenesMovimiento" name="imagenesMovimiento" accept="image/*" multiple><br>
+      <div id="previewImagenesMovimiento"></div><br>
+
+      <label>Imágenes muriendo o explotando (máx 4):</label>
+      <input type="file" id="imagenesMuerte" name="imagenesMuerte" accept="image/*" multiple><br>
+      <div id="previewImagenesMuerte"></div><br>
+    </div>
+
+    <div id="turretFlameFields" style="display:none;">
+      <p>Idle: un único PNG en bucle. Si no puede cargarse, se usará la imagen clásica.</p>
+      <input type="file" id="turretIdleSpritesheetPng" name="turretIdleSpritesheetPng" accept="image/png"><br>
+      <img id="turretIdleSpritesheetPreview" alt="Vista previa del Idle de la torre" style="display:none;max-width:320px;max-height:180px;margin:8px 0;"><br>
+      <label>Columnas: <input type="number" min="1" value="1" required data-sheet="turretIdle" data-key="columns"></label>
+      <label>Filas: <input type="number" min="1" value="1" required data-sheet="turretIdle" data-key="rows"></label>
+      <label>Frames usados: <input type="number" min="1" value="1" required data-sheet="turretIdle" data-key="frames"></label>
+      <label>FPS: <input type="number" min="0.01" step="0.01" value="12" required data-sheet="turretIdle" data-key="fps"></label><br><br>
+      <label><input type="checkbox" checked data-sheet="turretIdle" data-key="loop"> Reproducir en bucle</label>
+      <label><input type="checkbox" data-sheet="turretIdle" data-key="multipleOrientations"> Contiene orientaciones</label><br><br>
+      <label>Orden de lectura:
+        <select data-sheet="turretIdle" data-key="readOrder"><option value="row-major">Por filas</option><option value="column-major">Por columnas</option><option value="row-major-reverse">Por filas, inverso</option></select>
+      </label>
+      <label>Orientaciones/filas (JSON): <input type="text" placeholder='["north","east","south","west"]' data-sheet="turretIdle" data-key="orientationRows"></label>
+      <label>Orden de frames (JSON, opcional): <input type="text" placeholder="[0,1,2,3]" data-sheet="turretIdle" data-key="frameOrder"></label>
+
+      <hr>
+      <p>Death / Destroyed: un único PNG, usado solo cuando la torre queda sin vida.</p>
+      <input type="file" id="turretDeathSpritesheetPng" name="turretDeathSpritesheetPng" accept="image/png"><br>
+      <img id="turretDeathSpritesheetPreview" alt="Vista previa de Death de la torre" style="display:none;max-width:320px;max-height:180px;margin:8px 0;"><br>
+      <label>Columnas: <input type="number" min="1" value="1" required data-sheet="turretDeath" data-key="columns"></label>
+      <label>Filas: <input type="number" min="1" value="1" required data-sheet="turretDeath" data-key="rows"></label>
+      <label>Frames usados: <input type="number" min="1" value="1" required data-sheet="turretDeath" data-key="frames"></label>
+      <label>FPS: <input type="number" min="0.01" step="0.01" value="12" required data-sheet="turretDeath" data-key="fps"></label><br><br>
+      <label><input type="checkbox" data-sheet="turretDeath" data-key="loop"> Reproducir en bucle</label>
+      <label><input type="checkbox" data-sheet="turretDeath" data-key="multipleOrientations"> Contiene orientaciones</label><br><br>
+      <label>Orden de lectura:
+        <select data-sheet="turretDeath" data-key="readOrder"><option value="row-major">Por filas</option><option value="column-major">Por columnas</option><option value="row-major-reverse">Por filas, inverso</option></select>
+      </label>
+      <label>Orientaciones/filas (JSON): <input type="text" placeholder='["north","east","south","west"]' data-sheet="turretDeath" data-key="orientationRows"></label>
+      <label>Orden de frames (JSON, opcional): <input type="text" placeholder="[0,1,2,3]" data-sheet="turretDeath" data-key="frameOrder"></label>
+    </div>
+  </fieldset><br>
 
   <label>Imágenes de bala (opcional, máx 4):</label>
   <input type="file" id="imagenesBala" name="imagenesDisparo" accept="image/*" multiple><br>
@@ -399,9 +447,6 @@
   <label>Duración sobre el mapa (minutos):</label>
   <input type="number" name="duracion" min="1" value="30"><br><br>
 
-  <label>Imágenes muriendo o explotando (máx 4):</label>
-  <input type="file" id="imagenesMuerte" name="imagenesMuerte" accept="image/*" multiple><br>
-  <div id="previewImagenesMuerte"></div><br>
 </div>
 
   <!-- 💣 Trampa -->
@@ -667,7 +712,7 @@
 </section>
 
 <!-- Google Maps Script SIN callback -->
-<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAFLRh9gA1r9Ggp-5Rv7jiQr5HCmc8H7g4&libraries=geometry" async defer></script>
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAFLRh9gA1r9Ggp-5Rv7jiQr5HCmc8H7g4&libraries=geometry&loading=async" async defer></script>
 
 </main>
 

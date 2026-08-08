@@ -65,12 +65,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   role = user.role;
 
   try {
-    const res = await fetch(`/api/users/${userId}`);
+    const token = localStorage.getItem("token") || "";
+    const res = await fetch(`/api/users/${userId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     if (!res.ok) throw new Error("Error en la petición");
 
     const updatedUser = await res.json();
-    localStorage.setItem("user", JSON.stringify(updatedUser));
-    user = updatedUser;
+    user = { ...user, ...updatedUser };
+    localStorage.setItem("user", JSON.stringify(user));
     console.log("✅ Usuario actualizado");
   } catch (err) {
     console.error("❌ Error al refrescar usuario:", err);
@@ -2201,6 +2204,7 @@ async function cargarCartas() {
         ${carta.tipoArma === "Proyectil" ? `<p><strong>Alcance:</strong> ${carta.alcance}m</p>` : ""}
         ${carta.tipoArma === "Proyectil" ? `<p><strong>Render proyectil:</strong> ${carta.projectileRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p>` : ""}
         ${carta.tipoArma === "Proyectil" ? `<p><strong>Render explosión:</strong> ${carta.explosionRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p>` : ""}
+        ${carta.tipoArma === "Arrastre" ? `<p><strong>Render torre:</strong> ${carta.turretRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p>` : ""}
         <p><strong>Daño:</strong> ${carta.dano}</p>
         <p><strong>Dispositivo:</strong> ${carta.dispositivo || "Ambos"}</p>
         <p><strong>Tiempo de espera:</strong> ${carta.tiempoEspera || 0} segundos</p>
@@ -3586,7 +3590,9 @@ document.addEventListener("DOMContentLoaded", function () {
     flame.querySelectorAll("input,select,textarea").forEach(el => { el.disabled = !animated; });
   };
 
-  ["projectile", "explosion"].forEach((kind) => {
+  document.getElementById("turretRenderType")?.addEventListener("change", () => setRenderFields("turret"));
+
+  ["projectile", "explosion", "turretIdle", "turretDeath"].forEach((kind) => {
     document.getElementById(`${kind}RenderType`)?.addEventListener("change", () => setRenderFields(kind));
     const file = document.getElementById(`${kind}SpritesheetPng`);
     const preview = document.getElementById(`${kind}SpritesheetPreview`);
@@ -3615,7 +3621,13 @@ document.addEventListener("DOMContentLoaded", function () {
         !Number.isInteger(rows) || rows < 1 ||
         !Number.isInteger(frames) || frames < 1 ||
         !Number.isFinite(fps) || fps <= 0) {
-      const label = kind === "projectile" ? "proyectil" : "explosión";
+      const labels = {
+        projectile: "proyectil",
+        explosion: "explosión",
+        turretIdle: "Idle de torre",
+        turretDeath: "Death de torre"
+      };
+      const label = labels[kind] || kind;
       throw new Error(`Completa columnas, filas, frames y FPS (> 0) para ${label}.`);
     }
     return {
@@ -3643,6 +3655,8 @@ document.addEventListener("DOMContentLoaded", function () {
         if (key === "Proyectil") {
           setRenderFields("projectile");
           setRenderFields("explosion");
+        } else if (key === "Arrastre") {
+          setRenderFields("turret");
         }
       } else {
         seccion.style.display = "none";
@@ -3742,7 +3756,7 @@ document.addEventListener("DOMContentLoaded", function () {
     form.querySelectorAll('div[id^="preview"]').forEach((div) => {
       div.innerHTML = "";
     });
-    ["projectile", "explosion"].forEach((kind) => {
+    ["projectile", "explosion", "turretIdle", "turretDeath"].forEach((kind) => {
       const preview = document.getElementById(`${kind}SpritesheetPreview`);
       if (preview) {
         preview.removeAttribute("src");
@@ -3819,6 +3833,26 @@ document.addEventListener("DOMContentLoaded", function () {
       setRenderFields(kind);
     });
 
+    if (carta.tipoArma === "Arrastre") {
+      const modeInput = document.getElementById("turretRenderType");
+      if (modeInput) modeInput.value = carta.turretRenderType || "classic";
+      ["turretIdle", "turretDeath"].forEach((kind) => {
+        const config = carta[`${kind}Spritesheet`] || {};
+        Object.entries(config).forEach(([key, value]) => {
+          const input = form.querySelector(`[data-sheet="${kind}"][data-key="${key}"]`);
+          if (!input) return;
+          if (input.type === "checkbox") input.checked = Boolean(value);
+          else input.value = Array.isArray(value) ? JSON.stringify(value) : (value ?? "");
+        });
+        const preview = document.getElementById(`${kind}SpritesheetPreview`);
+        if (preview && config.url) {
+          preview.src = config.url;
+          preview.style.display = "block";
+        }
+      });
+      setRenderFields("turret");
+    }
+
     form.querySelector('[name="imagenPortada"]').required = false;
 
     const submit = document.getElementById("submitCarta");
@@ -3854,6 +3888,10 @@ document.addEventListener("DOMContentLoaded", function () {
           formData.set(`${kind}SpritesheetConfig`, JSON.stringify(spritesheetConfig(kind)));
         }
       });
+      if (document.getElementById("turretRenderType")?.value === "flame_spritesheet") {
+        formData.set("turretIdleSpritesheetConfig", JSON.stringify(spritesheetConfig("turretIdle")));
+        formData.set("turretDeathSpritesheetConfig", JSON.stringify(spritesheetConfig("turretDeath")));
+      }
     } catch (configError) {
       alert(`❌ ${configError.message}`);
       return;

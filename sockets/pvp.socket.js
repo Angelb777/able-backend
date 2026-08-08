@@ -116,6 +116,11 @@ module.exports = function(io, dependencies = {}) {
     expiresAt: new Date(t.expiresAt).toISOString(),
     imagenesMovimiento: t.imagenesMovimiento || [], imagenesDisparo: t.imagenesDisparo || [],
     imagenesMuerte: t.imagenesMuerte || [],
+    renderType: t.renderType === 'flame_spritesheet' && t.idleSpritesheet?.url
+      ? 'flame_spritesheet'
+      : 'classic',
+    idleSpritesheet: t.idleSpritesheet || null,
+    deathSpritesheet: t.deathSpritesheet || null,
   });
   const minePayload = (mine) => ({
     mineId: String(mine._id),
@@ -493,6 +498,8 @@ module.exports = function(io, dependencies = {}) {
             nsp.to(target.zoneId).emit('turret:destroy', {
               ...turretPayload(target),
               reason: 'destroyed',
+              playDeathAnimation: target.renderType === 'flame_spritesheet' &&
+                Boolean(target.deathSpritesheet?.url),
             });
           }
         } else {
@@ -585,7 +592,11 @@ module.exports = function(io, dependencies = {}) {
       if (new Date(turret.expiresAt).getTime() <= now || turret.vida <= 0) {
         turrets.delete(turretId);
         await TurretModel.deleteOne({ _id: turretId }).catch(() => {});
-        nsp.to(turret.zoneId).emit('turret:destroy', { ...turretPayload(turret), reason: 'expired' });
+        nsp.to(turret.zoneId).emit('turret:destroy', {
+          ...turretPayload(turret),
+          reason: 'expired',
+          playDeathAnimation: false,
+        });
         continue;
       }
       if (new Date(turret.nextShotAt).getTime() > now) continue;
@@ -1437,6 +1448,9 @@ module.exports = function(io, dependencies = {}) {
             : (card.imagenPortada ? [card.imagenPortada] : []),
           imagenesDisparo: card.imagenesDisparo || [],
           imagenesMuerte: card.imagenesMuerte || [],
+          renderType: card.turretRenderType || 'classic',
+          idleSpritesheet: card.turretIdleSpritesheet || undefined,
+          deathSpritesheet: card.turretDeathSpritesheet || undefined,
         });
         const plain = turret.toObject();
         turrets.set(String(plain._id), plain);

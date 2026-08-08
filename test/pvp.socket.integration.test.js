@@ -78,6 +78,32 @@ test('two players share presence, movement, one hit, life and explosions', async
               vida: 200,
               cadenciaDisparo: 1,
               duracion: 60,
+              turretRenderType: 'flame_spritesheet',
+              imagenesMovimiento: ['/uploads/cards/turret-classic.png'],
+              turretIdleSpritesheet: {
+                url: '/uploads/cards/turret-idle.png', columns: 4, rows: 1,
+                frames: 4, frameTime: 0.1, fps: 10, loop: true,
+                readOrder: 'row-major',
+              },
+              turretDeathSpritesheet: {
+                url: '/uploads/cards/turret-death.png', columns: 4, rows: 1,
+                frames: 4, frameTime: 0.1, fps: 10, loop: false,
+                readOrder: 'row-major',
+              },
+            },
+            'card-turret-expiring': {
+              tipoArma: 'Arrastre', alcance: 100, dano: 10, vida: 50,
+              cadenciaDisparo: 10, duracion: 1,
+              turretRenderType: 'flame_spritesheet',
+              imagenesMovimiento: ['/uploads/cards/turret-expiring.png'],
+              turretIdleSpritesheet: {
+                url: '/uploads/cards/turret-expiring-idle.png', columns: 2, rows: 1,
+                frames: 2, frameTime: 0.1, fps: 10, loop: true,
+              },
+              turretDeathSpritesheet: {
+                url: '/uploads/cards/turret-expiring-death.png', columns: 2, rows: 1,
+                frames: 2, frameTime: 0.1, fps: 10, loop: false,
+              },
             },
             'card-life': {
               tipoArma: 'Vida',
@@ -712,11 +738,15 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.equal(turretPlaceAck.turret.dano, 10);
   assert.equal(spawnedTurret.alcance, 100);
   assert.equal(spawnedTurret.dano, 10);
+  assert.equal(spawnedTurret.renderType, 'flame_spritesheet');
+  assert.equal(spawnedTurret.idleSpritesheet.loop, true);
+  assert.deepEqual(spawnedTurret.imagenesMovimiento, ['/uploads/cards/turret-classic.png']);
 
   const turretShot = await turretShotOnA;
   assert.equal(turretShot.turretId, 'turret-test-1');
   assert.equal(turretShot.targetUserId, '507f191e810c19729de860ea');
   assert.equal(turretShot.dano, 10);
+  assert.equal(spawnedTurret.idleSpritesheet.url, '/uploads/cards/turret-idle.png');
 
   const east30 = geo.computeOffset(origin, 30, 90);
   const ownerMoveOnB = waitForEvent(playerB, 'presence:move');
@@ -757,6 +787,27 @@ test('two players share presence, movement, one hit, life and explosions', async
       }) - 8
     ) < 0.3
   );
+
+  const turretDestroyOnB = waitForEvent(playerB, 'turret:destroy');
+  const turretFinalExplosionOnB = waitForEvent(playerB, 'bullet:explode');
+  await emitWithAck(playerB, 'bullet:spawn', {
+    clientShotId: 'shot-b-destroy-turret',
+    cardId: 'card-projectile',
+    from: north20,
+    heading: 180,
+    speed: 180,
+    alcance: 45,
+    dano: 125,
+    spriteUrl: 'https://example.test/bullet.png',
+    explosionFrames: ['https://example.test/explosion.png'],
+  });
+  const [destroyedTurret] = await Promise.all([
+    turretDestroyOnB,
+    turretFinalExplosionOnB,
+  ]);
+  assert.equal(destroyedTurret.reason, 'destroyed');
+  assert.equal(destroyedTurret.playDeathAnimation, true);
+  assert.equal(destroyedTurret.deathSpritesheet.loop, false);
 
   const ownerReturnOnB = waitForEvent(playerB, 'presence:move');
   playerA.emit('presence:update', {
@@ -804,6 +855,28 @@ test('two players share presence, movement, one hit, life and explosions', async
       ) - 6
     ) < 0.25
   );
+
+  let expiredDestroyEvents = 0;
+  playerB.on('turret:destroy', (event) => {
+    if (event.cardId === 'card-turret-expiring') expiredDestroyEvents++;
+  });
+  const expiringSpawnOnB = waitForEvent(playerB, 'turret:spawn');
+  const expiredDestroyOnB = waitForEvent(playerB, 'turret:destroy', 2500);
+  const expiringAck = await emitWithAck(playerA, 'turret:place', {
+    cardId: 'card-turret-expiring',
+    lat: origin.lat,
+    lng: origin.lng,
+  });
+  const [expiringSpawn, expiredTurret] = await Promise.all([
+    expiringSpawnOnB,
+    expiredDestroyOnB,
+  ]);
+  assert.equal(expiringAck.ok, true);
+  assert.equal(expiringSpawn.renderType, 'flame_spritesheet');
+  assert.equal(expiredTurret.reason, 'expired');
+  assert.equal(expiredTurret.playDeathAnimation, false);
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  assert.equal(expiredDestroyEvents, 1);
 
   let leaveEventsOnA = 0;
   playerA.on('presence:leave', () => leaveEventsOnA++);
