@@ -1555,6 +1555,30 @@ function editarSkin(id) {
   form.scrollIntoView({ behavior: "smooth" });
 }
 
+// Algunos navegadores restauran el valor visible de los formularios al volver
+// desde su caché, pero conservan el atributo `disabled` que se aplicó a los
+// campos de otro tipo de carta. Resincronizamos el formulario y, como red de
+// seguridad, activamos cualquier selector de archivo que realmente esté visible.
+function sincronizarSelectoresArchivoGestion() {
+  const seccion = document.getElementById("gestionJuego");
+  if (!seccion || getComputedStyle(seccion).display === "none") return;
+
+  const tipoCarta = document.getElementById("tipoArmaSelect");
+  if (tipoCarta?.value) {
+    tipoCarta.dispatchEvent(new Event("change"));
+  }
+
+  requestAnimationFrame(() => {
+    seccion.querySelectorAll('input[type="file"]').forEach((input) => {
+      if (input.disabled && input.getClientRects().length > 0) {
+        input.disabled = false;
+      }
+    });
+  });
+}
+
+window.addEventListener("pageshow", sincronizarSelectoresArchivoGestion);
+
 // 🔄 REEMPLAZA la función renderGestionJuego COMPLETAMENTE por esto:
 
 async function renderGestionJuego() {
@@ -1567,6 +1591,7 @@ async function renderGestionJuego() {
   }
 
   seccion.style.display = "block";
+  sincronizarSelectoresArchivoGestion();
 
   // 🎨 FORMULARIO CREAR SKIN
   const formSkin = document.getElementById("formCrearSkin");
