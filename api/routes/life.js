@@ -5,6 +5,11 @@ const UserLife = require("../models/UserLife");
 // 🆕 importa para poder descontar y registrar la transacción
 const User = require("../models/User");
 const StepcoinTransaction = require("../models/StepcoinTransaction");
+const {
+  verifyToken,
+  checkRole,
+  requireSelfOrAdmin,
+} = require('../middlewares/authMiddleware');
 
 // 🆕 helper reutilizable
 async function penalizarSiMuere(userId, vidaAnterior, vidaNueva) {
@@ -28,7 +33,7 @@ async function penalizarSiMuere(userId, vidaAnterior, vidaNueva) {
 }
 
 // ✅ Obtener vida actual (GET /api/life/:userId)
-router.get("/:userId", async (req, res) => {
+router.get("/:userId", verifyToken, requireSelfOrAdmin(), async (req, res) => {
   const { userId } = req.params;
   try {
     let vida = await UserLife.findOne({ userId });
@@ -43,7 +48,7 @@ router.get("/:userId", async (req, res) => {
 });
 
 // ✅ Actualizar vida directamente (PUT /api/life/:userId)
-router.put("/:userId", async (req, res) => {
+router.put("/:userId", verifyToken, checkRole(['admin']), async (req, res) => {
   const { userId } = req.params;
   const { vida } = req.body;
 
@@ -67,7 +72,7 @@ router.put("/:userId", async (req, res) => {
 });
 
 // ✅ Ruta extra opcional: reiniciar vida a 1000
-router.post("/:userId/reset", async (req, res) => {
+router.post("/:userId/reset", verifyToken, requireSelfOrAdmin(), async (req, res) => {
   const { userId } = req.params;
 
   try {
@@ -76,7 +81,11 @@ router.post("/:userId/reset", async (req, res) => {
       registro = await UserLife.create({ userId });
     }
 
+    if (registro.vida > 0 && req.user.role !== 'admin') {
+      return res.status(409).json({ error: 'Solo puedes resetear la vida al morir' });
+    }
     registro.vida = 1000;
+    registro.yaPenalizado = false;
     await registro.save();
 
     res.json({ vida: registro.vida, mensaje: "✅ Vida reseteada a 1000" });
@@ -87,11 +96,11 @@ router.post("/:userId/reset", async (req, res) => {
 });
 
 // 🔥 Restar daño desde OVNI (POST /api/life/:userId/hurt)
-router.post("/:userId/hurt", async (req, res) => {
+router.post("/:userId/hurt", verifyToken, requireSelfOrAdmin(), async (req, res) => {
   const { userId } = req.params;
   const { damage } = req.body;
 
-  if (!damage || typeof damage !== "number") {
+  if (!Number.isFinite(damage) || damage <= 0 || damage > 1000) {
     return res.status(400).json({ error: "Daño inválido" });
   }
 
@@ -138,7 +147,7 @@ res.json({
 });
 
 // (opcional) Resucitar cobrando 1000 stepcoins
-router.post("/:userId/resurrect", async (req, res) => {
+router.post("/:userId/resurrect", verifyToken, requireSelfOrAdmin(), async (req, res) => {
   const { userId } = req.params;
 
   try {

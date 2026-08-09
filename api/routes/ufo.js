@@ -3,6 +3,11 @@ const router = express.Router();
 const Ufo = require('../models/Ufo');
 const multer = require('multer');
 const { saveImage } = require('../utils/mediaStorage');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+const adminOnly = [verifyToken, checkRole(['admin'])];
+// Estado aislado del minijuego web legacy. Nunca modifica la configuración
+// usada por el runtime multijugador de sockets.
+const legacyUfoState = new Map();
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -16,7 +21,7 @@ const upload = multer({
 });
 
 // ✅ Crear OVNI
-router.post('/', upload.fields([
+router.post('/', ...adminOnly, upload.fields([
   { name: 'imagenOvni', maxCount: 1 },
   { name: 'imagenBala', maxCount: 1 }
 ]), async (req, res) => {
@@ -64,6 +69,10 @@ router.post('/', upload.fields([
     });
 
     await nuevoUfo.save();
+    legacyUfoState.set(String(nuevoUfo._id), {
+      vida: Math.max(0, Number(nuevoUfo.vida) || 300),
+      dead: false,
+    });
     res.status(201).json(nuevoUfo);
   } catch (err) {
     console.error("❌ Error al crear OVNI:", err);
@@ -72,7 +81,7 @@ router.post('/', upload.fields([
 });
 
 // ✏️ Editar OVNI. Si no se suben imágenes nuevas, conserva las actuales.
-router.put('/:id', upload.fields([
+router.put('/:id', ...adminOnly, upload.fields([
   { name: 'imagenOvni', maxCount: 1 },
   { name: 'imagenBala', maxCount: 1 }
 ]), async (req, res) => {
@@ -121,6 +130,10 @@ router.put('/:id', upload.fields([
     }
 
     await ovni.save();
+    legacyUfoState.set(String(ovni._id), {
+      vida: Math.max(0, Number(ovni.vida) || 300),
+      dead: false,
+    });
     return res.json(ovni);
   } catch (err) {
     console.error('❌ Error al actualizar OVNI:', err);
@@ -152,10 +165,11 @@ router.get('/activos', async (req, res) => {
 });
 
 // ✅ Eliminar por ID
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', ...adminOnly, async (req, res) => {
   try {
     const { id } = req.params;
     await Ufo.findByIdAndDelete(id);
+    legacyUfoState.delete(String(id));
     res.json({ message: 'OVNI eliminado' });
   } catch (err) {
     res.status(500).json({ error: 'Error al eliminar el OVNI' });
@@ -172,8 +186,9 @@ router.get('/', async (req, res) => {
   }
 });
 
-// 🔻 Ruta para hacer daño al OVNI
-router.post('/:id/hurt', async (req, res) => {
+// Compatibilidad exclusiva del minijuego web de administración. El combate
+// multijugador normal se resuelve en pvp.socket.js y nunca consume esta ruta.
+router.post('/:id/hurt', ...adminOnly, async (req, res) => {
   try {
     const { id } = req.params;
     const { damage } = req.body;
@@ -186,28 +201,30 @@ router.post('/:id/hurt', async (req, res) => {
       return res.status(400).json({ error: "Daño inválido" });
     }
 
-    // 🛡️ Inicializar vida si estaba en null o no numérica
-    if (typeof ovni.vida !== "number" || isNaN(ovni.vida) || ovni.vida <= 0) {
-      // Si tienes un campo `vidaOriginal`, úsalo, si no, 300 por defecto
-      ovni.vida = ovni.vidaOriginal || 300;
-      console.log(`🔁 Vida reiniciada a ${ovni.vida}`);
+    const key = String(id);
+    const state = legacyUfoState.get(key) || {
+      vida: Math.max(0, Number(ovni.vida) || 300),
+      dead: false,
+    };
+    if (state.dead) {
+      return res.json({
+        vida: 0,
+        muerto: true,
+        stepcoinsPremio: 0,
+        duplicate: true,
+        legacyAdminOnly: true,
+      });
     }
-
-    // 💥 Restar daño
-    ovni.vida -= dano;
-
-    let haMuerto = false;
-    if (ovni.vida <= 0) {
-      ovni.vida = 0;
-      haMuerto = true;
-    }
-
-    await ovni.save();
+    state.vida = Math.max(0, state.vida - dano);
+    state.dead = state.vida === 0;
+    legacyUfoState.set(key, state);
+    const haMuerto = state.dead;
 
     res.json({
-      vida: ovni.vida,
+      vida: state.vida,
       muerto: haMuerto,
-      stepcoinsPremio: haMuerto ? Number(ovni.stepcoinsPremio || 0) : 0
+      stepcoinsPremio: haMuerto ? Number(ovni.stepcoinsPremio || 0) : 0,
+      legacyAdminOnly: true
     });
 
   } catch (err) {
@@ -221,7 +238,8 @@ router.get('/:id/vida', async (req, res) => {
   try {
     const ovni = await Ufo.findById(req.params.id);
     if (!ovni) return res.status(404).json({ error: "OVNI no encontrado" });
-    res.json({ vida: ovni.vida });
+    const state = legacyUfoState.get(String(req.params.id));
+    res.json({ vida: state?.vida ?? ovni.vida, legacyAdminOnly: true });
   } catch (err) {
     res.status(500).json({ error: "Error interno" });
   }

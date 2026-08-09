@@ -4,7 +4,12 @@ const multer = require("multer");
 const mongoose = require("mongoose");
 const Card = require("../models/Card");
 const User = require("../models/User");
-const { verifyToken } = require("../middlewares/authMiddleware");
+const {
+  verifyToken,
+  checkRole,
+  requireSelfOrAdmin,
+} = require("../middlewares/authMiddleware");
+const adminOnly = [verifyToken, checkRole(['admin'])];
 const {
   MAX_UPGRADE_LEVEL,
   UPGRADE_COSTS,
@@ -154,6 +159,7 @@ async function guardarImagenes(files) {
 
 router.post(
   "/",
+  ...adminOnly,
   upload.fields([
     { name: "imagenPortada", maxCount: 1 },
     { name: "imagenesArma", maxCount: 4 },
@@ -363,6 +369,7 @@ router.post(
 // ✏️ Editar carta. Los archivos solo se sustituyen cuando llegan otros nuevos.
 router.put(
   "/:id",
+  ...adminOnly,
   upload.fields([
     { name: "imagenPortada", maxCount: 1 },
     { name: "imagenesArma", maxCount: 4 },
@@ -581,7 +588,7 @@ router.get("/", async (req, res) => {
 });
 
 // ❌ Eliminar carta
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", ...adminOnly, async (req, res) => {
   try {
     await Card.findByIdAndDelete(req.params.id);
     res.json({ message: "✅ Carta eliminada" });
@@ -729,7 +736,7 @@ router.post("/user-cards/:cardId/upgrade", verifyToken, async (req, res) => {
   }
 });
 
-router.get("/user-cards/:userId", async (req, res) => {
+router.get("/user-cards/:userId", verifyToken, requireSelfOrAdmin(), async (req, res) => {
   try {
     const user = await User.findById(req.params.userId).populate("cartas");
     if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
@@ -744,7 +751,7 @@ router.get("/user-cards/:userId", async (req, res) => {
 });
 
 // 🧩 Actualizar mazo activo
-router.put("/user-cards/:userId", async (req, res) => {
+router.put("/user-cards/:userId", verifyToken, requireSelfOrAdmin(), async (req, res) => {
   try {
     const { mazo } = req.body;
 
@@ -766,7 +773,7 @@ router.put("/user-cards/:userId", async (req, res) => {
 });
 
 // 🔍 Obtener mazo activo
-router.get("/user-cards/:userId/mazo", async (req, res) => {
+router.get("/user-cards/:userId/mazo", verifyToken, requireSelfOrAdmin(), async (req, res) => {
   try {
     const user = await User.findById(req.params.userId).populate("mazo");
     if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
@@ -780,7 +787,7 @@ router.get("/user-cards/:userId/mazo", async (req, res) => {
   }
 });
 
-router.get("/fix-extensions", (_req, res) => {
+router.get("/fix-extensions", ...adminOnly, (_req, res) => {
   res.json({
     message: "Las imágenes nuevas se guardan en MongoDB y conservan su tipo original.",
     renombrados: []

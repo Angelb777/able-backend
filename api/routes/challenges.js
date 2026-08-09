@@ -6,9 +6,11 @@ const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+const adminOnly = [verifyToken, checkRole(['admin'])];
 
 // ✅ Crear nuevo reto (admin)
-router.post('/', async (req, res) => {
+router.post('/', ...adminOnly, async (req, res) => {
   try {
     const nuevoReto = new Challenge(req.body);
     await nuevoReto.save();
@@ -30,14 +32,16 @@ router.get('/activos', async (req, res) => {
 });
 
 // ✅ Inscribirse a un reto (cliente)
-router.post('/:id/inscribirse', async (req, res) => {
+router.post('/:id/inscribirse', verifyToken, async (req, res) => {
   const challenge = await Challenge.findById(req.params.id);
   if (!challenge) return res.status(404).json({ error: 'Reto no encontrado' });
 
-  const yaInscrito = challenge.participantes.find(p => p.userId.toString() === req.body.userId);
+  const userId = String(req.user.id);
+  const yaInscrito = challenge.participantes.find(p => p.userId.toString() === userId);
   if (yaInscrito) return res.status(400).json({ error: 'Ya estás inscrito' });
 
-  const user = await User.findById(req.body.userId);
+  const user = await User.findById(userId);
+  if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
   const nuevoParticipante = {
     userId: user._id,
     stepcoinsInicio: user.stepcoins || 0
@@ -50,7 +54,7 @@ router.post('/:id/inscribirse', async (req, res) => {
 });
 
 // ✅ Finalizar reto y guardar stepcoinsFinal (llamado por cronjob o manual)
-router.post('/:id/finalizar', async (req, res) => {
+router.post('/:id/finalizar', ...adminOnly, async (req, res) => {
   const challenge = await Challenge.findById(req.params.id).populate('participantes.userId');
   if (!challenge) return res.status(404).json({ error: 'Reto no encontrado' });
 
@@ -68,7 +72,7 @@ router.post('/:id/finalizar', async (req, res) => {
 });
 
 // ✅ Marcar ganador manualmente
-router.post('/:id/marcar-ganador', async (req, res) => {
+router.post('/:id/marcar-ganador', ...adminOnly, async (req, res) => {
   const { userId } = req.body;
   const challenge = await Challenge.findById(req.params.id);
   if (!challenge) return res.status(404).json({ error: 'Reto no encontrado' });
@@ -83,7 +87,7 @@ router.post('/:id/marcar-ganador', async (req, res) => {
 });
 
 // ✅ Obtener todos los retos (admin)
-router.get('/', async (req, res) => {
+router.get('/', ...adminOnly, async (req, res) => {
   try {
     const retos = await Challenge.find().sort({ creadoEn: -1 });
     res.json(retos);
@@ -110,7 +114,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // ✅ Ruta: POST /api/retos/upload
-router.post('/upload', upload.single('file'), (req, res) => {
+router.post('/upload', ...adminOnly, upload.single('file'), (req, res) => {
   console.log("BODY:", req.body);
   console.log("FILE:", req.file);
 
@@ -125,7 +129,7 @@ router.post('/upload', upload.single('file'), (req, res) => {
 });
 
 // ✅ Eliminar reto
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', ...adminOnly, async (req, res) => {
   try {
     await Challenge.findByIdAndDelete(req.params.id);
     res.json({ message: 'Reto eliminado' });

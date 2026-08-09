@@ -1,12 +1,14 @@
 const express = require("express");
 const router = express.Router();
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+const adminOnly = [verifyToken, checkRole(['admin'])];
 const Metric = require("../models/Metric");
 const User = require("../models/User");
 const Payment = require("../models/Payment");
 const XLSX = require("xlsx");
 
 // 🔁 Calcular métricas y guardarlas
-router.post("/generate", async (req, res) => {
+router.post("/generate", ...adminOnly, async (req, res) => {
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth(); // 0 a 11
@@ -101,14 +103,14 @@ router.post("/generate", async (req, res) => {
 });
 
 // 📄 Obtener métricas por tipo
-router.get("/", async (req, res) => {
+router.get("/", ...adminOnly, async (req, res) => {
   const type = req.query.type || "monthly"; // monthly | yearly
   const metrics = await Metric.find({ type }).sort({ period: -1 });
   res.json(metrics);
 });
 
 // 📥 Exportar a Excel
-router.get("/excel", async (req, res) => {
+router.get("/excel", ...adminOnly, async (req, res) => {
   const type = req.query.type || "monthly";
   const metrics = await Metric.find({ type }).sort({ period: -1 });
 

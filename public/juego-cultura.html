@@ -175,12 +175,18 @@ preguntas.sort(() => Math.random() - 0.5); // Mezclar preguntas
         try {
           const res = await fetch("/api/stepcoins/adjust", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${localStorage.getItem("token") || ""}`
+            },
             body: JSON.stringify({
               userId,
               cantidad: 100,
-              tipo: "cultura",
-              descripcion: `Pregunta acertada en nivel ${nivelActual}`
+              tipo: "minijuego_cultura",
+              descripcion: `Pregunta acertada en nivel ${nivelActual}`,
+              source: "culture",
+              claimId: `level-${nivelActual}`,
+              level: nivelActual
             })
           });
           if (!res.ok) {

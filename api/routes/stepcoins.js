@@ -4,17 +4,77 @@ const User = require("../models/User");
 const StepcoinTransaction = require("../models/StepcoinTransaction");
 const Card = require("../models/Card");
 const { publicNickname } = require('../utils/publicIdentity');
+const { randomInt } = require('crypto');
+const { verifyToken, requireSelfOrAdmin } = require('../middlewares/authMiddleware');
+
+const ROULETTE_OPTIONS = [
+  ['Tirar otra vez', 3000], ['Nada', 2500], ['Juego de Cultura', 2200],
+  ['Carta aleatoria', 1500], ['Juego Nave Espacial', 787],
+  ['Gana 20000 Stepcoins', 5], ['Pierde 20000 Stepcoins', 8],
+];
+
+function rouletteOutcome() {
+  const total = ROULETTE_OPTIONS.reduce((sum, option) => sum + option[1], 0);
+  const draw = randomInt(total);
+  let cumulative = 0;
+  for (const [label, weight] of ROULETTE_OPTIONS) {
+    cumulative += weight;
+    if (draw < cumulative) return label;
+  }
+  return 'Nada';
+}
+
+function authenticatedTarget(req) {
+  return req.user.role === 'admin' && req.body?.userId
+    ? String(req.body.userId)
+    : String(req.user.id);
+}
 
 // Añadir o quitar stepcoins (positivo o negativo)
-router.post("/adjust", async (req, res) => {
-  const { userId, cantidad, tipo, descripcion } = req.body;
+router.post("/adjust", verifyToken, async (req, res) => {
+  const { userId, cantidad, tipo, descripcion, source, claimId, level } = req.body;
+  const targetUserId = authenticatedTarget(req);
 
-  if (!userId || !cantidad || !tipo) {
+  if (req.user.role !== 'admin' && userId && String(userId) !== targetUserId) {
+    return res.status(403).json({ error: 'No puedes modificar otro usuario' });
+  }
+
+  if (!Number.isInteger(cantidad) || cantidad === 0 || !tipo) {
     return res.status(400).json({ error: "Faltan datos obligatorios" });
+  }
+  if (req.user.role !== 'admin' &&
+      (!['recompensa', 'minijuego_cultura', 'minijuego'].includes(tipo) ||
+       cantidad < 1 || cantidad > 500)) {
+    return res.status(403).json({ error: 'Ajuste no permitido para clientes' });
+  }
+  const clientSource = String(source || '').trim();
+  const normalizedClaimId = String(claimId || '').trim();
+  if (req.user.role !== 'admin') {
+    const validPedometer = clientSource === 'pedometer' && cantidad <= 500;
+    const validMiniGame = ['culture', 'space'].includes(clientSource) &&
+      cantidad === 100 && Number.isInteger(level) && level >= 1 && level <= 100;
+    if ((!validPedometer && !validMiniGame) ||
+        normalizedClaimId.length < 4 || normalizedClaimId.length > 160) {
+      return res.status(403).json({ error: 'Recompensa de cliente no valida' });
+    }
   }
 
   try {
-    const user = await User.findById(userId);
+    const operationKey = req.user.role === 'admin'
+      ? undefined
+      : `client-reward:${targetUserId}:${clientSource}:${normalizedClaimId}`;
+    if (operationKey) {
+      const previous = await StepcoinTransaction.findOne({ operationKey }).lean();
+      if (previous) {
+        const current = await User.findById(targetUserId).select('stepcoins').lean();
+        return res.json({
+          message: 'Recompensa ya procesada',
+          user: current,
+          duplicate: true,
+        });
+      }
+    }
+    const user = await User.findById(targetUserId);
     if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
 
     // Evitar saldo negativo
@@ -27,7 +87,14 @@ router.post("/adjust", async (req, res) => {
     await user.save();
 
     // Registrar transacción
-    const trans = new StepcoinTransaction({ userId, cantidad, tipo, descripcion });
+    const trans = new StepcoinTransaction({
+      userId: targetUserId,
+      cantidad,
+      tipo: req.user.role === 'admin' ? 'admin' : 'recompensa',
+      descripcion,
+      operationKey,
+      metadata: { requestedType: tipo, source: clientSource, level },
+    });
     await trans.save();
 
     res.json({ message: "Stepcoins actualizados correctamente", user });
@@ -38,7 +105,7 @@ router.post("/adjust", async (req, res) => {
 });
 
 // Ver historial del usuario
-router.get("/historial/:userId", async (req, res) => {
+router.get("/historial/:userId", verifyToken, requireSelfOrAdmin(), async (req, res) => {
   try {
     const historial = await StepcoinTransaction.find({ userId: req.params.userId })
       .sort({ fecha: -1 });
@@ -52,15 +119,20 @@ router.get("/historial/:userId", async (req, res) => {
 const Skin = require("../models/Skin"); // Asegúrate de tenerlo importado
 
 // Comprar skin con stepcoins
-router.post("/comprar-skin", async (req, res) => {
+router.post("/comprar-skin", verifyToken, async (req, res) => {
   const { userId, skinId } = req.body;
+  const targetUserId = authenticatedTarget(req);
 
-  if (!userId || !skinId) {
+  if (req.user.role !== 'admin' && userId && String(userId) !== targetUserId) {
+    return res.status(403).json({ error: 'No puedes comprar para otro usuario' });
+  }
+
+  if (!skinId) {
     return res.status(400).json({ error: "Faltan datos obligatorios" });
   }
 
   try {
-    const user = await User.findById(userId);
+    const user = await User.findById(targetUserId);
     const skin = await Skin.findById(skinId);
     if (!user || !skin) {
       return res.status(404).json({ error: "Usuario o Skin no encontrado" });
@@ -82,7 +154,7 @@ router.post("/comprar-skin", async (req, res) => {
 
     // Registrar transacción
     const trans = new StepcoinTransaction({
-      userId,
+      userId: targetUserId,
       cantidad: -skin.precio,
       tipo: "compra", // Debe coincidir con el enum
       descripcion: `Compra de skin: ${skin.titulo}`
@@ -105,39 +177,53 @@ router.post("/comprar-skin", async (req, res) => {
   }
 });
 
-router.post("/ruleta", async (req, res) => {
+router.post("/ruleta", verifyToken, async (req, res) => {
   try {
-    const { userId, resultado } = req.body;
-    if (!userId || !resultado) {
-      return res.status(400).json({ error: "Faltan datos" });
+    const { userId, requestId } = req.body;
+    const targetUserId = authenticatedTarget(req);
+    if (req.user.role !== 'admin' && userId && String(userId) !== targetUserId) {
+      return res.status(403).json({ error: 'No puedes girar para otro usuario' });
+    }
+    if (typeof requestId !== 'string' || requestId.length < 8 || requestId.length > 120) {
+      return res.status(400).json({ error: 'requestId invalido' });
     }
 
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
+    const operationKey = `roulette:${targetUserId}:${requestId}`;
+    const previous = await StepcoinTransaction.findOne({ operationKey }).lean();
+    if (previous) {
+      const current = await User.findById(targetUserId).select('stepcoins').lean();
+      return res.json({
+        resultado: previous.metadata?.resultado || 'Nada',
+        nuevosStepcoins: current?.stepcoins || 0,
+        duplicate: true,
+      });
+    }
+
+    const user = await User.findOneAndUpdate(
+      { _id: targetUserId, rouletteRequestIds: { $ne: requestId } },
+      { $push: { rouletteRequestIds: { $each: [requestId], $slice: -100 } } },
+      { new: true },
+    ).select('+rouletteRequestIds');
+    if (!user) {
+      const current = await User.findById(targetUserId)
+        .select('+rouletteRequestIds stepcoins')
+        .lean();
+      if (!current) return res.status(404).json({ error: "Usuario no encontrado" });
+      if (current.rouletteRequestIds?.includes(requestId)) {
+        return res.status(409).json({ error: 'Tirada en proceso', duplicate: true });
+      }
+      return res.status(409).json({ error: 'No se pudo reservar la tirada' });
+    }
 
     const SPIN_COST = 500;
     const MIN_BALANCE_BIG_LOSS = 30000;
-
-    // Normaliza etiquetas que pueden venir del cliente
-    const normalize = (s) => {
-      const r = String(s || "").trim().toLowerCase();
-      if (r === "tira de nuevo" || r === "500 stepcoins para volver a tirar") return "Tirar otra vez";
-      if (r === "carta aleatoria" || r === "armas") return "Carta aleatoria";
-      if (r === "gana 20000 stepcoins" || r === "20000 stepcoins") return "Gana 20000 Stepcoins";
-      if (r === "pierde 20000 stepcoins") return "Pierde 20000 Stepcoins";
-      if (r === "juego de cultura") return "Juego de Cultura";
-      if (r === "juego nave espacial") return "Juego Nave Espacial";
-      if (r === "nada") return "Nada";
-      // Cualquier cosa desconocida la tratamos como "Nada"
-      return "Nada";
-    };
 
     const saldoInicial = typeof user.stepcoins === "number" ? user.stepcoins : 0;
     if (saldoInicial < SPIN_COST) {
       return res.status(400).json({ error: "Saldo insuficiente" });
     }
 
-    let applied = normalize(resultado);
+    let applied = rouletteOutcome();
 
     // Regla anti-pérdida: si no llega a 30k, convertir a "Nada"
     if (applied === "Pierde 20000 Stepcoins" && saldoInicial < MIN_BALANCE_BIG_LOSS) {
@@ -151,6 +237,14 @@ router.post("/ruleta", async (req, res) => {
       const candidatas = todas.filter((c) => !tiene.has(String(c._id)));
 
       if (candidatas.length === 0) {
+        await StepcoinTransaction.create({
+          userId: targetUserId,
+          cantidad: 0,
+          tipo: 'ruleta',
+          descripcion: 'Resultado ruleta: Carta aleatoria (ya tenia todas)',
+          operationKey,
+          metadata: { resultado: 'Carta aleatoria', yaTienesTodas: true },
+        });
         return res.json({
           resultado: "Carta aleatoria",
           yaTienesTodas: true,
@@ -188,7 +282,7 @@ router.post("/ruleta", async (req, res) => {
           user.stepcoins = saldoInicial;
           await user.save();
           await StepcoinTransaction.create({
-            userId,
+            userId: targetUserId,
             cantidad: 0,
             tipo: "ruleta",
             descripcion: `Resultado ruleta: Carta aleatoria (ya tenía todas)`,
@@ -224,10 +318,12 @@ router.post("/ruleta", async (req, res) => {
 
     const delta = user.stepcoins - saldoInicial;
     await StepcoinTransaction.create({
-      userId,
+      userId: targetUserId,
       cantidad: delta, // cambio neto real de la tirada
       tipo: "ruleta",
       descripcion: `Resultado ruleta aplicado: ${applied}`,
+      operationKey,
+      metadata: { resultado: applied },
     });
 
     return res.json({

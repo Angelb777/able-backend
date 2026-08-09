@@ -35,6 +35,17 @@ function checkRole(rolesPermitidos) {
   };
 }
 
+function requireSelfOrAdmin(paramName = 'userId') {
+  return (req, res, next) => {
+    const requestedUserId = String(req.params?.[paramName] || '');
+    const authenticatedUserId = String(req.user?.id || '');
+    if (req.user?.role !== 'admin' && requestedUserId !== authenticatedUserId) {
+      return res.status(403).json({ error: 'No puedes operar sobre otro usuario' });
+    }
+    next();
+  };
+}
+
 async function requireNickname(req, res, next) {
   try {
     const User = require('../models/User');
@@ -54,4 +65,4 @@ async function requireNickname(req, res, next) {
   }
 }
 
-module.exports = { verifyToken, checkRole, requireNickname };
+module.exports = { verifyToken, checkRole, requireSelfOrAdmin, requireNickname };

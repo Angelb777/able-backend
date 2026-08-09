@@ -1,0 +1,81 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const express = require('express');
+const jwt = require('jsonwebtoken');
+
+const stepcoinsRouter = require('../api/routes/stepcoins');
+const lifeRouter = require('../api/routes/life');
+const cardsRouter = require('../api/routes/cards');
+const skinsRouter = require('../api/routes/skins');
+const ufoRouter = require('../api/routes/ufo');
+const challengesRouter = require('../api/routes/challenges');
+
+test('critical economy, life, deck and admin routes enforce JWT ownership', async (t) => {
+  const previousSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = 'critical-auth-route-test-secret';
+  const ownId = '507f1f77bcf86cd799439011';
+  const otherId = '507f191e810c19729de860ea';
+  const token = jwt.sign({ id: ownId, role: 'cliente' }, process.env.JWT_SECRET);
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/stepcoins', stepcoinsRouter);
+  app.use('/api/life', lifeRouter);
+  app.use('/api/cards', cardsRouter);
+  app.use('/api/skins', skinsRouter);
+  app.use('/api/ufo', ufoRouter);
+  app.use('/api/retos', challengesRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    if (previousSecret == null) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousSecret;
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const call = (path, { method = 'GET', body, authenticated = true } = {}) =>
+    fetch(`${baseUrl}${path}`, {
+      method,
+      headers: {
+        ...(authenticated ? { Authorization: `Bearer ${token}` } : {}),
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+  assert.equal((await call('/api/stepcoins/adjust', {
+    method: 'POST', authenticated: false, body: { userId: ownId, cantidad: 500, tipo: 'recompensa' },
+  })).status, 401);
+  assert.equal((await call('/api/stepcoins/adjust', {
+    method: 'POST', body: { userId: otherId, cantidad: 500, tipo: 'recompensa' },
+  })).status, 403);
+  assert.equal((await call('/api/stepcoins/adjust', {
+    method: 'POST', body: { userId: ownId, cantidad: 500, tipo: 'recompensa' },
+  })).status, 403);
+  assert.equal((await call('/api/life/' + otherId)).status, 403);
+  assert.equal((await call('/api/life/' + otherId + '/hurt', {
+    method: 'POST', body: { damage: 1000 },
+  })).status, 403);
+  assert.equal((await call('/api/cards/user-cards/' + otherId)).status, 403);
+  assert.equal((await call('/api/cards/user-cards/' + otherId, {
+    method: 'PUT', body: { mazo: [] },
+  })).status, 403);
+
+  const forcedRoulette = await call('/api/stepcoins/ruleta', {
+    method: 'POST', body: { resultado: 'Gana 20000 Stepcoins' },
+  });
+  assert.equal(forcedRoulette.status, 400);
+  assert.match((await forcedRoulette.json()).error, /requestId/i);
+
+  assert.equal((await call('/api/skins', {
+    method: 'POST', body: {}, authenticated: false,
+  })).status, 401);
+  assert.equal((await call('/api/ufo/ufo-id', {
+    method: 'DELETE', authenticated: false,
+  })).status, 401);
+  assert.equal((await call('/api/retos', {
+    method: 'POST', body: {}, authenticated: false,
+  })).status, 401);
+});

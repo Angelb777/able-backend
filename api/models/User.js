@@ -40,6 +40,7 @@ const userSchema = new mongoose.Schema({
   cartas: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Card' }],
   cardUpgrades: { type: [cardUpgradeSchema], default: [] },
   cardUpgradeRequestIds: { type: [String], default: [], select: false },
+  rouletteRequestIds: { type: [String], default: [], select: false },
   rewardsComprados: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Reward' }],
   skinsCompradas: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Skin' }],
   mazo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Card' }],

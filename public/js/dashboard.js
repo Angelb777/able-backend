@@ -41,6 +41,18 @@ let cartaEditandoId = null;
 let ufosGestion = [];
 let ufoEditandoId = null;
 
+const nativeFetch = window.fetch.bind(window);
+window.fetch = (input, init = {}) => {
+  const url = typeof input === 'string' ? input : input?.url || '';
+  if (!url.startsWith('/api/')) return nativeFetch(input, init);
+  const headers = new Headers(init.headers || {});
+  const token = localStorage.getItem('token') || '';
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  return nativeFetch(input, { ...init, headers });
+};
+
 
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -342,8 +354,18 @@ async function generarMetricas() {
 }
 
 
-function descargarExcel(tipo) {
-  window.open(`/api/metrics/excel?type=${tipo}`);
+async function descargarExcel(tipo) {
+  const response = await fetch(`/api/metrics/excel?type=${tipo}`);
+  if (!response.ok) {
+    alert('No se pudo descargar el Excel');
+    return;
+  }
+  const blobUrl = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = blobUrl;
+  link.download = `metricas-${tipo}.xlsx`;
+  link.click();
+  URL.revokeObjectURL(blobUrl);
 }
 
 function renderInicio() {
@@ -2387,8 +2409,27 @@ document.addEventListener("click", async (e) => {
     if (display) display.textContent = "🎯 Girando...";
 
     // Resultado lógico
-    const indexFinal = obtenerIndiceResultadoRuleta();
-    const resultadoFinal = options[indexFinal];
+    let spinData;
+    try {
+      const response = await fetch('/api/stepcoins/ruleta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId: `${user._id}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        })
+      });
+      spinData = await response.json();
+      if (!response.ok) throw new Error(spinData.error || 'Tirada rechazada');
+    } catch (error) {
+      alert(`No se pudo iniciar la tirada: ${error.message}`);
+      isSpinning = false;
+      e.target.disabled = false;
+      return;
+    }
+    const resultadoFinal = spinData.resultado === 'Carta aleatoria'
+      ? 'Armas'
+      : spinData.resultado;
+    const indexFinal = Math.max(0, options.indexOf(resultadoFinal));
 
     // 🧠 Ángulo por porción
     const sliceAngle = 360 / options.length;
@@ -2409,7 +2450,7 @@ document.addEventListener("click", async (e) => {
     // Esperar que termine la animación
     setTimeout(async () => {
       if (display) display.textContent = `🎁 Resultado: ${resultadoFinal}`;
-      await procesarResultadoRuleta(resultadoFinal);
+      await procesarResultadoRuleta(resultadoFinal, spinData);
 
       // ❗ Dejar ruleta fija en el sector correcto
       if (roulette) {
@@ -2424,19 +2465,22 @@ document.addEventListener("click", async (e) => {
 });
 
 
-async function procesarResultadoRuleta(resultado) {
+async function procesarResultadoRuleta(resultado, authoritativeData = null) {
   try {
-    const res = await fetch("/api/stepcoins/ruleta", {
+    const res = authoritativeData ? null : await fetch("/api/stepcoins/ruleta", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: user._id, resultado })
+      body: JSON.stringify({
+        requestId: `${user._id}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      })
     });
 
-    const data = await res.json();
+    const data = authoritativeData || await res.json();
 
-    if (res.ok) {
+    if (authoritativeData || res.ok) {
+      resultado = data.resultado || resultado;
       // 🎯 SI ES JUEGO DE CULTURA → abrir popup y salir
-      if (resultado === "Juego de cultura") {
+      if (resultado === "Juego de Cultura") {
         window.open(
           `/juego-cultura.html?userId=${user._id}`,
           "_blank",

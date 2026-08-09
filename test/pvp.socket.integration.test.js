@@ -364,7 +364,7 @@ test('two players share presence, movement, one hit, life and explosions', async
   const bulletAck = await emitWithAck(playerA, 'bullet:spawn', {
     clientShotId: 'shot-a-1',
     cardId: 'card-projectile',
-    from: { lat: 41.65671, lng: -0.8785 },
+    from: { lat: 41.656715, lng: -0.8785 },
     heading: 0,
     speed: 180,
     alcance: 45,
@@ -384,6 +384,7 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.equal(spawnedBullet.bulletId, bulletAck.bulletId);
   assert.equal(spawnedBullet.clientShotId, 'shot-a-1');
   assert.equal(spawnedBullet.byUserId, '507f1f77bcf86cd799439011');
+  assert.deepEqual(spawnedBullet.from, { lat: 41.656715, lng: -0.8785 });
   assert.deepEqual(spawnedBullet.explosionFrames, [
     'https://example.test/explosion.png',
   ]);
@@ -402,6 +403,26 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.equal(lifeEventsB, 1);
   assert.equal(explosionsA, 1);
   assert.equal(explosionsB, 1);
+
+  let duplicateSpawnsOnB = 0;
+  const onDuplicateSpawn = () => duplicateSpawnsOnB++;
+  playerB.on('bullet:spawn', onDuplicateSpawn);
+  const duplicateAck = await emitWithAck(playerA, 'bullet:spawn', {
+    clientShotId: 'shot-a-1',
+    cardId: 'card-projectile',
+    from: { lat: 41.656715, lng: -0.8785 },
+    heading: 0,
+    speed: 180,
+    alcance: 45,
+    dano: 125,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 75));
+  playerB.off('bullet:spawn', onDuplicateSpawn);
+  assert.equal(duplicateAck.ok, true);
+  assert.equal(duplicateAck.duplicate, true);
+  assert.equal(duplicateAck.bulletId, bulletAck.bulletId);
+  assert.equal(duplicateSpawnsOnB, 0);
+  assert.equal(lifeByUser.get('507f191e810c19729de860ea'), 875);
 
   const moveFarOnA = waitForEvent(playerA, 'presence:move');
   playerB.emit('presence:update', {
@@ -562,6 +583,7 @@ test('two players share presence, movement, one hit, life and explosions', async
   ]);
   assert.equal(minePlaceAck.ok, true);
   assert.equal(spawnedMineA.mineId, 'mine-test-1');
+  assert.equal(spawnedMineA.seq, 1);
   assert.deepEqual(spawnedMineA, spawnedMineB);
   assert.equal(
     spawnedMineA.imagenMapa,
@@ -606,6 +628,7 @@ test('two players share presence, movement, one hit, life and explosions', async
     ]);
   assert.equal(triggeredMineA.targetUserId, '507f191e810c19729de860ea');
   assert.equal(triggeredMineA.removed, true);
+  assert.ok(triggeredMineA.seq > spawnedMineA.seq);
   assert.deepEqual(triggeredMineA, triggeredMineB);
   assert.deepEqual(triggeredMineA.imagenesExplosion, [
     '/uploads/cards/mine-explosion-final.webp',
@@ -656,6 +679,7 @@ test('two players share presence, movement, one hit, life and explosions', async
   const expiredMine = await expiringMineDestroy;
   assert.equal(expiredMine.mineId, 'mine-test-3');
   assert.equal(expiredMine.reason, 'expired');
+  assert.equal(expiredMine.seq, 2);
 
   const airstrikeSpawnA = waitForEvent(playerA, 'airstrike:spawn');
   const airstrikeSpawnB = waitForEvent(playerB, 'airstrike:spawn');
@@ -675,6 +699,7 @@ test('two players share presence, movement, one hit, life and explosions', async
   ]);
   assert.equal(airstrikeAck.ok, true);
   assert.equal(spawnedAirstrikeA.airstrikeId, 'airstrike-test-1');
+  assert.equal(spawnedAirstrikeA.seq, 1);
   assert.deepEqual(spawnedAirstrikeA, spawnedAirstrikeB);
   assert.equal(
     cardsByUser.get('507f1f77bcf86cd799439011').has('card-airstrike'),
@@ -699,6 +724,7 @@ test('two players share presence, movement, one hit, life and explosions', async
   ]);
   assert.ok(Date.now() - airstrikePlacedAt >= 800);
   assert.deepEqual(launchedAirstrikeA, launchedAirstrikeB);
+  assert.ok(launchedAirstrikeA.seq > spawnedAirstrikeA.seq);
   assert.deepEqual(launchedAirstrikeA.imagenesAvion, [
     '/uploads/cards/plane.webp',
   ]);
@@ -714,6 +740,7 @@ test('two players share presence, movement, one hit, life and explosions', async
     airstrikeImpactB,
   ]);
   assert.deepEqual(impactedAirstrikeA, impactedAirstrikeB);
+  assert.ok(impactedAirstrikeA.seq > launchedAirstrikeA.seq);
   assert.deepEqual(impactedAirstrikeA.imagenesExplosion, [
     '/uploads/cards/airstrike-explosion.webp',
   ]);
@@ -738,6 +765,7 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.equal(turretPlaceAck.turret.dano, 10);
   assert.equal(spawnedTurret.alcance, 100);
   assert.equal(spawnedTurret.dano, 10);
+  assert.equal(spawnedTurret.seq, 1);
   assert.equal(spawnedTurret.renderType, 'flame_spritesheet');
   assert.equal(spawnedTurret.idleSpritesheet.loop, true);
   assert.deepEqual(spawnedTurret.imagenesMovimiento, ['/uploads/cards/turret-classic.png']);
@@ -777,6 +805,7 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.equal(turretHitAck.ok, true);
   assert.equal(damagedTurret.turretId, 'turret-test-1');
   assert.equal(damagedTurret.vida, 75);
+  assert.ok(damagedTurret.seq > spawnedTurret.seq);
   assert.equal(turretHitExplosion.reason, 'turret');
   assert.equal(turretHitExplosion.hitTurretId, 'turret-test-1');
   assert.ok(
@@ -806,6 +835,7 @@ test('two players share presence, movement, one hit, life and explosions', async
     turretFinalExplosionOnB,
   ]);
   assert.equal(destroyedTurret.reason, 'destroyed');
+  assert.ok(destroyedTurret.seq > damagedTurret.seq);
   assert.equal(destroyedTurret.playDeathAnimation, true);
   assert.equal(destroyedTurret.deathSpritesheet.loop, false);
 

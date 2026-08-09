@@ -5,6 +5,8 @@ const path = require("path");
 const Skin = require("../models/Skin");
 const User = require("../models/User");
 const { saveImage } = require("../utils/mediaStorage");
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+const adminOnly = [verifyToken, checkRole(['admin'])];
 const ACTIONS = [
   { key: "idle", legacy: "parado" },
   { key: "walk", legacy: "moviendose" },
@@ -204,7 +206,7 @@ async function saveSkin(req, res, existing = null) {
   }
 }
 
-router.post("/", uploadFields, (req, res) => saveSkin(req, res));
+router.post("/", ...adminOnly, uploadFields, (req, res) => saveSkin(req, res));
 
 router.get("/", async (_req, res) => {
   try {
@@ -222,7 +224,7 @@ router.get("/validadas", async (_req, res) => {
   }
 });
 
-router.put("/:id", uploadFields, async (req, res) => {
+router.put("/:id", ...adminOnly, uploadFields, async (req, res) => {
   try {
     const skin = await Skin.findById(req.params.id);
     if (!skin) return res.status(404).json({ error: "Skin no encontrada" });
@@ -232,7 +234,7 @@ router.put("/:id", uploadFields, async (req, res) => {
   }
 });
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", ...adminOnly, async (req, res) => {
   try {
     await Skin.findByIdAndDelete(req.params.id);
     res.json({ message: "Skin eliminada correctamente" });

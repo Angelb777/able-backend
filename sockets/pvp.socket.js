@@ -48,11 +48,24 @@ module.exports = function(io, dependencies = {}) {
   // Estado en memoria (MVP)
   const players = new Map(); // socketId -> { userId, lat, lng, heading, skinUrl, nombre, zoneId, lastShotByCard:{}, vida }
   const bullets = new Map(); // bulletId -> { byUserId, zoneId, lat, lng, heading, speed, alcance, dano, spriteUrl, createdAt }
+  const acceptedClientShots = new Map(); // userId:clientShotId -> ack
   const roomIndex = new Map(); // zoneId -> Set<socketId>
+  // Una cuenta puede mantener varios sockets, pero solo uno publica presencia.
+  // El ultimo presence:hello valido pasa a ser el socket primario.
+  const primarySocketByUser = new Map();
+  const lastPresenceByUser = new Map();
+  const pendingPresenceLeaves = new Map();
+  const presenceSequenceByUser = new Map();
+  const lifeSequenceByUser = new Map();
+  let snapshotVersion = 0;
+  const presenceDisconnectGraceMs =
+    dependencies.presenceDisconnectGraceMs ?? 15000;
   const turrets = new Map();
   const mines = new Map();
   const airstrikes = new Map();
   const activeUfos = new Map();
+  const activeUfoProjectiles = new Map();
+  const processedUfoDamageEvents = new Set();
   const scheduledUfoZones = new Set();
   const pendingUfoTimers = new Map();
   const TURRET_BULLET_SPEED = 80;
@@ -121,6 +134,8 @@ module.exports = function(io, dependencies = {}) {
       : 'classic',
     idleSpritesheet: t.idleSpritesheet || null,
     deathSpritesheet: t.deathSpritesheet || null,
+    seq: Number(t.seq) || 1,
+    serverTimestamp: Date.now(),
   });
   const minePayload = (mine) => ({
     mineId: String(mine._id),
@@ -135,6 +150,8 @@ module.exports = function(io, dependencies = {}) {
     imagenMapa: mine.imagenesActivacion?.[0] || '',
     imagenesActivacion: mine.imagenesActivacion || [],
     imagenesExplosion: mine.imagenesExplosion || [],
+    seq: Number(mine.seq) || 1,
+    serverTimestamp: Date.now(),
   });
   const airstrikePayload = (airstrike) => {
     const target = { lat: airstrike.lat, lng: airstrike.lng };
@@ -164,16 +181,20 @@ module.exports = function(io, dependencies = {}) {
       imagenesAvion: airstrike.imagenesAvion || [],
       imagenesBomba: airstrike.imagenesBomba || [],
       imagenesExplosion: airstrike.imagenesExplosion || [],
+      seq: Number(airstrike.seq) || 1,
+      serverTimestamp: Date.now(),
     };
   };
   const turretsReady = TurretModel.find({ expiresAt: { $gt: new Date() }, vida: { $gt: 0 } }).lean()
     .then((items) => items.forEach((t) => {
       normalizeTurretCombatStats(t);
+      t.seq = Math.max(1, Number(t.seq) || 1);
       turrets.set(String(t._id), t);
     }))
     .catch((error) => console.error('[PVP] turret restore error', error));
   const minesReady = MineModel.find({ expiresAt: { $gt: new Date() } }).lean()
     .then((items) => items.forEach((mine) => {
+      mine.seq = Math.max(1, Number(mine.seq) || 1);
       mine.playersInside = new Set();
       mines.set(String(mine._id), mine);
     }))
@@ -182,6 +203,7 @@ module.exports = function(io, dependencies = {}) {
     impactAt: { $gt: new Date() },
   }).lean()
     .then((items) => items.forEach((airstrike) => {
+      airstrike.seq = Math.max(1, Number(airstrike.seq) || 1);
       airstrikes.set(String(airstrike._id), airstrike);
     }))
     .catch((error) => console.error('[PVP] airstrike restore error', error));
@@ -190,8 +212,35 @@ module.exports = function(io, dependencies = {}) {
     console.log(`[PVP][${instanceId}] ${message}`, details);
   };
 
-  const playersForUser = (userId) =>
-    [...players.values()].filter((player) => player.userId === userId);
+  const playersForUser = (userId) => {
+    const primarySocketId = primarySocketByUser.get(String(userId));
+    return [...players.entries()]
+      .filter(([, player]) => player.userId === String(userId))
+      .sort(([a], [b]) => (a === primarySocketId ? -1 : b === primarySocketId ? 1 : 0))
+      .map(([, player]) => player);
+  };
+  const nextPresenceSeq = (userId) => {
+    const next = (presenceSequenceByUser.get(String(userId)) || 0) + 1;
+    presenceSequenceByUser.set(String(userId), next);
+    snapshotVersion += 1;
+    return next;
+  };
+  const nextLifeSeq = (userId) => {
+    const next = (lifeSequenceByUser.get(String(userId)) || 0) + 1;
+    lifeSequenceByUser.set(String(userId), next);
+    return next;
+  };
+  const presenceMetadata = (player, seq = player.seq) => ({
+    seq,
+    lifeSeq: lifeSequenceByUser.get(String(player.userId)) || 0,
+    serverTimestamp: Date.now(),
+    lastSeen: player.lastSeen,
+    presenceSessionId: player.presenceSessionId,
+  });
+  const lifeMetadata = (userId) => ({
+    lifeSeq: nextLifeSeq(userId),
+    serverTimestamp: Date.now(),
+  });
 
   const updateSocialPresence = async (userIds) => {
     for (const userId of userIds) {
@@ -257,6 +306,7 @@ module.exports = function(io, dependencies = {}) {
       dano: damage,
       byUserId: attackerId || null,
       reason: source,
+      ...lifeMetadata(targetUserId),
       ...eventData,
     });
 
@@ -345,9 +395,139 @@ module.exports = function(io, dependencies = {}) {
     lat: state.lat,
     lng: state.lng,
     vida: state.vida,
+    state: state.state || 'active',
+    targetUserId: state.targetUserId || null,
+    nextShotAt: state.nextShotAt
+      ? new Date(state.nextShotAt).toISOString()
+      : null,
+    seq: state.seq || 1,
+    serverTimestamp: Date.now(),
     expiresAt: new Date(state.expiresAt).toISOString(),
     ufo: state.ufo,
   });
+
+  const ufoProjectilePayload = (projectile, now = Date.now()) => {
+    const durationMs = Math.max(1, projectile.impactAt - projectile.createdAt);
+    const progress = Math.max(
+      0,
+      Math.min(1, (now - projectile.createdAt) / durationMs)
+    );
+    return {
+      projectileId: projectile.projectileId,
+      ufoId: projectile.ufoId,
+      targetUserId: projectile.targetUserId,
+      from: projectile.from,
+      to: projectile.to,
+      visualFrom: {
+        lat: projectile.from.lat +
+          (projectile.to.lat - projectile.from.lat) * progress,
+        lng: projectile.from.lng +
+          (projectile.to.lng - projectile.from.lng) * progress,
+      },
+      speed: projectile.speed,
+      dano: projectile.dano,
+      spriteUrl: projectile.spriteUrl,
+      rotationOffset: projectile.rotationOffset || 0,
+      createdAt: new Date(projectile.createdAt).toISOString(),
+      impactAt: new Date(projectile.impactAt).toISOString(),
+      serverTimestamp: now,
+    };
+  };
+
+  const bumpUfo = (state, nextState) => {
+    state.seq = (state.seq || 0) + 1;
+    if (nextState) state.state = nextState;
+    return state.seq;
+  };
+
+  const cancelUfoProjectiles = (state, reason) => {
+    for (const [projectileId, projectile] of activeUfoProjectiles) {
+      if (projectile.ufoId !== state.ufoId ||
+          projectile.zoneId !== state.zoneId) continue;
+      activeUfoProjectiles.delete(projectileId);
+      nsp.to(state.zoneId).emit('ufo:projectile:cancel', {
+        projectileId,
+        ufoId: state.ufoId,
+        reason,
+        serverTimestamp: Date.now(),
+      });
+    }
+  };
+
+  const destroyUfo = ({ state, reason, winnerUserId = null }) => {
+    if (!state || state.dead || !activeUfos.has(state.key)) return false;
+    state.dead = true;
+    state.vida = 0;
+    bumpUfo(state, reason === 'destroyed' ? 'dead' : 'expired');
+    activeUfos.delete(state.key);
+    cancelUfoProjectiles(state, reason);
+    const premio = reason === 'destroyed'
+      ? Math.max(0, Number(state.ufo.stepcoinsPremio) || 0)
+      : 0;
+    if (winnerUserId && premio > 0) {
+      UserModel.updateOne(
+        { _id: winnerUserId },
+        { $inc: { stepcoins: premio } }
+      ).catch(() => {});
+    }
+    nsp.to(state.zoneId).emit('ufo:destroy', {
+      ...ufoPayload(state),
+      winnerUserId,
+      stepcoinsPremio: premio,
+      reason,
+    });
+    return true;
+  };
+
+  const applyUfoDamage = ({
+    state,
+    damage,
+    attackerUserId,
+    damageEventId,
+  }) => {
+    if (!state || state.dead || !activeUfos.has(state.key)) {
+      return { applied: false, dead: true, vida: 0 };
+    }
+    const eventId = String(damageEventId || '');
+    if (!eventId || processedUfoDamageEvents.has(eventId)) {
+      return { applied: false, duplicate: true, vida: state.vida };
+    }
+    processedUfoDamageEvents.add(eventId);
+    const forget = setTimeout(
+      () => processedUfoDamageEvents.delete(eventId),
+      60000
+    );
+    forget.unref?.();
+    state.vida = Math.max(0, state.vida - Math.max(0, Number(damage) || 0));
+    if (state.vida === 0) {
+      destroyUfo({
+        state,
+        reason: 'destroyed',
+        winnerUserId: attackerUserId || null,
+      });
+      return { applied: true, dead: true, vida: 0 };
+    }
+    bumpUfo(state, 'active');
+    nsp.to(state.zoneId).emit('ufo:update', ufoPayload(state));
+    return { applied: true, dead: false, vida: state.vida };
+  };
+
+  const primaryAlivePlayersInZone = (zoneId) => {
+    const result = [];
+    for (const [socketId, player] of players) {
+      if (primarySocketByUser.get(player.userId) !== socketId ||
+          player.zoneId !== zoneId || (player.vida ?? 0) <= 0) continue;
+      result.push(player);
+    }
+    return result;
+  };
+
+  const selectUfoTarget = (state) => primaryAlivePlayersInZone(state.zoneId)
+    .sort((a, b) => {
+      const distance = geo.distanceMeters(state, a) -
+        geo.distanceMeters(state, b);
+      return distance || String(a.userId).localeCompare(String(b.userId));
+    })[0] || null;
 
   const scheduleUfosAfterFirstShot = async (zoneId, origin) => {
     if (scheduledUfoZones.has(zoneId)) return;
@@ -383,6 +563,11 @@ module.exports = function(io, dependencies = {}) {
           lng: position.lng,
           anchor: { ...origin },
           vida: Math.max(1, Number(configured.vida) || 300),
+          state: 'active',
+          targetUserId: null,
+          seq: 1,
+          nextShotAt: Date.now() +
+            Math.max(1, Number(configured.segundosEntreDisparos) || 3) * 1000,
           expiresAt: Date.now() + durationMs,
           ufo: { ...configured, _id: ufoId },
         };
@@ -484,6 +669,7 @@ module.exports = function(io, dependencies = {}) {
           }
         } else if (collision.type === 'turret') {
           target.vida = Math.max(0, target.vida - b.dano);
+          target.seq = (Number(target.seq) || 1) + 1;
           TurretModel.updateOne(
             { _id: collision.turretId },
             { $set: { vida: target.vida } }
@@ -503,29 +689,13 @@ module.exports = function(io, dependencies = {}) {
             });
           }
         } else {
-          target.vida = Math.max(0, target.vida - b.dano);
+          applyUfoDamage({
+            state: target,
+            damage: b.dano,
+            attackerUserId: b.byUserId,
+            damageEventId: `bullet:${id}:ufo:${target.ufoId}`,
+          });
           emitBulletExplosion(id, b, 'ufo', { ufoId: target.ufoId });
-          if (target.vida === 0) {
-            activeUfos.delete(target.key);
-            const premio = Math.max(
-              0,
-              Number(target.ufo.stepcoinsPremio) || 0
-            );
-            if (premio > 0) {
-              UserModel.updateOne(
-                { _id: b.byUserId },
-                { $inc: { stepcoins: premio } }
-              ).catch(() => {});
-            }
-            nsp.to(target.zoneId).emit('ufo:destroy', {
-              ufoId: target.ufoId,
-              winnerUserId: b.byUserId,
-              stepcoinsPremio: premio,
-              reason: 'destroyed',
-            });
-          } else {
-            nsp.to(target.zoneId).emit('ufo:update', ufoPayload(target));
-          }
         }
         bullets.delete(id);
         continue;
@@ -554,13 +724,7 @@ module.exports = function(io, dependencies = {}) {
     const now = Date.now();
     for (const [key, state] of activeUfos) {
       if (state.expiresAt <= now) {
-        activeUfos.delete(key);
-        nsp.to(state.zoneId).emit('ufo:destroy', {
-          ufoId: state.ufoId,
-          reason: 'expired',
-          winnerUserId: null,
-          stepcoinsPremio: 0,
-        });
+        destroyUfo({ state, reason: 'expired' });
         continue;
       }
       const movementSpeed = Math.min(
@@ -581,15 +745,97 @@ module.exports = function(io, dependencies = {}) {
       }
       state.lat = next.lat;
       state.lng = next.lng;
+      const target = selectUfoTarget(state);
+      const nextTargetUserId = target?.userId || null;
+      if (nextTargetUserId !== state.targetUserId) {
+        state.targetUserId = nextTargetUserId;
+        bumpUfo(state, target ? 'targeting' : 'active');
+        nsp.to(state.zoneId).emit('ufo:target', ufoPayload(state));
+      }
+      bumpUfo(state, state.targetUserId ? 'targeting' : 'active');
       nsp.to(state.zoneId).emit('ufo:update', ufoPayload(state));
+
+      if (!target || now < state.nextShotAt || state.dead) continue;
+      const speed = Math.max(1, Number(state.ufo.velocidadBala) || 1);
+      const from = { lat: state.lat, lng: state.lng };
+      const to = { lat: target.lat, lng: target.lng };
+      const distance = geo.distanceMeters(from, to);
+      const projectileId =
+        `ufo-${state.ufoId}-${now}-${Math.random().toString(36).slice(2, 7)}`;
+      const projectile = {
+        projectileId,
+        ufoId: state.ufoId,
+        zoneId: state.zoneId,
+        targetUserId: target.userId,
+        from,
+        to,
+        speed,
+        dano: Math.max(0, Number(state.ufo.danoBala) || 0),
+        spriteUrl: state.ufo.imagenBala || '',
+        rotationOffset: Number(state.ufo.rotationOffset) || 0,
+        createdAt: now,
+        impactAt: now + Math.max(1, distance / speed * 1000),
+      };
+      state.nextShotAt = now +
+        Math.max(1, Number(state.ufo.segundosEntreDisparos) || 3) * 1000;
+      activeUfoProjectiles.set(projectileId, projectile);
+      nsp.to(state.zoneId).emit(
+        'ufo:projectile:spawn',
+        ufoProjectilePayload(projectile, now)
+      );
     }
   }, 1000);
   ufoTimer.unref?.();
+
+  const ufoProjectileTimer = setInterval(async () => {
+    const now = Date.now();
+    for (const [projectileId, projectile] of activeUfoProjectiles) {
+      if (projectile.impactAt > now) continue;
+      activeUfoProjectiles.delete(projectileId);
+      const state = [...activeUfos.values()].find((candidate) =>
+        candidate.ufoId === projectile.ufoId &&
+        candidate.zoneId === projectile.zoneId && !candidate.dead);
+      if (!state) continue;
+      const target = playersForUser(projectile.targetUserId)[0];
+      const hit = Boolean(
+        target && (target.vida ?? 0) > 0 &&
+        target.zoneId === projectile.zoneId &&
+        geo.distanceMeters(target, projectile.to) <= 15
+      );
+      let result = null;
+      if (hit) {
+        result = await applyPlayerDamage({
+          attackerUserId: '',
+          target,
+          damage: projectile.dano,
+          zoneId: projectile.zoneId,
+          source: 'ufo',
+          killEventId: `ufo:${projectileId}`,
+          eventData: {
+            projectileId,
+            ufoId: projectile.ufoId,
+          },
+        }).catch((error) => {
+          console.error(`[PVP][${instanceId}] ufo damage error`, error);
+          return null;
+        });
+      }
+      nsp.to(projectile.zoneId).emit('ufo:projectile:impact', {
+        ...ufoProjectilePayload(projectile, now),
+        hit,
+        vida: result?.vida ?? target?.vida ?? null,
+        lat: projectile.to.lat,
+        lng: projectile.to.lng,
+      });
+    }
+  }, 50);
+  ufoProjectileTimer.unref?.();
 
   const turretTimer = setInterval(async () => {
     const now = Date.now();
     for (const [turretId, turret] of turrets) {
       if (new Date(turret.expiresAt).getTime() <= now || turret.vida <= 0) {
+        turret.seq = (Number(turret.seq) || 1) + 1;
         turrets.delete(turretId);
         await TurretModel.deleteOne({ _id: turretId }).catch(() => {});
         nsp.to(turret.zoneId).emit('turret:destroy', {
@@ -600,25 +846,54 @@ module.exports = function(io, dependencies = {}) {
         continue;
       }
       if (new Date(turret.nextShotAt).getTime() > now) continue;
-      const candidates = [...players.values()].filter((p) =>
-        p.zoneId === turret.zoneId && p.userId !== String(turret.ownerUserId) &&
-        (p.vida ?? 0) > 0 && geo.distanceMeters(turret, p) <= turret.alcance);
+      const candidates = primaryAlivePlayersInZone(turret.zoneId).filter((p) =>
+        p.userId !== String(turret.ownerUserId) &&
+        geo.distanceMeters(turret, p) <= turret.alcance);
       candidates.sort((a, b) => geo.distanceMeters(turret, a) - geo.distanceMeters(turret, b));
-      const target = candidates[0];
+      const playerTarget = candidates[0];
+      const ufoCandidates = [...activeUfos.values()]
+        .filter((state) => state.zoneId === turret.zoneId && !state.dead &&
+          geo.distanceMeters(turret, state) <= turret.alcance)
+        .sort((a, b) => geo.distanceMeters(turret, a) - geo.distanceMeters(turret, b));
+      const ufoTarget = playerTarget ? null : ufoCandidates[0];
+      const target = playerTarget || ufoTarget;
       if (!target) continue;
       turret.nextShotAt = new Date(now + turret.cadenciaDisparo * 1000);
       await TurretModel.updateOne({ _id: turretId }, { $set: { nextShotAt: turret.nextShotAt } }).catch(() => {});
       const shotId = `turret-${turretId}-${now}`;
       const distance = geo.distanceMeters(turret, target);
       nsp.to(turret.zoneId).emit('turret:shot', {
-        shotId, turretId, ownerUserId: String(turret.ownerUserId), targetUserId: target.userId,
+        shotId, turretId, ownerUserId: String(turret.ownerUserId),
+        targetUserId: playerTarget?.userId || null,
+        targetUfoId: ufoTarget?.ufoId || null,
         from: { lat: turret.lat, lng: turret.lng }, to: { lat: target.lat, lng: target.lng },
         speed: TURRET_BULLET_SPEED, dano: turret.dano,
-        spriteUrl: turret.imagenesDisparo?.[0] || '',
+        spriteUrl: turret.imagenesDisparo?.[0] || '', serverTimestamp: now,
       });
       setTimeout(async () => {
+        if (!turrets.has(turretId)) return;
+        if (ufoTarget) {
+          const currentUfo = activeUfos.get(ufoTarget.key);
+          if (!currentUfo || currentUfo.dead ||
+              geo.distanceMeters(currentUfo, { lat: target.lat, lng: target.lng }) >
+                UFO_HIT_RADIUS_M) return;
+          applyUfoDamage({
+            state: currentUfo,
+            damage: turret.dano,
+            attackerUserId: String(turret.ownerUserId),
+            damageEventId: `turret:${shotId}:ufo:${currentUfo.ufoId}`,
+          });
+          nsp.to(turret.zoneId).emit('turret:shot:explode', {
+            shotId,
+            turretId,
+            targetUfoId: currentUfo.ufoId,
+            lat: target.lat,
+            lng: target.lng,
+          });
+          return;
+        }
         const current = playersForUser(target.userId)[0];
-        if (!turrets.has(turretId) || !current || geo.distanceMeters(current, { lat: target.lat, lng: target.lng }) > PLAYER_HIT_RADIUS_M) return;
+        if (!current || geo.distanceMeters(current, { lat: target.lat, lng: target.lng }) > PLAYER_HIT_RADIUS_M) return;
         const result = await applyPlayerDamage({
           attackerUserId: String(turret.ownerUserId),
           target: current,
@@ -644,10 +919,11 @@ module.exports = function(io, dependencies = {}) {
     const now = Date.now();
     for (const [mineId, mine] of mines) {
       if (new Date(mine.expiresAt).getTime() <= now) {
+        mine.seq = (Number(mine.seq) || 1) + 1;
         mines.delete(mineId);
         await MineModel.deleteOne({ _id: mineId }).catch(() => {});
         nsp.to(mine.zoneId).emit('mine:destroy', {
-          mineId,
+          ...minePayload(mine),
           reason: 'expired',
         });
         continue;
@@ -696,6 +972,7 @@ module.exports = function(io, dependencies = {}) {
 
       // Una mina siempre se destruye al detonar.
       const removeAfterTrigger = true;
+      mine.seq = (Number(mine.seq) || 1) + 1;
       mines.delete(mineId);
       await MineModel.deleteOne({ _id: mineId }).catch(() => {});
 
@@ -716,6 +993,7 @@ module.exports = function(io, dependencies = {}) {
       if (!airstrike.launched &&
           new Date(airstrike.attackAt).getTime() <= now) {
         airstrike.launched = true;
+        airstrike.seq = (Number(airstrike.seq) || 1) + 1;
         await AirstrikeModel.updateOne(
           { _id: airstrikeId },
           { $set: { launched: true } }
@@ -727,6 +1005,7 @@ module.exports = function(io, dependencies = {}) {
       }
 
       if (new Date(airstrike.impactAt).getTime() > now) continue;
+      airstrike.seq = (Number(airstrike.seq) || 1) + 1;
       airstrikes.delete(airstrikeId);
       await AirstrikeModel.deleteOne({ _id: airstrikeId }).catch(() => {});
 
@@ -920,7 +1199,20 @@ module.exports = function(io, dependencies = {}) {
         const clanIds = [...await ClanMembershipService.getClanIds(userId)];
         const bountyTotal = await BountyService.totalForTarget(userId).catch(() => 0);
 
-        players.set(socket.id, {
+        const now = Date.now();
+        const previousPrimarySocketId = primarySocketByUser.get(userId);
+        const previousPrimary = previousPrimarySocketId
+          ? players.get(previousPrimarySocketId)
+          : null;
+        const pendingLeave = pendingPresenceLeaves.get(userId);
+        if (pendingLeave) {
+          clearTimeout(pendingLeave);
+          pendingPresenceLeaves.delete(userId);
+        }
+        if (previousPrimary) previousPrimary.isPresencePrimary = false;
+        const seq = nextPresenceSeq(userId);
+        const presenceSessionId = `${socket.id}:${seq}`;
+        const playerState = {
           userId,
           lat,
           lng,
@@ -934,15 +1226,31 @@ module.exports = function(io, dependencies = {}) {
           vida,
           clanIds,
           bountyTotal,
-        });
+          seq,
+          lastSeen: now,
+          connectedAt: now,
+          lastClientSeq: 0,
+          presenceSessionId,
+          isPresencePrimary: true,
+        };
+        players.set(socket.id, playerState);
+        primarySocketByUser.set(userId, socket.id);
+        lastPresenceByUser.set(userId, playerState);
+        // Los sockets secundarios conservan recepcion de eventos, pero comparten
+        // la misma posicion logica para no crear dos blancos del mismo usuario.
+        for (const sameUser of playersForUser(userId)) {
+          if (sameUser === playerState) continue;
+          sameUser.lat = lat;
+          sameUser.lng = lng;
+          sameUser.heading = playerState.heading;
+          sameUser.vida = vida;
+        }
         socialRealtime.register(userId, socket);
 
         // Enviar al que entra el estado de la sala (jugadores ya presentes)
         const othersByUserId = new Map();
-        for (const sid of roomIndex.get(zoneId)) {
-          if (sid === socket.id) continue;
-          const p = players.get(sid);
-          if (p && p.userId !== userId) {
+        for (const p of lastPresenceByUser.values()) {
+          if (p.zoneId === zoneId && p.userId !== userId) {
             othersByUserId.set(p.userId, {
               userId:p.userId,
               lat:p.lat,
@@ -955,6 +1263,7 @@ module.exports = function(io, dependencies = {}) {
               vida:p.vida??1000,
               clanIds:p.clanIds || [],
               bountyTotal:p.bountyTotal || 0,
+              ...presenceMetadata(p),
             });
           }
         }
@@ -974,6 +1283,9 @@ module.exports = function(io, dependencies = {}) {
         const roomUfos = [...activeUfos.values()]
           .filter((ufo) => ufo.zoneId === zoneId)
           .map(ufoPayload);
+        const roomUfoProjectiles = [...activeUfoProjectiles.values()]
+          .filter((projectile) => projectile.zoneId === zoneId)
+          .map((projectile) => ufoProjectilePayload(projectile));
         const claimed = await UserModel.findOneAndUpdate(
           { _id: userId, stepcoinsTorretaPendientes: { $gt: 0 } },
           [{ $set: {
@@ -990,10 +1302,13 @@ module.exports = function(io, dependencies = {}) {
           mines: roomMines,
           airstrikes: roomAirstrikes,
           ufos: roomUfos,
+          ufoProjectiles: roomUfoProjectiles,
           claimedStepcoins,
           clanIds,
           bountyTotal,
           instanceId,
+          snapshotVersion,
+          serverTimestamp: Date.now(),
         });
         log('presence registered', {
           socketId: socket.id,
@@ -1021,6 +1336,7 @@ module.exports = function(io, dependencies = {}) {
           vida,
           clanIds,
           bountyTotal,
+          ...presenceMetadata(playerState),
         });
       } catch (e) {
         console.error(`[PVP][${instanceId}] presence hello error`, {
@@ -1036,8 +1352,20 @@ module.exports = function(io, dependencies = {}) {
       const p = players.get(socket.id);
       if (!p) return;
 
-      const { lat, lng, heading, skinUrl, skinId: requestedSkinId } = payload || {};
+      if (primarySocketByUser.get(p.userId) !== socket.id) return;
+      const {
+        lat,
+        lng,
+        heading,
+        skinUrl,
+        skinId: requestedSkinId,
+        clientSeq,
+      } = payload || {};
       if (typeof lat!=='number' || typeof lng!=='number') return;
+      if (Number.isSafeInteger(clientSeq)) {
+        if (clientSeq <= p.lastClientSeq) return;
+        p.lastClientSeq = clientSeq;
+      }
 
       const normalizedRequestedSkinId = String(requestedSkinId || '');
       if (socket.data.authUserId && normalizedRequestedSkinId !== String(p.skinId || '')) {
@@ -1046,11 +1374,15 @@ module.exports = function(io, dependencies = {}) {
           p.skinUrl = authoritative.skinUrl;
           p.skinId = authoritative.skinId;
           p.skinDefinition = authoritative.skinDefinition;
+          p.lastSeen = Date.now();
+          p.seq = nextPresenceSeq(p.userId);
+          lastPresenceByUser.set(p.userId, p);
           nsp.to(p.zoneId).emit('presence:skin', {
             userId: p.userId,
             skinUrl: p.skinUrl,
             skinId: p.skinId,
             skinDefinition: p.skinDefinition,
+            ...presenceMetadata(p),
           });
         } catch (error) {
           console.error(`[PVP][${instanceId}] skin refresh error`, {
@@ -1076,6 +1408,16 @@ module.exports = function(io, dependencies = {}) {
       p.lat = lat;
       p.lng = lng;
       if (typeof heading === 'number') p.heading = heading;
+      p.lastSeen = Date.now();
+      p.seq = nextPresenceSeq(p.userId);
+      lastPresenceByUser.set(p.userId, p);
+      for (const sameUser of playersForUser(p.userId)) {
+        if (sameUser === p) continue;
+        sameUser.lat = p.lat;
+        sameUser.lng = p.lng;
+        sameUser.heading = p.heading;
+        sameUser.vida = p.vida;
+      }
       if (!socket.data.authUserId && typeof skinUrl === 'string') {
         p.skinUrl = skinUrl.trim();
       }
@@ -1091,6 +1433,7 @@ module.exports = function(io, dependencies = {}) {
         vida: p.vida,
         clanIds: p.clanIds || [],
         bountyTotal: p.bountyTotal || 0,
+        ...presenceMetadata(p),
       });
       log('presence move', {
         socketId: socket.id,
@@ -1101,6 +1444,35 @@ module.exports = function(io, dependencies = {}) {
         skinUrl: p.skinUrl,
         nickname: p.nickname,
       });
+    });
+
+    socket.on('presence:heartbeat', (payload, cb) => {
+      const p = players.get(socket.id);
+      if (!p || primarySocketByUser.get(p.userId) !== socket.id) {
+        return cb?.({ ok: false, secondary: Boolean(p) });
+      }
+      const clientSeq = payload?.clientSeq;
+      if (Number.isSafeInteger(clientSeq)) {
+        if (clientSeq <= p.lastClientSeq) {
+          return cb?.({ ok: true, ignored: true, seq: p.seq });
+        }
+        p.lastClientSeq = clientSeq;
+      }
+      p.lastSeen = Date.now();
+      lastPresenceByUser.set(p.userId, p);
+      cb?.({
+        ok: true,
+        ...presenceMetadata(p),
+      });
+    });
+
+    // Los clientes nunca informan daño ni impactos de OVNI. Se responde de
+    // forma explícita para que consumidores antiguos no reintenten en bucle.
+    socket.on('ufo:hurt', (_payload, cb) => {
+      cb?.({ ok: false, error: 'UFO combat is server-authoritative' });
+    });
+    socket.on('ufo:impact', (_payload, cb) => {
+      cb?.({ ok: false, error: 'UFO impacts are server-authoritative' });
     });
 
     // Resincroniza la copia de vida en memoria después de un reset REST.
@@ -1118,6 +1490,7 @@ module.exports = function(io, dependencies = {}) {
           userId: p.userId,
           vida,
           reason: 'sync',
+          ...lifeMetadata(p.userId),
         });
         cb?.({ ok: true, vida });
       } catch (error) {
@@ -1208,6 +1581,7 @@ module.exports = function(io, dependencies = {}) {
           cardId,
           cooldownMs,
           reason: 'life-card',
+          ...lifeMetadata(p.userId),
         });
         cb?.({ ok: true, vida, vidaRecuperada, cooldownMs });
       } catch (error) {
@@ -1284,6 +1658,7 @@ module.exports = function(io, dependencies = {}) {
           imagenesExplosion: card.imagenesExplosionTrampa || [],
         });
         const mine = mineDoc.toObject();
+        mine.seq = 1;
         mine.playersInside = new Set();
         mines.set(String(mine._id), mine);
         for (const sameUser of playersForUser(p.userId)) {
@@ -1381,6 +1756,7 @@ module.exports = function(io, dependencies = {}) {
           imagenesExplosion: card.imagenesExplosionInvocacion || [],
         });
         const airstrike = airstrikeDoc.toObject();
+        airstrike.seq = 1;
         airstrikes.set(String(airstrike._id), airstrike);
         for (const sameUser of playersForUser(p.userId)) {
           sameUser.lastShotByCard = {
@@ -1453,6 +1829,7 @@ module.exports = function(io, dependencies = {}) {
           deathSpritesheet: card.turretDeathSpritesheet || undefined,
         });
         const plain = turret.toObject();
+        plain.seq = 1;
         turrets.set(String(plain._id), plain);
         const result = turretPayload(plain);
         nsp.to(plain.zoneId).emit('turret:spawn', result);
@@ -1491,6 +1868,21 @@ module.exports = function(io, dependencies = {}) {
         ) {
           throw new Error('Payload de bala inválido');
         }
+        if (!Number.isFinite(from.lat) || !Number.isFinite(from.lng) ||
+            from.lat < -90 || from.lat > 90 || from.lng < -180 || from.lng > 180 ||
+            !Number.isFinite(heading)) {
+          throw new Error('Coordenadas de bala invalidas');
+        }
+        const normalizedClientShotId = String(clientShotId || '').trim();
+        if (!normalizedClientShotId || normalizedClientShotId.length > 160) {
+          throw new Error('clientShotId invalido');
+        }
+        const shotKey = `${p.userId}:${normalizedClientShotId}`;
+        const accepted = acceptedClientShots.get(shotKey);
+        if (accepted) {
+          cb?.({ ...accepted, duplicate: true });
+          return;
+        }
         // Rango de spawn razonable (anti-teleport del origen)
         if (geo.distanceMeters({lat:p.lat,lng:p.lng}, from) > 25) throw new Error('Origen inválido');
 
@@ -1502,7 +1894,7 @@ module.exports = function(io, dependencies = {}) {
 
         // Crear bala server-side
         const bulletId = `${p.userId}-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-        const authoritativeFrom = { lat: p.lat, lng: p.lng };
+        const authoritativeFrom = { lat: from.lat, lng: from.lng };
         const authoritativeHeading = ((heading % 360) + 360) % 360;
         const authoritativeSpeed = Math.min(Math.max(speed, 0), 180);
         const authoritativeExplosionFrames = Array.isArray(validated.explosionFrames) && validated.explosionFrames.length
@@ -1512,7 +1904,7 @@ module.exports = function(io, dependencies = {}) {
           ? authoritativeExplosionFrames.filter((frame) => typeof frame === 'string' && frame.trim())
           : [];
         bullets.set(bulletId, {
-          clientShotId,
+          clientShotId: normalizedClientShotId,
           byUserId: p.userId,
           zoneId: p.zoneId,
           lat: authoritativeFrom.lat,
@@ -1537,7 +1929,7 @@ module.exports = function(io, dependencies = {}) {
         // Avisar a la sala para que los clientes la dibujen en local
         nsp.to(p.zoneId).emit('bullet:spawn', {
           bulletId, byUserId: p.userId,
-          clientShotId,
+          clientShotId: normalizedClientShotId,
           from: authoritativeFrom,
           heading: authoritativeHeading,
           speed: authoritativeSpeed,
@@ -1552,18 +1944,25 @@ module.exports = function(io, dependencies = {}) {
           startDelayMs: BULLET_START_DELAY_MS,
         });
 
-        cb?.({
+        const acceptedAck = {
           ok:true,
           bulletId,
-          clientShotId,
+          clientShotId: normalizedClientShotId,
           alcance: validated.alcance,
           dano: validated.dano,
           startDelayMs: BULLET_START_DELAY_MS,
-        });
+        };
+        acceptedClientShots.set(shotKey, acceptedAck);
+        const forgetShot = setTimeout(
+          () => acceptedClientShots.delete(shotKey),
+          60000,
+        );
+        forgetShot.unref?.();
+        cb?.(acceptedAck);
         log('bullet spawned', {
           socketId: socket.id,
           bulletId,
-          clientShotId,
+          clientShotId: normalizedClientShotId,
           byUserId: p.userId,
           from: authoritativeFrom,
           heading: authoritativeHeading,
@@ -1597,9 +1996,58 @@ module.exports = function(io, dependencies = {}) {
       roomIndex.get(p.zoneId)?.delete(socket.id);
       players.delete(socket.id);
       socialRealtime.unregister(p.userId, socket);
-      const stillConnected = playersForUser(p.userId).length > 0;
-      if (!stillConnected) {
-        nsp.to(p.zoneId).emit('presence:leave', { userId: p.userId });
+      const wasPrimary = primarySocketByUser.get(p.userId) === socket.id;
+      let leaveEmitted = false;
+      if (wasPrimary) {
+        const replacementEntry = [...players.entries()]
+          .filter(([, candidate]) => candidate.userId === p.userId)
+          .sort(([, a], [, b]) => b.connectedAt - a.connectedAt)[0];
+        if (replacementEntry) {
+          const [replacementSocketId, replacement] = replacementEntry;
+          replacement.isPresencePrimary = true;
+          replacement.seq = nextPresenceSeq(p.userId);
+          replacement.lastSeen = Date.now();
+          replacement.presenceSessionId = `${replacementSocketId}:${replacement.seq}`;
+          primarySocketByUser.set(p.userId, replacementSocketId);
+          lastPresenceByUser.set(p.userId, replacement);
+          nsp.to(replacement.zoneId).emit('presence:spawn', {
+            userId: replacement.userId,
+            lat: replacement.lat,
+            lng: replacement.lng,
+            heading: replacement.heading,
+            skinUrl: replacement.skinUrl,
+            skinId: replacement.skinId || '',
+            skinDefinition: replacement.skinDefinition || null,
+            nickname: replacement.nickname,
+            vida: replacement.vida,
+            clanIds: replacement.clanIds || [],
+            bountyTotal: replacement.bountyTotal || 0,
+            ...presenceMetadata(replacement),
+          });
+        } else {
+          primarySocketByUser.delete(p.userId);
+          const oldTimer = pendingPresenceLeaves.get(p.userId);
+          if (oldTimer) clearTimeout(oldTimer);
+          const leaveDelayMs = reason === 'client namespace disconnect'
+            ? 0
+            : presenceDisconnectGraceMs;
+          const leaveTimer = setTimeout(() => {
+            pendingPresenceLeaves.delete(p.userId);
+            if (primarySocketByUser.has(p.userId)) return;
+            const seq = nextPresenceSeq(p.userId);
+            lastPresenceByUser.delete(p.userId);
+            nsp.to(p.zoneId).emit('presence:leave', {
+              userId: p.userId,
+              seq,
+              serverTimestamp: Date.now(),
+              lastSeen: p.lastSeen,
+              presenceSessionId: p.presenceSessionId,
+              reason: 'disconnect-timeout',
+            });
+          }, leaveDelayMs);
+          leaveTimer.unref?.();
+          pendingPresenceLeaves.set(p.userId, leaveTimer);
+        }
       }
       if (roomIndex.get(p.zoneId)?.size === 0) {
         roomIndex.delete(p.zoneId);
@@ -1609,14 +2057,19 @@ module.exports = function(io, dependencies = {}) {
         pendingUfoTimers.delete(p.zoneId);
         scheduledUfoZones.delete(p.zoneId);
         for (const [key, ufo] of activeUfos) {
-          if (ufo.zoneId === p.zoneId) activeUfos.delete(key);
+          if (ufo.zoneId === p.zoneId) {
+            ufo.dead = true;
+            activeUfos.delete(key);
+            cancelUfoProjectiles(ufo, 'room-empty');
+          }
         }
       }
       log('socket disconnected', {
         socketId: socket.id,
         userId: p.userId,
         reason,
-        leaveEmitted: !stillConnected,
+        leaveEmitted,
+        leaveScheduled: wasPrimary && !primarySocketByUser.has(p.userId),
         remainingPlayers: players.size,
       });
     });
