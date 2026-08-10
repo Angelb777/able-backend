@@ -20,6 +20,20 @@ const promocionCompradaSchema = new mongoose.Schema({
   paymentId: { type: mongoose.Schema.Types.ObjectId, ref: "Payment" },
 
   activo: { type: Boolean, default: true }, // por si quieres desactivarla manualmente
+  status: {
+    type: String,
+    enum: ["pending", "published", "disabled", "retired", "expired"],
+    default: "pending"
+  },
+  paymentStatus: {
+    type: String,
+    enum: ["pending", "confirmed", "waived", "legacy_confirmed"],
+    default: "pending"
+  },
+  commercialRequestId: { type: mongoose.Schema.Types.ObjectId, ref: "CommercialRequest", index: true },
+  approvedAt: Date,
+  publishedAt: Date,
+  retiredAt: Date,
 }, { timestamps: true });
 
 module.exports = mongoose.model("PromocionComprada", promocionCompradaSchema);

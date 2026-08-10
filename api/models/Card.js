@@ -91,7 +91,19 @@ const CardSchema = new mongoose.Schema({
   porcentajeReduccion: { type: Number, default: 0 },
   imagenesDefensa: [String],
 
-  creadoEn: { type: Date, default: Date.now }
+  creadoEn: { type: Date, default: Date.now },
+  commercialRequestId: { type: mongoose.Schema.Types.ObjectId, ref: "CommercialRequest", index: true },
+  commercialOwnerId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  commercialTier: { type: String, enum: ["", "short", "medium", "long"], default: "" },
+  isCommercial: { type: Boolean, default: false },
+  commercialPublicationStatus: {
+    type: String,
+    enum: ["published", "disabled", "retired"],
+    default: "published"
+  },
+  publishedAt: Date,
+  reviewDueAt: Date,
+  retiredAt: Date
 });
 
 module.exports = mongoose.model("Card", CardSchema);

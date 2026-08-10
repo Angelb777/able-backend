@@ -41,6 +41,201 @@ let cartaEditandoId = null;
 let ufosGestion = [];
 let ufoEditandoId = null;
 
+function commercialEscape(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function commercialId(value) {
+  return String(value?.id || value?._id || value || "");
+}
+
+function commercialButtons(request) {
+  const id = commercialId(request);
+  const action = (key, label) =>
+    `<button type="button" onclick="commercialRequestAction('${commercialEscape(id)}','${key}')">${label}</button>`;
+  const buttons = [];
+  if (request.paymentStatus === "pending") {
+    buttons.push(action("confirm_payment", "Confirmar pago manual"));
+    buttons.push(action("waive_payment", "Eximir pago"));
+  }
+  if (["pending_review", "changes_requested"].includes(request.status)) {
+    buttons.push(action("approve", "Aprobar"));
+  }
+  if (["pending_payment", "pending_material", "pending_review", "changes_requested"].includes(request.status)) {
+    buttons.push(action("request_changes", "Solicitar cambios"));
+    buttons.push(action("reject", "Rechazar"));
+  }
+  if (["approved", "renewed"].includes(request.status)) buttons.push(action("publish", "Publicar"));
+  if (request.status === "published") {
+    buttons.push(action("disable", "Desactivar"));
+    if (["commercial_skin", "commercial_weapon"].includes(request.type)) {
+      buttons.push(action("mark_renewal_due", "Marcar revisión anual"));
+    }
+    buttons.push(action("retire", "Retirar"));
+  }
+  if (request.status === "disabled") {
+    buttons.push(action("republish", "Volver a publicar"));
+    buttons.push(action("retire", "Retirar"));
+  }
+  if (request.status === "renewal_due") {
+    buttons.push(action("renew", "Renovar un año"));
+    buttons.push(action("retire", "Retirar"));
+  }
+  if (request.status === "expired" && request.type === "positioning") {
+    buttons.push(action("renew_positioning", "Preparar renovación"));
+  }
+  return buttons.join(" ");
+}
+
+function commercialPublicationEditor(request) {
+  if (!["approved", "renewed"].includes(request.status)) return "";
+  const id = commercialId(request);
+  const firstImage = (request.materials || []).find((m) => String(m.mimeType || "").startsWith("image/"))?.url || "";
+  let data = {};
+  if (request.type === "commercial_skin") {
+    data = {
+      titulo: request.title,
+      descripcion: request.formData?.description || "",
+      portada: firstImage,
+      catalogPriceStepcoins: null,
+      renderType: "classic",
+      scripts: {}
+    };
+  } else if (request.type === "commercial_weapon") {
+    data = {
+      titulo: request.title,
+      descripcion: request.formData?.description || "",
+      imagenPortada: firstImage,
+      imagenesArma: firstImage ? [firstImage] : [],
+      imagenesExplosion: [],
+      dano: null,
+      alcance: null,
+      tiempoEspera: null,
+      dispositivo: "Ambos"
+    };
+  }
+  if (!Object.keys(data).length) return "";
+  return `<details style="margin:10px 0;"><summary>Datos de integración controlados por Able73</summary>
+    <p><small>Las estadísticas del arma y el precio Stepcoins de la skin solo los define Superadmin.</small></p>
+    <textarea id="commercialPublish-${commercialEscape(id)}" rows="10" style="width:100%;">${commercialEscape(JSON.stringify(data, null, 2))}</textarea>
+  </details>`;
+}
+
+async function renderGestionComercial() {
+  document.querySelectorAll(".seccion").forEach((s) => (s.style.display = "none"));
+  const section = document.getElementById("gestionComercial");
+  if (!section || role !== "admin") return;
+  section.style.display = "block";
+  const establishmentsNode = document.getElementById("commercialEstablishments");
+  const requestsNode = document.getElementById("commercialRequests");
+  establishmentsNode.innerHTML = "Cargando...";
+  requestsNode.innerHTML = "Cargando...";
+  try {
+    const status = document.getElementById("commercialStatusFilter")?.value || "";
+    const type = document.getElementById("commercialTypeFilter")?.value || "";
+    const params = new URLSearchParams();
+    if (status) params.set("status", status);
+    if (type) params.set("type", type);
+    const [establishmentsResponse, requestsResponse] = await Promise.all([
+      fetch("/api/commercial/admin/establishments"),
+      fetch(`/api/commercial/admin/requests?${params.toString()}`),
+    ]);
+    const establishments = await establishmentsResponse.json();
+    const requests = await requestsResponse.json();
+    if (!establishmentsResponse.ok) throw new Error(establishments.error || "No se pudieron cargar establecimientos");
+    if (!requestsResponse.ok) throw new Error(requests.error || "No se pudieron cargar solicitudes");
+
+    establishmentsNode.innerHTML = establishments.length ? establishments.map((item) => {
+      const id = commercialId(item);
+      return `<article style="border:1px solid #555;padding:12px;margin:8px 0;border-radius:8px;">
+        <strong>${commercialEscape(item.publicName)}</strong> — ${commercialEscape(item.status)}<br>
+        <small>${commercialEscape(item.ownerId?.nombre)} · ${commercialEscape(item.ownerId?.email)}</small><br>
+        ${item.logoUrl ? `<img src="${commercialEscape(item.logoUrl)}" alt="Logo" style="max-width:80px;max-height:80px;margin:8px 0;">` : ""}
+        <div>${commercialEscape(item.address)} · ${commercialEscape(item.lat)}, ${commercialEscape(item.lng)}</div>
+        ${item.reviewNotes ? `<p>Notas: ${commercialEscape(item.reviewNotes)}</p>` : ""}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+          <button onclick="commercialEstablishmentAction('${commercialEscape(id)}','approve')">Aprobar</button>
+          <button onclick="commercialEstablishmentAction('${commercialEscape(id)}','request_changes')">Solicitar cambios</button>
+          <button onclick="commercialEstablishmentAction('${commercialEscape(id)}','reject')">Rechazar</button>
+          <button onclick="commercialEstablishmentAction('${commercialEscape(id)}','disable')">Desactivar</button>
+          <button onclick="commercialEstablishmentAction('${commercialEscape(id)}','reopen')">Reabrir revisión</button>
+        </div>
+      </article>`;
+    }).join("") : "<p>No hay establecimientos.</p>";
+
+    requestsNode.innerHTML = requests.length ? requests.map((item) => {
+      const materials = (item.materials || []).map((material) =>
+        `<a href="${commercialEscape(material.url)}" target="_blank" rel="noopener noreferrer">${commercialEscape(material.originalName || "material")}</a>`
+      ).join(" · ") || "Sin material";
+      return `<article style="border:1px solid #555;padding:14px;margin:10px 0;border-radius:8px;">
+        <strong>${commercialEscape(item.title)}</strong><br>
+        <span>${commercialEscape(item.type)} ${commercialEscape(item.subtype)}</span> ·
+        <b>${commercialEscape(item.status)}</b> · pago: ${commercialEscape(item.paymentStatus)} ·
+        ${commercialEscape(item.price)} ${commercialEscape(item.currency)}<br>
+        <small>${commercialEscape(item.ownerId?.nombre)} · ${commercialEscape(item.ownerId?.email)} · revisión ${commercialEscape(item.revision)}</small>
+        <p>Material: ${materials}</p>
+        ${item.reviewDueAt ? `<p>Próxima revisión: ${commercialEscape(new Date(item.reviewDueAt).toLocaleDateString())}</p>` : ""}
+        ${item.reviewNotes ? `<p>Notas: ${commercialEscape(item.reviewNotes)}</p>` : ""}
+        ${commercialPublicationEditor(item)}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">${commercialButtons(item)}</div>
+      </article>`;
+    }).join("") : "<p>No hay solicitudes con estos filtros.</p>";
+  } catch (error) {
+    establishmentsNode.innerHTML = `<p style="color:red;">${commercialEscape(error.message)}</p>`;
+    requestsNode.innerHTML = "";
+  }
+}
+
+async function commercialEstablishmentAction(id, action) {
+  const notes = prompt("Notas para el comercio (opcional):", "");
+  if (notes === null) return;
+  const response = await fetch(`/api/commercial/admin/establishments/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, notes }),
+  });
+  const result = await response.json();
+  if (!response.ok) return alert(result.error || "No se pudo actualizar el establecimiento");
+  await renderGestionComercial();
+}
+
+async function commercialRequestAction(id, action) {
+  const payload = { action };
+  if (["request_changes", "reject", "disable", "retire", "mark_renewal_due", "renew", "renew_positioning"].includes(action)) {
+    const notes = prompt("Notas de revisión:", "");
+    if (notes === null) return;
+    payload.notes = notes;
+  }
+  if (action === "confirm_payment") {
+    const reference = prompt("Referencia del pago verificado manualmente:", "");
+    if (!reference) return;
+    payload.paymentReference = reference;
+  }
+  if (action === "publish") {
+    const editor = document.getElementById(`commercialPublish-${id}`);
+    if (editor) {
+      try { payload.publicationData = JSON.parse(editor.value); }
+      catch (_) { return alert("Los datos de integración no son JSON válido"); }
+    } else {
+      payload.publicationData = {};
+    }
+  }
+  if (!confirm(`¿Confirmar acción "${action}"?`)) return;
+  const response = await fetch(`/api/commercial/admin/requests/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json();
+  if (!response.ok) return alert(result.error || "No se pudo actualizar la solicitud");
+  await renderGestionComercial();
+}
+
 const nativeFetch = window.fetch.bind(window);
 window.fetch = (input, init = {}) => {
   const url = typeof input === 'string' ? input : input?.url || '';
@@ -113,6 +308,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       "Pagos Comercio"
     ],
     admin: [
+      "Gestión comercial",
       "Validar",
       "Lista de usuarios",
       "Pagos",
@@ -159,6 +355,9 @@ function renderSection(section) {
   document.querySelectorAll(".seccion").forEach((s) => (s.style.display = "none"));
 
   switch (section) {
+    case "Gestión comercial":
+      if (role === "admin") renderGestionComercial();
+      break;
     case "Inicio":
       renderInicio();
       break;
@@ -827,7 +1026,9 @@ async function crearReward(e) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Error al crear");
 
-    alert("✅ Descuento/Premio creado");
+    alert(role === "admin"
+      ? "Descuento/Premio publicado por Superadmin."
+      : "Solicitud enviada y pendiente de revisión.");
     form.reset();
     actualizarCampos();
     cargarMisRewards();
@@ -2062,7 +2263,7 @@ async function renderPromoLocal() {
           const data = await res.json();
           if (!res.ok) throw new Error(data.error);
 
-          alert("✅ Promoción contratada correctamente");
+          alert("Solicitud creada. Pago y aprobación siguen pendientes.");
           form.reset();
         } catch (err) {
           console.error("❌ Error al contratar promoción:", err);

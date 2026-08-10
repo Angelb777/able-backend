@@ -31,7 +31,13 @@ const skinSchema = new mongoose.Schema({
   },
   precio: { type: Number, required: true },
   validada: { type: Boolean, default: false },
-  fechaCreacion: { type: Date, default: Date.now }
+  fechaCreacion: { type: Date, default: Date.now },
+  commercialRequestId: { type: mongoose.Schema.Types.ObjectId, ref: "CommercialRequest", index: true },
+  commercialOwnerId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  isCommercial: { type: Boolean, default: false },
+  publishedAt: Date,
+  reviewDueAt: Date,
+  retiredAt: Date
 });
 
 module.exports = mongoose.model("Skin", skinSchema);

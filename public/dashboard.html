@@ -192,6 +192,44 @@
       <div id="listaValidarRewards" class="lista-rewards"></div>
     </section>
 
+    <!-- Flujo centralizado del rol Comercio (solo Superadmin) -->
+    <section id="gestionComercial" class="seccion" style="display:none;">
+      <h2>Gestión comercial</h2>
+      <p>Revisión de establecimientos, posicionamientos, skins, armas, descuentos y premios.</p>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
+        <button type="button" onclick="renderGestionComercial()">Actualizar</button>
+        <label>Estado
+          <select id="commercialStatusFilter" onchange="renderGestionComercial()">
+            <option value="">Todos</option>
+            <option value="pending_payment">Pendiente de pago</option>
+            <option value="pending_material">Pendiente de material</option>
+            <option value="pending_review">Pendiente de revisión</option>
+            <option value="changes_requested">Cambios solicitados</option>
+            <option value="approved">Aprobado</option>
+            <option value="published">Publicado</option>
+            <option value="disabled">Desactivado</option>
+            <option value="renewal_due">Revisión anual</option>
+            <option value="rejected">Rechazado</option>
+            <option value="retired">Retirado</option>
+            <option value="expired">Caducado</option>
+          </select>
+        </label>
+        <label>Tipo
+          <select id="commercialTypeFilter" onchange="renderGestionComercial()">
+            <option value="">Todos</option>
+            <option value="positioning">Posicionamiento</option>
+            <option value="commercial_skin">Skin</option>
+            <option value="commercial_weapon">Arma</option>
+            <option value="reward">Descuento/premio</option>
+          </select>
+        </label>
+      </div>
+      <h3>Establecimientos</h3>
+      <div id="commercialEstablishments">Cargando...</div>
+      <h3 style="margin-top:24px;">Solicitudes</h3>
+      <div id="commercialRequests">Cargando...</div>
+    </section>
+
     <!-- Sección Mis Pagos (solo clientes) -->
 <section id="misPagos" class="seccion" style="display:none;">
   <h2>Mis Pagos</h2>

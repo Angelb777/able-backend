@@ -4,8 +4,28 @@ const router = express.Router();
 const multer = require("multer");
 const Reward = require("../models/Reward");
 const User = require("../models/User");
+const Establishment = require("../models/Establishment");
+const CommercialRequest = require("../models/CommercialRequest");
+const { recordTransition } = require("../services/commercialWorkflow");
 const { verifyToken, checkRole } = require("../middlewares/authMiddleware");
 const { saveImage } = require("../utils/mediaStorage");
+const adminOnly = [verifyToken, checkRole(["admin"])];
+
+async function requireRewardOwnerOrAdmin(req, res, next) {
+  try {
+    const rewardId = req.params.id || req.body.rewardId;
+    const reward = await Reward.findById(rewardId);
+    if (!reward) return res.status(404).json({ error: "Reward no encontrado" });
+    const owner = reward.comercioId && String(reward.comercioId) === String(req.user.id);
+    if (req.user.role !== "admin" && !(req.user.role === "comercio" && owner)) {
+      return res.status(403).json({ error: "No puedes gestionar un reward de otro comercio" });
+    }
+    req.reward = reward;
+    next();
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+}
 
 // El catálogo cambia desde el panel de administración. Evita que Flutter,
 // navegadores o proxies reutilicen una respuesta anterior después de un borrado.
@@ -68,29 +88,94 @@ router.post(
     } = req.body;
 
     const creadoPorAdmin = req.user.role === "admin";
+    const parsedStepcoins = Number(stepcoins);
+    const parsedPercentage = Number(porcentaje || 0);
+    const parsedAmount = Number(cantidadEuros || 0);
+    if (!["descuento", "premio"].includes(tipo) || !String(titulo || "").trim()) {
+      return res.status(400).json({ error: "Tipo y título válidos son obligatorios" });
+    }
+    if (!Number.isFinite(parsedStepcoins) || parsedStepcoins < 0) {
+      return res.status(400).json({ error: "Stepcoins no válidos" });
+    }
+    if (tipo === "descuento" && (
+      !Number.isFinite(parsedPercentage) || parsedPercentage < 0 || parsedPercentage > 100
+      || !Number.isFinite(parsedAmount) || parsedAmount < 0
+      || (parsedPercentage <= 0 && parsedAmount <= 0)
+    )) {
+      return res.status(400).json({ error: "Descuento no válido" });
+    }
 
     const imagenesPersistentes = await Promise.all(
       (req.files || []).map((file) => saveImage(file, "rewards"))
     );
     // La app móvil compone las rutas relativas con la URL del backend.
-    const imagenes = imagenesPersistentes.map((url) => url.replace(/^\/+/, ""));
+    const imagenes = imagenesPersistentes;
 
     const nuevo = new Reward({
       tipo,
       titulo,
       descripcion,
       direccion,
-      porcentaje,
-      cantidadEuros,
-      stepcoins,
+      porcentaje: parsedPercentage,
+      cantidadEuros: parsedAmount,
+      stepcoins: parsedStepcoins,
       imagenes,
       comercioId: creadoPorAdmin ? null : req.user.id,
       validado: creadoPorAdmin,
-      creadoPorAdmin
+      creadoPorAdmin,
+      publicationStatus: creadoPorAdmin ? "published" : "pending",
+      publishedAt: creadoPorAdmin ? new Date() : undefined,
     });
 
     await nuevo.save();
-    res.status(201).json({ message: "Descuento/Premio creado correctamente" });
+    if (!creadoPorAdmin) {
+      try {
+        const establishment = await Establishment.findOne({ ownerId: req.user.id });
+        const request = await CommercialRequest.create({
+          ownerId: req.user.id,
+          establishmentId: establishment?._id,
+          type: "reward",
+          subtype: tipo === "premio" ? "prize" : "discount",
+          title: String(titulo).trim(),
+          status: "pending_review",
+          price: 0,
+          paymentStatus: "not_required",
+          formData: {
+            rewardType: tipo,
+            description: descripcion,
+            address: direccion,
+            percentage: parsedPercentage,
+            amountEuros: parsedAmount,
+            stepcoins: parsedStepcoins,
+          },
+          materials: (req.files || []).map((file, index) => ({
+            url: imagenes[index], originalName: file.originalname,
+            mimeType: file.mimetype, size: file.size, label: "reward-image",
+          })),
+          targetModel: "Reward",
+          targetId: nuevo._id,
+          legacySource: "rewards-commerce-endpoint",
+          history: [{
+            action: "created_compatibility_endpoint",
+            toStatus: "pending_review",
+            actorId: req.user.id,
+            actorRole: req.user.role,
+          }],
+        });
+        nuevo.commercialRequestId = request._id;
+        await nuevo.save();
+      } catch (workflowError) {
+        await Reward.deleteOne({ _id: nuevo._id });
+        throw workflowError;
+      }
+    }
+    res.status(201).json({
+      message: creadoPorAdmin
+        ? "Descuento/Premio publicado por Superadmin"
+        : "Solicitud creada y pendiente de revisión",
+      id: String(nuevo._id),
+      status: creadoPorAdmin ? "published" : "pending_review",
+    });
   } catch (err) {
     console.error("Error al crear reward:", err);
     res.status(500).json({ error: `Error al guardar el reward: ${err.message}` });
@@ -107,7 +192,8 @@ router.get("/validados", async (req, res) => {
       $or: [
         { validado: true },
         { creadoPorAdmin: true }
-      ]
+      ],
+      publicationStatus: { $nin: ["disabled", "retired"] }
     });
 
     const conPrioridad = rewards.map(r => {
@@ -156,7 +242,8 @@ router.get("/", async (req, res) => {
       $or: [
         { validado: true },
         { creadoPorAdmin: true }
-      ]
+      ],
+      publicationStatus: { $nin: ["disabled", "retired"] }
     }).sort({ fechaCreacion: -1 });
     res.json(rewards);
   } catch (err) {
@@ -178,8 +265,12 @@ router.get("/gestion", verifyToken, checkRole(["admin"]), async (req, res) => {
 });
 
 // Obtener rewards de un comercio específico
-router.get("/mis/:comercioId", async (req, res) => {
+router.get("/mis/:comercioId", verifyToken, async (req, res) => {
   try {
+    if (req.user.role !== "admin" &&
+        !(req.user.role === "comercio" && String(req.user.id) === String(req.params.comercioId))) {
+      return res.status(403).json({ error: "No puedes consultar otro comercio" });
+    }
     const rewards = await Reward.find({ comercioId: req.params.comercioId });
     res.json(rewards);
   } catch (err) {
@@ -188,9 +279,36 @@ router.get("/mis/:comercioId", async (req, res) => {
 });
 
 // Validar (publicar) un reward (solo admin)
-router.patch("/:id/validar", async (req, res) => {
+router.patch("/:id/validar", ...adminOnly, async (req, res) => {
   try {
-    await Reward.findByIdAndUpdate(req.params.id, { validado: true });
+    const reward = await Reward.findById(req.params.id);
+    if (!reward) return res.status(404).json({ error: "Reward no encontrado" });
+    const now = new Date();
+    if (reward.commercialRequestId) {
+      const request = await CommercialRequest.findById(reward.commercialRequestId);
+      if (request && ["rejected", "withdrawn", "retired"].includes(request.status)) {
+        return res.status(409).json({ error: "La solicitud comercial está cerrada" });
+      }
+      if (request && request.status !== "published") {
+        request.reviewedBy = req.user.id;
+        request.reviewedAt = now;
+        request.approvedAt = now;
+        request.publishedAt = now;
+        recordTransition(request, {
+          action: "legacy_validate_and_publish",
+          status: "published",
+          actorId: req.user.id,
+          actorRole: req.user.role,
+          notes: String(req.body?.notes || ""),
+          now,
+        });
+        await request.save();
+      }
+    }
+    reward.validado = true;
+    reward.publicationStatus = "published";
+    reward.publishedAt = now;
+    await reward.save();
     res.json({ message: "✅ Validado correctamente" });
   } catch (err) {
     res.status(500).json({ error: "Error al validar reward" });
@@ -213,9 +331,35 @@ router.delete("/:id", verifyToken, async (req, res) => {
       return res.status(403).json({ error: "No tienes permiso para eliminar este reward" });
     }
 
+    if (!esAdmin && reward.commercialRequestId) {
+      const linkedRequest = await CommercialRequest.findById(reward.commercialRequestId)
+        .select("status");
+      if (linkedRequest && ["published", "disabled", "renewal_due"].includes(linkedRequest.status)) {
+        return res.status(409).json({
+          error: "Una publicación aprobada debe retirarla el Superadmin",
+        });
+      }
+    }
+
     const eliminado = await Reward.findByIdAndDelete(req.params.id);
     if (!eliminado) {
       return res.status(404).json({ error: "El reward ya no existe" });
+    }
+
+    if (eliminado.commercialRequestId) {
+      const request = await CommercialRequest.findById(eliminado.commercialRequestId);
+      if (request && !["withdrawn", "retired"].includes(request.status)) {
+        const nextStatus = esAdmin ? "retired" : "withdrawn";
+        recordTransition(request, {
+          action: "legacy_reward_delete",
+          status: nextStatus,
+          actorId: req.user.id,
+          actorRole: req.user.role,
+          notes: "Reward eliminado desde la pantalla compatible",
+        });
+        if (esAdmin) request.retiredAt = new Date();
+        await request.save();
+      }
     }
 
     // Limpia referencias antiguas si algún usuario lo tenía guardado en este
@@ -242,9 +386,9 @@ router.delete("/:id", verifyToken, async (req, res) => {
 // =========================
 
 // Comprar un reward (cliente)
-router.post("/:id/comprar", async (req, res) => {
+router.post("/:id/comprar", verifyToken, checkRole(["cliente"]), async (req, res) => {
   console.log("📥 Body recibido en el backend:", req.body);
-  const { userId } = req.body;
+  const userId = req.user.id;
   const rewardId = req.params.id;
 
   console.log("📥 Compra solicitada:", { userId, rewardId });
@@ -261,6 +405,10 @@ router.post("/:id/comprar", async (req, res) => {
     if (!reward) {
       console.warn("❌ Reward no encontrado:", rewardId);
       return res.status(404).json({ error: "Reward no encontrado" });
+    }
+
+    if (!reward.validado || ["disabled", "retired"].includes(reward.publicationStatus)) {
+      return res.status(409).json({ error: "Reward no disponible" });
     }
 
     if (!user) {
@@ -291,10 +439,9 @@ router.post("/:id/comprar", async (req, res) => {
 });
 
 // >>> NUEVO: Mis compras pendientes de validar (para el pop-up del cliente)
-router.get("/mis-compras", async (req, res) => {
+router.get("/mis-compras", verifyToken, checkRole(["cliente"]), async (req, res) => {
   try {
-    const userId = String(req.query.userId || "").trim();
-    if (!userId) return res.status(400).json({ error: "Falta userId" });
+    const userId = String(req.user.id);
 
     // Rewards donde el usuario aparece en compradores con validado:false
     const rewards = await Reward.find({
@@ -343,7 +490,7 @@ router.get("/mis-compras", async (req, res) => {
 // =========================
 
 // Ver compradores (para comercio)
-router.get("/:id/compradores", async (req, res) => {
+router.get("/:id/compradores", verifyToken, requireRewardOwnerOrAdmin, async (req, res) => {
   try {
     const reward = await Reward.findById(req.params.id).populate("compradores.userId", "nombre email");
     if (!reward) return res.status(404).json({ error: "Reward no encontrado" });
@@ -355,7 +502,7 @@ router.get("/:id/compradores", async (req, res) => {
 });
 
 // Validar compra (por el comercio)
-router.patch("/:id/validar-compra/:userId", async (req, res) => {
+router.patch("/:id/validar-compra/:userId", verifyToken, requireRewardOwnerOrAdmin, async (req, res) => {
   try {
     const reward = await Reward.findById(req.params.id);
     if (!reward || !reward.compradores) return res.status(404).json({ error: "No encontrado" });
@@ -374,8 +521,12 @@ router.patch("/:id/validar-compra/:userId", async (req, res) => {
 });
 
 // /api/rewards/compras/:comercioId
-router.get("/compras/:comercioId", async (req, res) => {
+router.get("/compras/:comercioId", verifyToken, async (req, res) => {
   try {
+    if (req.user.role !== "admin" &&
+        !(req.user.role === "comercio" && String(req.user.id) === String(req.params.comercioId))) {
+      return res.status(403).json({ error: "No puedes consultar otro comercio" });
+    }
     const rewards = await Reward.find({ comercioId: req.params.comercioId })
       .populate("compradores.userId", "nombre email")
       .select("titulo compradores");
@@ -400,7 +551,7 @@ router.get("/compras/:comercioId", async (req, res) => {
 });
 
 // /api/rewards/validar-compra
-router.post("/validar-compra", async (req, res) => {
+router.post("/validar-compra", verifyToken, requireRewardOwnerOrAdmin, async (req, res) => {
   const { rewardId, compradorId } = req.body;
 
   try {
@@ -419,7 +570,7 @@ router.post("/validar-compra", async (req, res) => {
 });
 
 // Obtener todas las compras si es admin
-router.get("/compras", async (req, res) => {
+router.get("/compras", ...adminOnly, async (req, res) => {
   try {
     const rewards = await Reward.find()
       .populate("compradores.userId", "nombre email")
@@ -446,7 +597,7 @@ router.get("/compras", async (req, res) => {
 
 // =========================
 
-router.patch("/:id/destacar", async (req, res) => {
+router.patch("/:id/destacar", ...adminOnly, async (req, res) => {
   const { nivel } = req.body; // 1, 2, 3
   try {
     const reward = await Reward.findById(req.params.id);
@@ -463,7 +614,7 @@ router.patch("/:id/destacar", async (req, res) => {
 });
 
 // Pendientes de validación (para admin): rewards aún no publicados
-router.get("/pendientes", async (req, res) => {
+router.get("/pendientes", ...adminOnly, async (req, res) => {
   try {
     const rewards = await Reward.find({
       validado: false,
