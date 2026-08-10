@@ -755,3 +755,163 @@ section {
   max-width: 1200px;
   overflow: auto;
 }
+
+/* Backoffice centralizado del rol Comercio */
+.commerce-section {
+  box-sizing: border-box;
+}
+
+.commerce-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 900px;
+}
+
+.commerce-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.commerce-form label,
+.commerce-request-actions label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.commerce-form input,
+.commerce-form textarea,
+.commerce-form select,
+.commerce-request-actions input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px;
+}
+
+.commerce-wide {
+  grid-column: 1 / -1;
+}
+
+.commerce-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.commerce-card,
+.commerce-request-card,
+.commerce-specification,
+.commerce-notice {
+  border: 1px solid #c8c8c8;
+  border-radius: 10px;
+  padding: 14px;
+  background: #fff;
+}
+
+.commerce-card img {
+  width: 100%;
+  max-height: 190px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.commerce-card-actions,
+.commerce-request-actions,
+.commerce-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.commerce-card-actions {
+  justify-content: flex-start;
+}
+
+.commerce-logo-preview {
+  display: block;
+  max-width: 140px;
+  max-height: 140px;
+  object-fit: contain;
+  margin: 8px 0 16px;
+}
+
+.commerce-request-card {
+  margin-bottom: 14px;
+}
+
+.commerce-request-card h3 {
+  margin: 0 0 6px;
+}
+
+.commerce-request-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.commerce-request-details div {
+  background: #f3f3f3;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.commerce-request-details dt {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.commerce-request-details dd {
+  margin: 4px 0 0;
+}
+
+.commerce-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #e5e5e5;
+  font-weight: 700;
+}
+
+.commerce-warning,
+.commerce-status-pending_payment,
+.commerce-status-pending_material,
+.commerce-status-pending_review,
+.commerce-status-changes_requested {
+  background: #fff7d6;
+  border-color: #d9ad22;
+}
+
+.commerce-status-approved,
+.commerce-status-published,
+.commerce-status-renewed {
+  background: #ddf7e7;
+  border-color: #28864b;
+}
+
+.commerce-error,
+.commerce-status-rejected,
+.commerce-status-retired,
+.commerce-status-expired {
+  color: #9c1717;
+}
+
+.commerce-secondary {
+  background: #666;
+}
+
+@media (max-width: 720px) {
+  .commerce-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .commerce-wide {
+    grid-column: auto;
+  }
+}

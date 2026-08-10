@@ -236,6 +236,345 @@ async function commercialRequestAction(id, action) {
   await renderGestionComercial();
 }
 
+let commerceEstablishmentCache = null;
+let commercePackagesCache = [];
+let commerceSpecificationsCache = null;
+
+const commerceStatusLabels = {
+  draft: "Borrador",
+  pending_payment: "Pendiente de pago",
+  pending_material: "Pendiente de material",
+  pending_review: "Pendiente de revisión",
+  changes_requested: "Cambios solicitados",
+  approved: "Aprobado",
+  rejected: "Rechazado",
+  published: "Publicado",
+  disabled: "Desactivado",
+  withdrawn: "Retirado por el comercio",
+  renewal_due: "Revisión anual pendiente",
+  renewed: "Renovado",
+  retired: "Retirado",
+  expired: "Caducado",
+};
+
+const commercePaymentLabels = {
+  not_required: "No requerido",
+  pending: "Pendiente de confirmación",
+  confirmed: "Confirmado",
+  failed: "Fallido",
+  refunded: "Reembolsado",
+  waived: "Exento",
+};
+
+const commerceTypeLabels = {
+  positioning: "Posicionamiento",
+  commercial_skin: "Skin patrocinada",
+  commercial_weapon: "Arma patrocinada",
+  reward: "Descuento o premio",
+};
+
+function commerceShowSection(id) {
+  if (role !== "comercio") return null;
+  document.querySelectorAll(".seccion").forEach((section) => (section.style.display = "none"));
+  const section = document.getElementById(id);
+  if (section) section.style.display = "block";
+  return section;
+}
+
+async function commerceResponse(response) {
+  const contentType = response.headers.get("content-type") || "";
+  const body = contentType.includes("application/json")
+    ? await response.json()
+    : { error: await response.text() };
+  if (!response.ok) throw new Error(body?.error || `Error ${response.status}`);
+  return body;
+}
+
+function commerceDate(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString("es-ES");
+}
+
+async function loadCommerceEstablishment(force = false) {
+  if (!force && commerceEstablishmentCache) return commerceEstablishmentCache;
+  commerceEstablishmentCache = await commerceResponse(await fetch("/api/commercial/establishment"));
+  return commerceEstablishmentCache;
+}
+
+function populateCommerceEstablishment(establishment) {
+  const form = document.getElementById("commerceEstablishmentForm");
+  const statusNode = document.getElementById("commerceEstablishmentStatus");
+  const logoNode = document.getElementById("commerceEstablishmentLogo");
+  if (!form || !statusNode || !logoNode) return;
+  const fields = ["publicName", "legalName", "description", "address", "city", "country", "phone", "website", "lat", "lng"];
+  fields.forEach((name) => {
+    const input = form.elements.namedItem(name);
+    if (input) input.value = establishment?.[name] ?? "";
+  });
+  if (!establishment) {
+    statusNode.className = "commerce-notice commerce-warning";
+    statusNode.textContent = "Aún no has completado tu establecimiento. Es obligatorio antes de crear solicitudes.";
+    logoNode.innerHTML = "<small>El logo es obligatorio al crear el establecimiento.</small>";
+    return;
+  }
+  statusNode.className = `commerce-notice commerce-status-${commercialEscape(establishment.status)}`;
+  statusNode.innerHTML = `<strong>Estado:</strong> ${commercialEscape(commerceStatusLabels[establishment.status] || establishment.status)}${
+    establishment.reviewNotes ? `<br><strong>Notas de revisión:</strong> ${commercialEscape(establishment.reviewNotes)}` : ""
+  }`;
+  logoNode.innerHTML = establishment.logoUrl
+    ? `<p>Logo actual:</p><img class="commerce-logo-preview" src="${commercialEscape(establishment.logoUrl)}" alt="Logo actual">`
+    : "<small>Debes subir un logo.</small>";
+}
+
+function bindCommerceEstablishmentForm() {
+  const form = document.getElementById("commerceEstablishmentForm");
+  if (!form || form.dataset.bound === "true") return;
+  form.dataset.bound = "true";
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector("button[type=submit]");
+    button.disabled = true;
+    try {
+      const result = await commerceResponse(await fetch("/api/commercial/establishment", {
+        method: "PUT",
+        body: new FormData(form),
+      }));
+      commerceEstablishmentCache = result;
+      populateCommerceEstablishment(result);
+      alert("Establecimiento guardado y enviado a revisión.");
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+async function renderCommerceEstablishment() {
+  if (!commerceShowSection("commerceEstablishment")) return;
+  bindCommerceEstablishmentForm();
+  const statusNode = document.getElementById("commerceEstablishmentStatus");
+  statusNode.textContent = "Cargando...";
+  try {
+    populateCommerceEstablishment(await loadCommerceEstablishment(true));
+  } catch (error) {
+    statusNode.className = "commerce-notice commerce-error";
+    statusNode.textContent = error.message;
+  }
+}
+
+async function renderCommercePositioning() {
+  if (!commerceShowSection("commercePositioning")) return;
+  const packagesNode = document.getElementById("commercePackages");
+  const statusNode = document.getElementById("commercePositioningStatus");
+  packagesNode.textContent = "Cargando paquetes...";
+  try {
+    const [establishment, packages] = await Promise.all([
+      loadCommerceEstablishment(true),
+      commerceResponse(await fetch("/api/commercial/packages")),
+    ]);
+    commercePackagesCache = packages;
+    if (!establishment) {
+      statusNode.className = "commerce-notice commerce-warning";
+      statusNode.textContent = "Primero debes completar Mi establecimiento.";
+    } else {
+      statusNode.className = "commerce-notice";
+      statusNode.innerHTML = `Establecimiento: <strong>${commercialEscape(establishment.publicName)}</strong> · Estado: <strong>${commercialEscape(commerceStatusLabels[establishment.status] || establishment.status)}</strong>`;
+    }
+    packagesNode.innerHTML = packages.length ? packages.map((item) => {
+      const id = commercialId(item);
+      const options = (item.opcionesDuracion || []).map((option) =>
+        `<button type="button" ${establishment ? "" : "disabled"} onclick="createCommercePositioningRequest('${commercialEscape(id)}', ${Number(option.duracionMeses)})">${commercialEscape(option.duracionMeses)} meses · ${commercialEscape(option.precioEuros)} €</button>`
+      ).join("");
+      return `<article class="commerce-card">
+        ${item.imagen ? `<img src="${commercialEscape(item.imagen)}" alt="${commercialEscape(item.titulo)}">` : ""}
+        <h3>${commercialEscape(item.titulo)}</h3>
+        <p>${commercialEscape(item.descripcion || "")}</p>
+        <div class="commerce-card-actions">${options || "Sin duraciones disponibles"}</div>
+      </article>`;
+    }).join("") : "<p>No hay paquetes disponibles actualmente.</p>";
+  } catch (error) {
+    packagesNode.innerHTML = `<p class="commerce-error">${commercialEscape(error.message)}</p>`;
+  }
+}
+
+async function createCommercePositioningRequest(packageId, durationMonths) {
+  const packageItem = commercePackagesCache.find((item) => commercialId(item) === String(packageId));
+  const option = packageItem?.opcionesDuracion?.find((item) => Number(item.duracionMeses) === Number(durationMonths));
+  if (!packageItem || !option) return alert("El paquete seleccionado ya no está disponible.");
+  if (!confirm(`Crear solicitud de ${packageItem.titulo} durante ${durationMonths} meses por ${option.precioEuros} €?`)) return;
+  const data = new FormData();
+  data.set("type", "positioning");
+  data.set("title", `${packageItem.titulo} · ${durationMonths} meses`);
+  data.set("formData", JSON.stringify({ packageId, durationMonths }));
+  try {
+    await commerceResponse(await fetch("/api/commercial/requests", { method: "POST", body: data }));
+    alert("Solicitud creada. El pago queda pendiente de confirmación por Able73.");
+    await renderCommerceRequests();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function loadCommerceSpecifications() {
+  if (!commerceSpecificationsCache) {
+    commerceSpecificationsCache = await commerceResponse(await fetch("/api/commercial/specifications"));
+  }
+  return commerceSpecificationsCache;
+}
+
+function commerceRequirements(specification) {
+  const requirements = (specification.requirements || [])
+    .map((requirement) => `<li>${commercialEscape(requirement)}</li>`).join("");
+  const template = specification.templateUrl
+    ? `<p><a href="${commercialEscape(specification.templateUrl)}" target="_blank" rel="noopener noreferrer">Descargar plantilla de Able73</a></p>`
+    : "<p><small>La plantilla todavía no está publicada. Able73 la facilitará durante la revisión.</small></p>";
+  return `<p><strong>Precio: ${commercialEscape(specification.price ?? "según modalidad")} ${commercialEscape(specification.currency || "EUR")}</strong></p><ul>${requirements}</ul>${template}`;
+}
+
+async function submitCommerceRequest(form, type, formData) {
+  const data = new FormData();
+  data.set("type", type);
+  data.set("title", form.elements.namedItem("title").value.trim());
+  const subtype = form.elements.namedItem("subtype")?.value || "";
+  if (subtype) data.set("subtype", subtype);
+  data.set("formData", JSON.stringify(formData));
+  Array.from(form.elements.namedItem("materials")?.files || []).forEach((file) => data.append("materials", file));
+  return commerceResponse(await fetch("/api/commercial/requests", { method: "POST", body: data }));
+}
+
+function bindCommerceRequestForm(formId, type, buildFormData) {
+  const form = document.getElementById(formId);
+  if (!form || form.dataset.bound === "true") return;
+  form.dataset.bound = "true";
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector("button[type=submit]");
+    button.disabled = true;
+    try {
+      await submitCommerceRequest(form, type, buildFormData(form));
+      form.reset();
+      alert("Solicitud creada correctamente. Puedes seguir su pago y revisión en Mis solicitudes.");
+      await renderCommerceRequests();
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+async function renderCommerceSkins() {
+  if (!commerceShowSection("commerceSkins")) return;
+  bindCommerceRequestForm("commerceSkinForm", "commercial_skin", (form) => ({
+    description: form.elements.namedItem("description").value.trim(),
+  }));
+  const node = document.getElementById("commerceSkinSpecification");
+  try {
+    node.innerHTML = commerceRequirements((await loadCommerceSpecifications()).commercial_skin);
+  } catch (error) {
+    node.innerHTML = `<p class="commerce-error">${commercialEscape(error.message)}</p>`;
+  }
+}
+
+async function renderCommerceWeapons() {
+  if (!commerceShowSection("commerceWeapons")) return;
+  bindCommerceRequestForm("commerceWeaponForm", "commercial_weapon", (form) => ({
+    description: form.elements.namedItem("description").value.trim(),
+  }));
+  const node = document.getElementById("commerceWeaponSpecification");
+  try {
+    const specification = (await loadCommerceSpecifications()).commercial_weapon;
+    const tiers = specification.tiers.map((tier) => `${commercialEscape(tier.label)}: ${commercialEscape(tier.price)} €`).join(" · ");
+    node.innerHTML = `<p><strong>${tiers}</strong></p>${commerceRequirements(specification).replace(/<p><strong>.*?<\/strong><\/p>/, "")}`;
+  } catch (error) {
+    node.innerHTML = `<p class="commerce-error">${commercialEscape(error.message)}</p>`;
+  }
+}
+
+async function renderCommerceRewards() {
+  if (!commerceShowSection("commerceRewards")) return;
+  bindCommerceRequestForm("commerceRewardForm", "reward", (form) => ({
+    description: form.elements.namedItem("description").value.trim(),
+    address: form.elements.namedItem("address").value.trim(),
+    stepcoins: Number(form.elements.namedItem("stepcoins").value),
+    percentage: Number(form.elements.namedItem("percentage").value || 0),
+    amountEuros: Number(form.elements.namedItem("amountEuros").value || 0),
+  }));
+}
+
+function commerceRequestActions(request) {
+  const id = commercialId(request);
+  const open = ["pending_payment", "pending_material", "pending_review", "changes_requested"].includes(request.status);
+  if (!open) return "";
+  return `<div class="commerce-request-actions">
+    <label>Añadir material <input id="commerce-material-${commercialEscape(id)}" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,application/zip"></label>
+    <button type="button" onclick="uploadCommerceRequestMaterial('${commercialEscape(id)}')">Subir material</button>
+    <button type="button" class="commerce-secondary" onclick="withdrawCommerceRequest('${commercialEscape(id)}')">Retirar solicitud</button>
+  </div>`;
+}
+
+async function renderCommerceRequests() {
+  if (!commerceShowSection("commerceRequests")) return;
+  const node = document.getElementById("commerceRequestsList");
+  node.textContent = "Cargando...";
+  try {
+    const requests = await commerceResponse(await fetch("/api/commercial/requests"));
+    node.innerHTML = requests.length ? requests.map((request) => {
+      const materials = (request.materials || []).map((material) =>
+        `<a href="${commercialEscape(material.url)}" target="_blank" rel="noopener noreferrer">${commercialEscape(material.originalName || "Material")}</a>`
+      ).join(" · ") || "Sin material";
+      return `<article class="commerce-request-card">
+        <div class="commerce-heading-row">
+          <div><h3>${commercialEscape(request.title)}</h3><strong>${commercialEscape(commerceTypeLabels[request.type] || request.type)}</strong>${request.subtype ? ` · ${commercialEscape(request.subtype)}` : ""}</div>
+          <span class="commerce-badge commerce-status-${commercialEscape(request.status)}">${commercialEscape(commerceStatusLabels[request.status] || request.status)}</span>
+        </div>
+        <dl class="commerce-request-details">
+          <div><dt>Precio</dt><dd>${commercialEscape(request.price)} ${commercialEscape(request.currency)}</dd></div>
+          <div><dt>Pago</dt><dd>${commercialEscape(commercePaymentLabels[request.paymentStatus] || request.paymentStatus)}</dd></div>
+          <div><dt>Creada</dt><dd>${commercialEscape(commerceDate(request.createdAt))}</dd></div>
+          <div><dt>Publicada</dt><dd>${commercialEscape(commerceDate(request.publishedAt))}</dd></div>
+          <div><dt>Revisión anual</dt><dd>${commercialEscape(commerceDate(request.reviewDueAt))}</dd></div>
+        </dl>
+        <p><strong>Material:</strong> ${materials}</p>
+        ${request.reviewNotes ? `<p class="commerce-notice"><strong>Notas de Able73:</strong> ${commercialEscape(request.reviewNotes)}</p>` : ""}
+        ${request.paymentStatus === "pending" ? "<p class=\"commerce-notice commerce-warning\">Pago pendiente de verificación. La pasarela comercial aún no está conectada; Able73 debe confirmar el cobro.</p>" : ""}
+        ${commerceRequestActions(request)}
+      </article>`;
+    }).join("") : "<p>Todavía no tienes solicitudes.</p>";
+  } catch (error) {
+    node.innerHTML = `<p class="commerce-error">${commercialEscape(error.message)}</p>`;
+  }
+}
+
+async function uploadCommerceRequestMaterial(id) {
+  const input = document.getElementById(`commerce-material-${id}`);
+  if (!input?.files?.length) return alert("Selecciona al menos un archivo.");
+  const data = new FormData();
+  Array.from(input.files).forEach((file) => data.append("materials", file));
+  try {
+    await commerceResponse(await fetch(`/api/commercial/requests/${encodeURIComponent(id)}/material`, { method: "POST", body: data }));
+    await renderCommerceRequests();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function withdrawCommerceRequest(id) {
+  if (!confirm("¿Retirar esta solicitud?")) return;
+  try {
+    await commerceResponse(await fetch(`/api/commercial/requests/${encodeURIComponent(id)}/withdraw`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes: "Retirada desde el backoffice del comercio" }),
+    }));
+    await renderCommerceRequests();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 const nativeFetch = window.fetch.bind(window);
 window.fetch = (input, init = {}) => {
   const url = typeof input === 'string' ? input : input?.url || '';
@@ -269,7 +608,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   userId = user.id;
-  role = user.role;
+  role = String(user.role || "").toLowerCase();
 
   try {
     const token = localStorage.getItem("token") || "";
@@ -280,6 +619,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const updatedUser = await res.json();
     user = { ...user, ...updatedUser };
+    role = String(user.role || "").toLowerCase();
     localStorage.setItem("user", JSON.stringify(user));
     console.log("✅ Usuario actualizado");
   } catch (err) {
@@ -300,12 +640,14 @@ document.addEventListener("DOMContentLoaded", async () => {
       "Mis vehículos"
     ],
     comercio: [
-      "Promociones",
-      "Promoción local físico",
-      "Crea la Skin de tu comercio",
+      "Mi establecimiento",
+      "Posicionamiento",
+      "Skins",
+      "Armas",
+      "Descuentos y premios",
+      "Mis solicitudes",
+      "Historial de pagos",
       "Lista de compradores",
-      "Añadir descuentos o premios",
-      "Pagos Comercio"
     ],
     admin: [
       "Gestión comercial",
@@ -358,6 +700,24 @@ function renderSection(section) {
     case "Gestión comercial":
       if (role === "admin") renderGestionComercial();
       break;
+    case "Mi establecimiento":
+      if (role === "comercio") renderCommerceEstablishment();
+      break;
+    case "Posicionamiento":
+      if (role === "comercio") renderCommercePositioning();
+      break;
+    case "Skins":
+      if (role === "comercio") renderCommerceSkins();
+      break;
+    case "Armas":
+      if (role === "comercio") renderCommerceWeapons();
+      break;
+    case "Mis solicitudes":
+      if (role === "comercio") renderCommerceRequests();
+      break;
+    case "Historial de pagos":
+      if (role === "comercio") renderPagosComercio();
+      break;
     case "Inicio":
       renderInicio();
       break;
@@ -390,6 +750,7 @@ function renderSection(section) {
       break;
     case "Descuentos y premios":
       if (role === "cliente") renderVistaClienteRewards();
+      if (role === "comercio") renderCommerceRewards();
       break;
     case "Rankings":
     const seccionRanking = document.getElementById("rankings");
@@ -744,7 +1105,7 @@ async function renderPagosComercio() {
     <tr><th>Cantidad (€)</th><th>Motivo</th><th>Fecha</th></tr></thead><tbody id="pagosComercioBody"></tbody></table>`;
 
   try {
-    const res = await fetch(`/api/payments/${user._id}`);
+    const res = await fetch(`/api/payments/${userId}`);
     const pagos = await res.json();
 
     const tbody = document.getElementById("pagosComercioBody");

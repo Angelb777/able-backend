@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <title>Dashboard Able 73</title>
-  <link rel="stylesheet" href="css/dashboard.css" />
+  <link rel="stylesheet" href="css/dashboard.css?v=commercial-backoffice-1" />
     <link rel="icon" href="img/favicon.png" type="image/png">
 </head>
 <body>
@@ -228,6 +228,148 @@
       <div id="commercialEstablishments">Cargando...</div>
       <h3 style="margin-top:24px;">Solicitudes</h3>
       <div id="commercialRequests">Cargando...</div>
+    </section>
+
+    <!-- Flujo centralizado del rol Comercio -->
+    <section id="commerceEstablishment" class="seccion commerce-section" style="display:none;">
+      <h2>Mi establecimiento</h2>
+      <p>Completa los datos y la ubicación que Able73 utilizará cuando apruebe tu presencia en el mapa.</p>
+      <div id="commerceEstablishmentStatus" class="commerce-notice">Cargando...</div>
+      <form id="commerceEstablishmentForm" enctype="multipart/form-data" class="commerce-form">
+        <div class="commerce-form-grid">
+          <label>Nombre público *
+            <input type="text" name="publicName" maxlength="100" required>
+          </label>
+          <label>Razón social
+            <input type="text" name="legalName" maxlength="160">
+          </label>
+          <label class="commerce-wide">Descripción
+            <textarea name="description" maxlength="1200" rows="4"></textarea>
+          </label>
+          <label class="commerce-wide">Dirección *
+            <input type="text" name="address" maxlength="240" required>
+          </label>
+          <label>Ciudad
+            <input type="text" name="city" maxlength="100">
+          </label>
+          <label>País
+            <input type="text" name="country" maxlength="100">
+          </label>
+          <label>Teléfono
+            <input type="text" name="phone" maxlength="40">
+          </label>
+          <label>Sitio web
+            <input type="url" name="website" maxlength="300">
+          </label>
+          <label>Latitud *
+            <input type="number" name="lat" min="-90" max="90" step="any" required>
+          </label>
+          <label>Longitud *
+            <input type="number" name="lng" min="-180" max="180" step="any" required>
+          </label>
+          <label class="commerce-wide">Logo (PNG, JPG o WebP)
+            <input type="file" name="logo" accept="image/png,image/jpeg,image/webp">
+          </label>
+        </div>
+        <div id="commerceEstablishmentLogo"></div>
+        <button type="submit">Guardar y enviar a revisión</button>
+      </form>
+    </section>
+
+    <section id="commercePositioning" class="seccion commerce-section" style="display:none;">
+      <h2>Posicionamiento</h2>
+      <p>Contrata un paquete para mostrar tu establecimiento y logo en el mapa de Able73. La publicación necesita pago confirmado y aprobación del Superadmin.</p>
+      <div id="commercePositioningStatus" class="commerce-notice"></div>
+      <div id="commercePackages" class="commerce-card-grid">Cargando paquetes...</div>
+    </section>
+
+    <section id="commerceSkins" class="seccion commerce-section" style="display:none;">
+      <h2>Skins patrocinadas</h2>
+      <div id="commerceSkinSpecification" class="commerce-specification">Cargando especificaciones...</div>
+      <form id="commerceSkinForm" enctype="multipart/form-data" class="commerce-form">
+        <label>Título de la solicitud *
+          <input type="text" name="title" maxlength="160" required>
+        </label>
+        <label>Descripción y referencias
+          <textarea name="description" rows="5" maxlength="2000"></textarea>
+        </label>
+        <label>Material (imágenes, PDF o ZIP; máximo 10 archivos de 20 MB)
+          <input type="file" name="materials" multiple accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,application/zip">
+        </label>
+        <button type="submit">Solicitar skin por 500 €</button>
+      </form>
+    </section>
+
+    <section id="commerceWeapons" class="seccion commerce-section" style="display:none;">
+      <h2>Armas patrocinadas</h2>
+      <div id="commerceWeaponSpecification" class="commerce-specification">Cargando especificaciones...</div>
+      <form id="commerceWeaponForm" enctype="multipart/form-data" class="commerce-form">
+        <label>Modalidad *
+          <select name="subtype" required>
+            <option value="short">Corta distancia — 250 €</option>
+            <option value="medium">Media distancia — 350 €</option>
+            <option value="long">Larga distancia — 450 €</option>
+          </select>
+        </label>
+        <label>Título de la solicitud *
+          <input type="text" name="title" maxlength="160" required>
+        </label>
+        <label>Descripción y referencias
+          <textarea name="description" rows="5" maxlength="2000"></textarea>
+        </label>
+        <label>Material (imágenes, PDF o ZIP; máximo 10 archivos de 20 MB)
+          <input type="file" name="materials" multiple accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,application/zip">
+        </label>
+        <button type="submit">Crear solicitud de arma</button>
+      </form>
+    </section>
+
+    <section id="commerceRewards" class="seccion commerce-section" style="display:none;">
+      <h2>Descuentos y premios</h2>
+      <p>Las propuestas no se publican automáticamente: el Superadmin debe revisarlas y aprobarlas.</p>
+      <form id="commerceRewardForm" enctype="multipart/form-data" class="commerce-form">
+        <div class="commerce-form-grid">
+          <label>Tipo *
+            <select name="subtype" required>
+              <option value="discount">Descuento</option>
+              <option value="prize">Premio</option>
+            </select>
+          </label>
+          <label>Título *
+            <input type="text" name="title" maxlength="160" required>
+          </label>
+          <label class="commerce-wide">Descripción
+            <textarea name="description" rows="4" maxlength="2000"></textarea>
+          </label>
+          <label class="commerce-wide">Dirección donde se canjea
+            <input type="text" name="address" maxlength="240">
+          </label>
+          <label>Coste en Stepcoins *
+            <input type="number" name="stepcoins" min="0" step="1" value="0" required>
+          </label>
+          <label>Porcentaje de descuento
+            <input type="number" name="percentage" min="0" max="100" step="any">
+          </label>
+          <label>Importe de descuento (€)
+            <input type="number" name="amountEuros" min="0" step="0.01">
+          </label>
+          <label class="commerce-wide">Imágenes o documentación
+            <input type="file" name="materials" multiple accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,application/zip">
+          </label>
+        </div>
+        <button type="submit">Enviar propuesta a revisión</button>
+      </form>
+    </section>
+
+    <section id="commerceRequests" class="seccion commerce-section" style="display:none;">
+      <div class="commerce-heading-row">
+        <div>
+          <h2>Mis solicitudes</h2>
+          <p>Consulta el pago, el material, la revisión y la publicación de cada solicitud.</p>
+        </div>
+        <button type="button" onclick="renderCommerceRequests()">Actualizar</button>
+      </div>
+      <div id="commerceRequestsList">Cargando...</div>
     </section>
 
     <!-- Sección Mis Pagos (solo clientes) -->
@@ -754,7 +896,7 @@
 
 </main>
 
-<script src="js/dashboard.js"></script>
+<script src="js/dashboard.js?v=commercial-backoffice-1"></script>
 
 </body>
 </html>
