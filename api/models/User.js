@@ -36,6 +36,8 @@ const userSchema = new mongoose.Schema({
 
   stepcoins: { type: Number, default: 1000 },
   stepcoinsTorretaPendientes: { type: Number, default: 0 },
+  // Ausencia/legacy se interpreta como activado en todos los puntos de uso.
+  gameModeEnabled: { type: Boolean, default: true },
 
   cartas: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Card' }],
   cardUpgrades: { type: [cardUpgradeSchema], default: [] },

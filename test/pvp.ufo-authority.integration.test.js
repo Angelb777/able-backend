@@ -80,6 +80,13 @@ function fixtures({ ufoLife = 200, ufoDamage = 80 } = {}) {
         }] }),
       },
       UserModel: {
+        findById: (id) => {
+          const query = {
+            select: () => query,
+            lean: async () => ({ _id: id, gameModeEnabled: true }),
+          };
+          return query;
+        },
         findOne: () => ({ lean: async () => ({ _id: 'owner' }) }),
         findOneAndUpdate: () => ({ lean: async () => null }),
         updateOne: async () => ({}),

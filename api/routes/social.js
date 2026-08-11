@@ -56,7 +56,7 @@ async function ensureDefaultTaunts() {
 
 router.get('/me', async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id).select('nickname fotoPerfil stepcoins role').lean();
+    const user = await User.findById(req.user.id).select('nickname fotoPerfil stepcoins role gameModeEnabled').lean();
     if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
     res.json({
       id: String(user._id),
@@ -66,7 +66,30 @@ router.get('/me', async (req, res, next) => {
       avatarUrl: user.fotoPerfil || '',
       stepcoins: user.stepcoins || 0,
       role: user.role,
+      gameModeEnabled: user.gameModeEnabled !== false,
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put('/me/game-mode', async (req, res, next) => {
+  try {
+    if (typeof req.body.gameModeEnabled !== 'boolean') {
+      return res.status(400).json({ error: 'Valor de Modo Juego no válido' });
+    }
+    const gameModeEnabled = req.body.gameModeEnabled;
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { $set: { gameModeEnabled } },
+      { new: true, runValidators: true }
+    ).select('_id gameModeEnabled').lean();
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+    socialRealtime.events.emit('game-mode-changed', {
+      userId: String(user._id),
+      gameModeEnabled: user.gameModeEnabled !== false,
+    });
+    res.json({ gameModeEnabled: user.gameModeEnabled !== false });
   } catch (error) {
     next(error);
   }

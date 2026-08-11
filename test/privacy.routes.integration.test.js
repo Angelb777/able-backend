@@ -22,6 +22,7 @@ class FakeQuery {
 test('social me and users/:id expose only minimal public/self fields', async (t) => {
   const id = new mongoose.Types.ObjectId();
   const originalFindById = User.findById;
+  const originalFindByIdAndUpdate = User.findByIdAndUpdate;
   const originalSecret = process.env.JWT_SECRET;
   process.env.JWT_SECRET = 'privacy-test-secret';
   const stored = {
@@ -36,8 +37,13 @@ test('social me and users/:id expose only minimal public/self fields', async (t)
     skinSeleccionada: null,
   };
   User.findById = () => new FakeQuery(stored);
+  User.findByIdAndUpdate = (_id, update) => new FakeQuery({
+    _id: id,
+    gameModeEnabled: update.$set.gameModeEnabled,
+  });
   t.after(() => {
     User.findById = originalFindById;
+    User.findByIdAndUpdate = originalFindByIdAndUpdate;
     if (originalSecret == null) delete process.env.JWT_SECRET;
     else process.env.JWT_SECRET = originalSecret;
   });
@@ -55,12 +61,24 @@ test('social me and users/:id expose only minimal public/self fields', async (t)
   const socialResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/social/me`, { headers });
   const social = await socialResponse.json();
   assert.deepEqual(Object.keys(social).sort(), [
-    'avatarUrl', 'hasChosenNickname', 'id', 'needsNickname', 'nickname', 'role', 'stepcoins',
+    'avatarUrl', 'gameModeEnabled', 'hasChosenNickname', 'id', 'needsNickname', 'nickname', 'role', 'stepcoins',
   ]);
+  assert.equal(social.gameModeEnabled, true);
   assert.equal(social.nickname, `Jugador-${String(id).slice(-5).toUpperCase()}`);
   assert.equal(social.needsNickname, true);
   assert.equal(social.role, 'cliente');
   assert.doesNotMatch(JSON.stringify(social), /Nombre Real|secret@example|Dirección/);
+
+  const gameModeResponse = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/social/me/game-mode`,
+    {
+      method: 'PUT',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ gameModeEnabled: false }),
+    },
+  );
+  assert.equal(gameModeResponse.status, 200);
+  assert.deepEqual(await gameModeResponse.json(), { gameModeEnabled: false });
 
   const publicWithoutToken = await fetch(`http://127.0.0.1:${server.address().port}/api/users/${id}`);
   assert.equal(publicWithoutToken.status, 401);

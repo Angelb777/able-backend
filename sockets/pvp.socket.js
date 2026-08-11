@@ -95,7 +95,7 @@ module.exports = function(io, dependencies = {}) {
     return Array.isArray(idle) && typeof idle[0] === 'string' ? idle[0] : '';
   };
   const loadAuthoritativeIdentityAndSkin = async (userId) => {
-    let query = UserModel.findById(userId).select('nickname skinSeleccionada');
+    let query = UserModel.findById(userId).select('nickname skinSeleccionada gameModeEnabled');
     if (typeof query.populate === 'function') {
       query = query.populate({
         path: 'skinSeleccionada',
@@ -219,6 +219,14 @@ module.exports = function(io, dependencies = {}) {
       .sort(([a], [b]) => (a === primarySocketId ? -1 : b === primarySocketId ? 1 : 0))
       .map(([, player]) => player);
   };
+  const assertGameModeEnabled = async (userId) => {
+    const user = await UserModel.findById(userId)
+      .select('_id gameModeEnabled')
+      .lean();
+    if (!user || user.gameModeEnabled === false) {
+      throw new Error('Modo Juego desactivado');
+    }
+  };
   const nextPresenceSeq = (userId) => {
     const next = (presenceSequenceByUser.get(String(userId)) || 0) + 1;
     presenceSequenceByUser.set(String(userId), next);
@@ -269,6 +277,28 @@ module.exports = function(io, dependencies = {}) {
       });
     }
   });
+  socialRealtime.events.on('game-mode-changed', ({ userId, gameModeEnabled }) => {
+    const normalizedUserId = String(userId);
+    if (gameModeEnabled !== false) return;
+    for (const [bulletId, bullet] of bullets) {
+      if (bullet.byUserId !== normalizedUserId) continue;
+      emitBulletExplosion(bulletId, bullet, 'game-mode-disabled');
+      bullets.delete(bulletId);
+    }
+    for (const [projectileId, projectile] of activeUfoProjectiles) {
+      if (projectile.targetUserId !== normalizedUserId) continue;
+      activeUfoProjectiles.delete(projectileId);
+      nsp.to(projectile.zoneId).emit('ufo:projectile:cancel', {
+        projectileId,
+        targetUserId: normalizedUserId,
+      });
+    }
+    for (const [socketId, player] of players) {
+      if (player.userId !== normalizedUserId) continue;
+      player.gameModeEnabled = false;
+      nsp.sockets.get(socketId)?.disconnect(true);
+    }
+  });
 
   async function applyPlayerDamage({
     attackerUserId,
@@ -279,8 +309,17 @@ module.exports = function(io, dependencies = {}) {
     killEventId,
     eventData = {},
   }) {
+    if (target.gameModeEnabled === false) {
+      return { protected: true, ignored: true, vida: target.vida ?? MAX_PLAYER_LIFE, killed: false };
+    }
     const attackerId = String(attackerUserId || '');
     const targetUserId = String(target.userId || '');
+    try {
+      await assertGameModeEnabled(targetUserId);
+    } catch (_) {
+      target.gameModeEnabled = false;
+      return { protected: true, ignored: true, vida: target.vida ?? MAX_PLAYER_LIFE, killed: false };
+    }
     if (attackerId && attackerId !== targetUserId &&
         await ClanMembershipService.shareActiveClan(attackerId, targetUserId)) {
       nsp.to(zoneId).emit('life:protected', {
@@ -515,7 +554,8 @@ module.exports = function(io, dependencies = {}) {
   const primaryAlivePlayersInZone = (zoneId) => {
     const result = [];
     for (const [socketId, player] of players) {
-      if (primarySocketByUser.get(player.userId) !== socketId ||
+      if (player.gameModeEnabled === false ||
+          primarySocketByUser.get(player.userId) !== socketId ||
           player.zoneId !== zoneId || (player.vida ?? 0) <= 0) continue;
       result.push(player);
     }
@@ -603,7 +643,8 @@ module.exports = function(io, dependencies = {}) {
       const socketsInZone = roomIndex.get(b.zoneId) || new Set();
       for (const sid of socketsInZone) {
         const player = players.get(sid);
-        if (!player || player.userId === b.byUserId ||
+        if (!player || player.gameModeEnabled === false ||
+            player.userId === b.byUserId ||
             seenUsers.has(player.userId)) continue;
         seenUsers.add(player.userId);
         const impact = segmentCircleIntersection(
@@ -798,7 +839,7 @@ module.exports = function(io, dependencies = {}) {
       if (!state) continue;
       const target = playersForUser(projectile.targetUserId)[0];
       const hit = Boolean(
-        target && (target.vida ?? 0) > 0 &&
+        target && target.gameModeEnabled !== false && (target.vida ?? 0) > 0 &&
         target.zoneId === projectile.zoneId &&
         geo.distanceMeters(target, projectile.to) <= 15
       );
@@ -846,6 +887,11 @@ module.exports = function(io, dependencies = {}) {
         continue;
       }
       if (new Date(turret.nextShotAt).getTime() > now) continue;
+      try {
+        await assertGameModeEnabled(String(turret.ownerUserId));
+      } catch (_) {
+        continue;
+      }
       const candidates = primaryAlivePlayersInZone(turret.zoneId).filter((p) =>
         p.userId !== String(turret.ownerUserId) &&
         geo.distanceMeters(turret, p) <= turret.alcance);
@@ -932,7 +978,8 @@ module.exports = function(io, dependencies = {}) {
 
       const candidatesByUser = new Map();
       for (const player of players.values()) {
-        if (player.zoneId !== mine.zoneId || (player.vida ?? 0) <= 0) {
+        if (player.gameModeEnabled === false ||
+            player.zoneId !== mine.zoneId || (player.vida ?? 0) <= 0) {
           continue;
         }
         if (!candidatesByUser.has(player.userId)) {
@@ -950,8 +997,17 @@ module.exports = function(io, dependencies = {}) {
       mine.playersInside ||= new Set();
       const targetEntry = [...currentlyInside]
         .find((userId) => !mine.playersInside.has(userId));
+      if (!targetEntry) {
+        mine.playersInside = currentlyInside;
+        continue;
+      }
+
+      try {
+        await assertGameModeEnabled(String(mine.ownerUserId));
+      } catch (_) {
+        continue;
+      }
       mine.playersInside = currentlyInside;
-      if (!targetEntry) continue;
 
       const target = candidatesByUser.get(targetEntry);
       if (!target) continue;
@@ -1005,13 +1061,29 @@ module.exports = function(io, dependencies = {}) {
       }
 
       if (new Date(airstrike.impactAt).getTime() > now) continue;
+      let ownerCanAttack = true;
+      try {
+        await assertGameModeEnabled(String(airstrike.ownerUserId));
+      } catch (_) {
+        ownerCanAttack = false;
+      }
       airstrike.seq = (Number(airstrike.seq) || 1) + 1;
       airstrikes.delete(airstrikeId);
       await AirstrikeModel.deleteOne({ _id: airstrikeId }).catch(() => {});
 
+      if (!ownerCanAttack) {
+        nsp.to(airstrike.zoneId).emit('airstrike:impact', {
+          ...airstrikePayload(airstrike),
+          hits: [],
+          cancelled: true,
+        });
+        continue;
+      }
+
       const targetsByUser = new Map();
       for (const player of players.values()) {
-        if (player.zoneId !== airstrike.zoneId ||
+        if (player.gameModeEnabled === false ||
+            player.zoneId !== airstrike.zoneId ||
             (player.vida ?? 0) <= 0 ||
             geo.distanceMeters(airstrike, player) >
               airstrike.radioExplosion) {
@@ -1164,12 +1236,17 @@ module.exports = function(io, dependencies = {}) {
         let authoritativeSkinUrl = typeof skinUrl === 'string' ? skinUrl.trim() : '';
         let skinDefinition = null;
         let skinId = '';
+        let gameModeEnabled = true;
         if (socket.data.authUserId) {
           const authoritative = await loadAuthoritativeIdentityAndSkin(userId);
           const user = authoritative.user;
           if (!user) return cb?.({ ok: false, error: 'Usuario no encontrado' });
           if (!user.nickname) {
             return cb?.({ ok: false, error: 'Debes elegir un nickname', code: 'NICKNAME_REQUIRED' });
+          }
+          gameModeEnabled = user.gameModeEnabled !== false;
+          if (!gameModeEnabled) {
+            return cb?.({ ok: false, error: 'Modo Juego desactivado', code: 'GAME_MODE_DISABLED' });
           }
           authoritativeNickname = user.nickname;
           authoritativeSkinUrl = authoritative.skinUrl;
@@ -1232,6 +1309,7 @@ module.exports = function(io, dependencies = {}) {
           lastClientSeq: 0,
           presenceSessionId,
           isPresencePrimary: true,
+          gameModeEnabled,
         };
         players.set(socket.id, playerState);
         primarySocketByUser.set(userId, socket.id);
@@ -1515,6 +1593,7 @@ module.exports = function(io, dependencies = {}) {
       }
 
       try {
+        await assertGameModeEnabled(p.userId);
         const baseCard = await CardModel.findById(cardId).lean();
         if (!baseCard || baseCard.tipoArma !== 'Vida') {
           throw new Error('Carta de Vida inválida');
@@ -1604,6 +1683,7 @@ module.exports = function(io, dependencies = {}) {
       const lng = Number(payload?.lng);
 
       try {
+        await assertGameModeEnabled(p.userId);
         const card = await CardModel.findById(cardId).lean();
         if (!card || card.tipoArma !== 'Trampa') {
           throw new Error('Carta de Mina inválida');
@@ -1691,6 +1771,7 @@ module.exports = function(io, dependencies = {}) {
       const lng = Number(payload?.lng);
 
       try {
+        await assertGameModeEnabled(p.userId);
         const card = await CardModel.findById(cardId).lean();
         if (!card || card.tipoArma !== 'Invocacion') {
           throw new Error('Carta de Ataque Aéreo inválida');
@@ -1783,6 +1864,7 @@ module.exports = function(io, dependencies = {}) {
       try {
         const p = players.get(socket.id);
         if (!p) throw new Error('No player');
+        await assertGameModeEnabled(p.userId);
         const cardId = String(payload?.cardId || '');
         const baseCard = await CardModel.findById(cardId).lean();
         if (!baseCard || baseCard.tipoArma !== 'Arrastre') throw new Error('Carta de arrastre inválida');
@@ -1844,6 +1926,7 @@ module.exports = function(io, dependencies = {}) {
       try {
         const p = players.get(socket.id);
         if (!p) throw new Error('No player');
+        await assertGameModeEnabled(p.userId);
 
         const {
           clientShotId,

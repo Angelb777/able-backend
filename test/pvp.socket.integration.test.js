@@ -227,6 +227,13 @@ test('two players share presence, movement, one hit, life and explosions', async
     ['507f191e810c19729de860ea', new Set(['card-life'])],
   ]);
   const fakeUserModel = {
+    findById(id) {
+      const query = {
+        select: () => query,
+        lean: async () => ({ _id: String(id), gameModeEnabled: true }),
+      };
+      return query;
+    },
     findOne(query) {
       return {
         lean: async () => {
@@ -982,6 +989,13 @@ test('ufo starts after first shot, is shared and awards its killer', async (t) =
     async deleteOne() {},
   };
   const fakeUserModel = {
+    findById(id) {
+      const query = {
+        select: () => query,
+        lean: async () => ({ _id: String(id), gameModeEnabled: true }),
+      };
+      return query;
+    },
     findOneAndUpdate() {
       return { lean: async () => null };
     },
@@ -1145,6 +1159,13 @@ test('shared clan protects immediately and damage resumes after last shared clan
     async deleteOne() {},
   };
   const fakeUserModel = {
+    findById(id) {
+      const query = {
+        select: () => query,
+        lean: async () => ({ _id: String(id), gameModeEnabled: true }),
+      };
+      return query;
+    },
     findOneAndUpdate() { return { lean: async () => null }; },
     async updateOne() {},
   };
@@ -1251,6 +1272,7 @@ test('PVP socket rejects missing tokens and manipulated presence identities', as
     async deleteOne() {},
   };
   let authoritativeNickname = 'Alice';
+  const disabledGameModeUserId = '507f191e810c19729de860ec';
   let authoritativeSkin = {
     _id: '68a000000000000000000001',
     renderType: 'classic',
@@ -1267,6 +1289,7 @@ test('PVP socket rejects missing tokens and manipulated presence identities', as
           _id: userId,
           nickname: authoritativeNickname,
           skinSeleccionada: authoritativeSkin,
+          gameModeEnabled: String(userId) !== disabledGameModeUserId,
         }),
       };
       return query;
@@ -1401,6 +1424,25 @@ test('PVP socket rejects missing tokens and manipulated presence identities', as
     userId: authenticatedUserId,
     nickname: 'AliceNueva',
   });
+
+  const disabledToken = jwt.sign(
+    { id: disabledGameModeUserId, role: 'cliente' },
+    process.env.JWT_SECRET,
+  );
+  const disabledSocket = await new Promise((resolve, reject) => {
+    const client = createClient(`${url}/pvp`, {
+      transports: ['websocket'], forceNew: true, reconnection: false,
+      auth: { token: disabledToken },
+    });
+    sockets.push(client);
+    client.once('connect', () => resolve(client));
+    client.once('connect_error', reject);
+  });
+  const disabledPresence = await emitWithAck(disabledSocket, 'presence:hello', {
+    userId: disabledGameModeUserId, lat: 41.65671, lng: -0.8785,
+  });
+  assert.equal(disabledPresence.ok, false);
+  assert.equal(disabledPresence.code, 'GAME_MODE_DISABLED');
 
   authoritativeNickname = '';
   const pendingId = '507f191e810c19729de860eb';
