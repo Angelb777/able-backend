@@ -2021,6 +2021,7 @@ const SKIN_ACTIONS = [
   ["shoot", "Disparando / Shoot", false, false],
   ["die", "Muriendo / Die", false, false],
   ["run", "Rápido / Run", true, true],
+  ["cycling", "Bicicleta / Bicycle", true, true],
   ["damage", "Recibiendo daño / Damage", true, false],
   ["getUp", "Reapareciendo / GetUp", true, false]
 ];
@@ -2348,7 +2349,8 @@ async function cargarSkins() {
           <li>Moviéndose: ${s.scripts?.moviendose?.length || 0} imágenes</li>
           <li>Parado: ${s.scripts?.parado?.length || 0} imágenes</li>
           <li>Disparando: ${s.scripts?.disparando?.length || 0} imágenes</li>
-          <li>Rápido: ${s.scripts?.rapido?.length || 0} imágenes</li>`;
+          <li>Rápido: ${s.scripts?.rapido?.length || 0} imágenes</li>
+          <li>Bicicleta: ${s.scripts?.bicicleta?.length || 0} imágenes</li>`;
       return `
       <div class="reward-card">
         <h4>${s.titulo}</h4>

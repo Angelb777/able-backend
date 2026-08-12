@@ -13,6 +13,7 @@ const ACTIONS = [
   { key: "shoot", legacy: "disparando" },
   { key: "die", legacy: "muriendo" },
   { key: "run", legacy: "rapido" },
+  { key: "cycling", legacy: "bicicleta" },
   { key: "damage", legacy: "recibiendoDano" },
   { key: "getUp", legacy: "reapareciendo" }
 ];

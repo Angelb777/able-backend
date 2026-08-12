@@ -46,6 +46,7 @@ test('an animated skin accepts a different grid for every action', () => {
       walk: animation('/walk.png', 6, 6),
       shoot: { ...animation('/shoot.png', 6, 6), loop: false },
       die: { ...animation('/die.png', 6, 6), loop: false },
+      cycling: animation('/cycling.png', 8, 8),
       damage: { ...animation('/damage.png', 2, 2), loop: false },
       getUp: { ...animation('/get-up.png', 4, 4), loop: false }
     }
@@ -54,7 +55,27 @@ test('an animated skin accepts a different grid for every action', () => {
   assert.equal(skin.validateSync(), undefined);
   assert.equal(skin.spritesheets.idle.columns, 8);
   assert.equal(skin.spritesheets.damage.columns, 2);
+  assert.equal(skin.spritesheets.cycling.url, '/cycling.png');
   assert.equal(skin.spritesheets.run, undefined);
+});
+
+test('classic skins persist the optional bicycle script', () => {
+  const skin = new Skin({
+    titulo: 'Classic cyclist',
+    descripcion: 'Classic bicycle sprite',
+    portada: '/uploads/skins/cover.png',
+    precio: 100,
+    scripts: {
+      parado: ['/uploads/skins/idle-frame.png'],
+      bicicleta: ['/uploads/skins/bicycle-frame.png']
+    }
+  });
+
+  assert.equal(skin.validateSync(), undefined);
+  assert.deepEqual(
+    skin.scripts.bicicleta,
+    ['/uploads/skins/bicycle-frame.png']
+  );
 });
 
 test('invalid spritesheet grids are rejected without touching legacy fields', () => {

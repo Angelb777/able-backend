@@ -11,6 +11,7 @@ const skinSchema = new mongoose.Schema({
     parado: [String],
     disparando: [String],
     rapido: [String],
+    bicicleta: [String],
     recibiendoDano: [String],
     reapareciendo: [String],
   },
@@ -26,6 +27,7 @@ const skinSchema = new mongoose.Schema({
     shoot: spritesheetSchema,
     die: spritesheetSchema,
     run: spritesheetSchema,
+    cycling: spritesheetSchema,
     damage: spritesheetSchema,
     getUp: spritesheetSchema
   },
