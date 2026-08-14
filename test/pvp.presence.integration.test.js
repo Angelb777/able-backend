@@ -21,7 +21,7 @@ const dependencies = (grace = 40) => ({
   presenceDisconnectGraceMs: grace,
   CardModel: {
     findById: () => ({ lean: async () => ({
-      tipoArma: 'Proyectil', alcance: 45, dano: 100, tiempoEspera: 0,
+      tipoArma: 'Proyectil', alcance: 100, dano: 100, tiempoEspera: 0,
     }) }),
   },
   LifeModel: {
@@ -146,7 +146,7 @@ test('reconnect and two sockets preserve one logical presence', async (t) => {
   assert.equal(snapshot.players.filter((p) => p.userId === 'same').length, 1);
 
   observer.emit('presence:update', {
-    clientSeq: 1, lat: 41.6611, lng: -0.88, heading: 180,
+    clientSeq: 1, lat: 41.66154, lng: -0.88, heading: 180,
   });
   await wait(20);
   let bulletSpawns = 0;
@@ -158,13 +158,14 @@ test('reconnect and two sockets preserve one logical presence', async (t) => {
   const shotPayload = {
     clientShotId: 'after-reconnect-shot', cardId: 'projectile',
     from: { lat: 41.661, lng: -0.88 }, heading: 0,
-    speed: 180, alcance: 45, dano: 100,
+    speed: 180, alcance: 100, dano: 100,
   };
   const shot = await ack(first, 'bullet:spawn', shotPayload);
   const duplicate = await ack(first, 'bullet:spawn', shotPayload);
   assert.equal(shot.ok, true);
   assert.equal(duplicate.duplicate, true);
-  await wait(500);
+  // 180 ms de retardo inicial + ~333 ms de vuelo hasta el objetivo a 60 m.
+  await wait(650);
   assert.equal(bulletSpawns, 1);
   assert.equal(lifeUpdates, 1);
   first.disconnect(); observer.disconnect(); newcomer.disconnect();

@@ -7,7 +7,11 @@ const User = require('./api/models/User');
 async function crearAdmin() {
   await mongoose.connect(process.env.MONGO_URI);
 
-  const email = 'angelbaigo@gmail.com';
+  const email = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  const password = String(process.env.ADMIN_PASSWORD || '');
+  if (!email || password.length < 12) {
+    throw new Error('Define ADMIN_EMAIL y ADMIN_PASSWORD (minimo 12 caracteres)');
+  }
   const yaExiste = await User.findOne({ email });
 
   if (yaExiste) {
@@ -18,8 +22,8 @@ async function crearAdmin() {
   const nuevoAdmin = new User({
     nombre: 'Admin Able',
     email,
-    password: await bcrypt.hash('admin123', 10),
-    rol: 'admin',
+    password: await bcrypt.hash(password, 12),
+    role: 'admin',
     stepcoins: 0,
     cartas: [],
   });

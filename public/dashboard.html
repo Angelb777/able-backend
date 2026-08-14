@@ -10,6 +10,7 @@
   <nav>
     <img src="img/Logo%20Able%2073.png" alt="Logo Able 73" style="max-width: 140px; height: auto; margin-bottom: 20px;" />
     <ul id="menu"></ul>
+    <button id="able73-logout" type="button">Cerrar sesión</button>
   </nav>
 
   <main id="content">
@@ -897,6 +898,16 @@
 </main>
 
 <script src="js/dashboard.js?v=commercial-backoffice-1"></script>
+<script type="module">
+import { logoutWebSession } from './js/firebase-client.js';
+document.getElementById('able73-logout').addEventListener('click', async () => {
+  try {
+    await logoutWebSession();
+  } finally {
+    location.replace('/login.html');
+  }
+});
+</script>
 
 </body>
 </html>

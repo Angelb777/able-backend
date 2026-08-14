@@ -1,37 +1,67 @@
-// api/middlewares/authMiddleware.js
-const jwt = require('jsonwebtoken');
+const {
+  AuthenticationError,
+  resolveBearerToken,
+  userFromSessionCookie,
+} = require('../services/authIdentity');
+const {
+  parseCookies,
+  legacySessionCookieName,
+  sessionCookieName,
+  validCsrfRequest,
+} = require('../utils/authCookies');
 
-function verifyToken(req, res, next) {
-  const auth = req.headers['authorization'] || '';
-  // acepta "Bearer <token>" o el token “pelado”
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : auth;
-  if (!token) return res.status(401).json({ error: 'Token no proporcionado' });
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
+function authFailure(res, error) {
+  const status = error instanceof AuthenticationError ? error.status : 401;
+  const code = error instanceof AuthenticationError ? error.code : 'INVALID_AUTHENTICATION';
+  const message = code === 'EMAIL_NOT_VERIFIED'
+    ? 'Debes verificar tu correo antes de continuar'
+    : 'La sesion no es valida o ha caducado';
+  return res.status(status).json({ error: message, code });
+}
+
+async function verifyToken(req, res, next) {
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const authorization = String(req.headers.authorization || '');
+    const bearer = authorization.startsWith('Bearer ')
+      ? authorization.slice(7).trim()
+      : authorization.trim();
 
-    // normaliza el ID del usuario que vendrá dentro del token
-    const id =
-      decoded.id ||
-      decoded._id ||
-      decoded.sub ||
-      (decoded.user && (decoded.user.id || decoded.user._id));
+    if (bearer) {
+      req.user = await resolveBearerToken(bearer);
+      return next();
+    }
 
-    if (!id) return res.status(401).json({ error: 'Token inválido (sin id)' });
-
-    req.user = { ...decoded, id };
-    next();
-  } catch (err) {
-    return res.status(401).json({ error: 'Token inválido' });
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionCookie = cookies[sessionCookieName()];
+    const legacyCookie = cookies[legacySessionCookieName()];
+    if (!sessionCookie && !legacyCookie) {
+      return authFailure(res, new AuthenticationError('MISSING_TOKEN'));
+    }
+    if (!SAFE_METHODS.has(req.method) && !validCsrfRequest(req)) {
+      return res.status(403).json({
+        error: 'La solicitud no ha superado la proteccion CSRF',
+        code: 'INVALID_CSRF_TOKEN',
+      });
+    }
+    req.user = sessionCookie
+      ? await userFromSessionCookie(sessionCookie)
+      : await resolveBearerToken(legacyCookie);
+    return next();
+  } catch (error) {
+    if (error instanceof AuthenticationError) return authFailure(res, error);
+    return next(error);
   }
 }
 
-function checkRole(rolesPermitidos) {
+function checkRole(allowedRoles) {
   return (req, res, next) => {
-    if (!req.user || !rolesPermitidos.includes(req.user.role)) {
+    // El rol procede siempre del documento MongoDB cargado por verifyToken.
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
       return res.status(403).json({ error: 'Acceso denegado' });
     }
-    next();
+    return next();
   };
 }
 
@@ -42,7 +72,7 @@ function requireSelfOrAdmin(paramName = 'userId') {
     if (req.user?.role !== 'admin' && requestedUserId !== authenticatedUserId) {
       return res.status(403).json({ error: 'No puedes operar sobre otro usuario' });
     }
-    next();
+    return next();
   };
 }
 
@@ -59,9 +89,9 @@ async function requireNickname(req, res, next) {
       });
     }
     req.publicUser = user;
-    next();
+    return next();
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 

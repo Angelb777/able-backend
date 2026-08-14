@@ -2,6 +2,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const helmet = require('helmet');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');                // ✅ NUEVO
@@ -15,6 +16,7 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 const app = express();
+app.disable('x-powered-by');
 
 // Render/Proxies
 app.set('trust proxy', 1);
@@ -37,9 +39,36 @@ const corsOptions = rawOrigins.length
       },
       credentials: true,
     }
-  : { origin: true, credentials: true };
+  : process.env.NODE_ENV === 'production'
+    ? { origin: false, credentials: true }
+    : { origin: true, credentials: true };
 
 app.use(cors(corsOptions));
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: [
+        "'self'", "'unsafe-inline'",
+        'https://www.gstatic.com', 'https://apis.google.com',
+        'https://maps.googleapis.com', 'https://maps.gstatic.com',
+      ],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      connectSrc: [
+        "'self'", 'https://*.googleapis.com', 'https://*.firebaseio.com',
+        'https://securetoken.googleapis.com', 'https://identitytoolkit.googleapis.com',
+        'wss:',
+      ],
+      frameSrc: ["'self'", 'https://*.firebaseapp.com', 'https://accounts.google.com'],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+    },
+  },
+}));
 
 /* =========================
    Middlewares globales

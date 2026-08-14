@@ -2,6 +2,8 @@
 uploads/
 .env
 firebase-key.json
+**/*firebase-admin*.json
+**/*service-account*.json
 npm-debug.log*
 yarn-error.log*
 dist/

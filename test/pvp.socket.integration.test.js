@@ -67,6 +67,10 @@ test('two players share presence, movement, one hit, life and explosions', async
               alcance: 45,
               dano: 125,
             },
+            'card-long': {
+              alcance: 100,
+              dano: 125,
+            },
             'card-short': {
               alcance: 6,
               dano: 25,
@@ -315,10 +319,13 @@ test('two players share presence, movement, one hit, life and explosions', async
   const spawnOnA = waitForEvent(playerA, 'presence:spawn');
   const playerB = await connectClient(url);
   sockets.push(playerB);
+  const initialTarget = geo.computeOffset(
+    { lat: 41.656715, lng: -0.8785 }, 60, 0
+  );
   const helloB = await emitWithAck(playerB, 'presence:hello', {
     userId: '507f191e810c19729de860ea',
-    lat: 41.6567,
-    lng: -0.8785,
+    lat: initialTarget.lat,
+    lng: initialTarget.lng,
     heading: 0,
     skinUrl: 'https://example.test/skin-b.png',
     nickname: 'Bob',
@@ -370,11 +377,11 @@ test('two players share presence, movement, one hit, life and explosions', async
   const explosionOnB = waitForEvent(playerB, 'bullet:explode');
   const bulletAck = await emitWithAck(playerA, 'bullet:spawn', {
     clientShotId: 'shot-a-1',
-    cardId: 'card-projectile',
+    cardId: 'card-long',
     from: { lat: 41.656715, lng: -0.8785 },
     heading: 0,
     speed: 180,
-    alcance: 45,
+    alcance: 100,
     dano: 125,
     spriteUrl: 'https://example.test/bullet.png',
     explosionFrames: ['https://example.test/explosion.png'],
@@ -416,11 +423,11 @@ test('two players share presence, movement, one hit, life and explosions', async
   playerB.on('bullet:spawn', onDuplicateSpawn);
   const duplicateAck = await emitWithAck(playerA, 'bullet:spawn', {
     clientShotId: 'shot-a-1',
-    cardId: 'card-projectile',
+    cardId: 'card-long',
     from: { lat: 41.656715, lng: -0.8785 },
     heading: 0,
     speed: 180,
-    alcance: 45,
+    alcance: 100,
     dano: 125,
   });
   await new Promise((resolve) => setTimeout(resolve, 75));
@@ -442,11 +449,11 @@ test('two players share presence, movement, one hit, life and explosions', async
   const rangeExplosionOnA = waitForEvent(playerA, 'bullet:explode');
   const rangeAck = await emitWithAck(playerA, 'bullet:spawn', {
     clientShotId: 'shot-a-2',
-    cardId: 'card-projectile',
+    cardId: 'card-long',
     from: { lat: 41.65671, lng: -0.8785 },
     heading: 90,
     speed: 180,
-    alcance: 45,
+    alcance: 100,
     dano: 125,
     spriteUrl: 'https://example.test/bullet.png',
     explosionFrames: ['https://example.test/explosion.png'],
@@ -461,7 +468,7 @@ test('two players share presence, movement, one hit, life and explosions', async
       geo.distanceMeters(
         { lat: 41.65671, lng: -0.8785 },
         { lat: rangeExplosion.lat, lng: rangeExplosion.lng }
-      ) - 45
+      ) - 100
     ) < 0.25
   );
   assert.equal(lifeByUser.get('507f191e810c19729de860ea'), 875);
@@ -480,11 +487,11 @@ test('two players share presence, movement, one hit, life and explosions', async
   const nearMissExplosionOnA = waitForEvent(playerA, 'bullet:explode');
   const nearMissAck = await emitWithAck(playerA, 'bullet:spawn', {
     clientShotId: 'shot-a-near-miss',
-    cardId: 'card-projectile',
+    cardId: 'card-long',
     from: origin,
     heading: 0,
     speed: 180,
-    alcance: 45,
+    alcance: 100,
     dano: 125,
     spriteUrl: 'https://example.test/bullet.png',
     explosionFrames: ['https://example.test/explosion.png'],
@@ -502,36 +509,29 @@ test('two players share presence, movement, one hit, life and explosions', async
   });
   await directHitMove;
 
-  const directLifeOnA = waitForEvent(playerA, 'life:update');
-  const directLifeOnB = waitForEvent(playerB, 'life:update');
   const directExplosionOnA = waitForEvent(playerA, 'bullet:explode');
   const directAck = await emitWithAck(playerA, 'bullet:spawn', {
-    clientShotId: 'shot-a-direct-hit',
-    cardId: 'card-projectile',
+    clientShotId: 'shot-a-close-protected',
+    cardId: 'card-long',
     from: origin,
     heading: 0,
     speed: 180,
-    alcance: 45,
+    alcance: 100,
     dano: 125,
     spriteUrl: 'https://example.test/bullet.png',
     explosionFrames: ['https://example.test/explosion.png'],
   });
-  const [directLife, directLifeB, directExplosion] = await Promise.all([
-    directLifeOnA,
-    directLifeOnB,
-    directExplosionOnA,
-  ]);
-  assert.equal(directLife.bulletId, directAck.bulletId);
-  assert.equal(directLife.vida, 750);
-  assert.deepEqual(directLife, directLifeB);
-  assert.equal(directExplosion.reason, 'hit');
-  assert.equal(directExplosion.hitUserId, '507f191e810c19729de860ea');
+  const directExplosion = await directExplosionOnA;
+  assert.equal(directExplosion.bulletId, directAck.bulletId);
+  assert.equal(directExplosion.reason, 'range');
+  assert.equal(directExplosion.hitUserId, null);
+  assert.equal(lifeByUser.get('507f191e810c19729de860ea'), 875);
   assert.ok(
     Math.abs(
       geo.distanceMeters(
         origin,
         { lat: directExplosion.lat, lng: directExplosion.lng }
-      ) - 12
+      ) - 100
     ) < 0.3
   );
 
@@ -1146,7 +1146,7 @@ test('shared clan protects immediately and damage resumes after last shared clan
         lean: async () => ({
           _id: 'card-projectile',
           tipoArma: 'Proyectil',
-          alcance: 45,
+          alcance: 100,
           dano: 100,
           tiempoEspera: 0,
         }),
@@ -1206,7 +1206,7 @@ test('shared clan protects immediately and damage resumes after last shared clan
   });
 
   const origin = { lat: 41.65671, lng: -0.8785 };
-  const targetPosition = geo.computeOffset(origin, 12, 0);
+  const targetPosition = geo.computeOffset(origin, 60, 0);
   const attacker = await connectClient(url);
   const target = await connectClient(url);
   sockets.push(attacker, target);
@@ -1229,7 +1229,7 @@ test('shared clan protects immediately and damage resumes after last shared clan
     from: origin,
     heading: 0,
     speed: 180,
-    alcance: 45,
+    alcance: 100,
     dano: 100,
     spriteUrl: '',
     explosionFrames: [],
@@ -1249,7 +1249,7 @@ test('shared clan protects immediately and damage resumes after last shared clan
     from: origin,
     heading: 0,
     speed: 180,
-    alcance: 45,
+    alcance: 100,
     dano: 100,
     spriteUrl: '',
     explosionFrames: [],
@@ -1301,6 +1301,17 @@ test('PVP socket rejects missing tokens and manipulated presence identities', as
   const io = new Server(httpServer, { transports: ['websocket'] });
   registerPvp(io, {
     requireAuth: true,
+    resolveAuthToken: async (token) => {
+      if (token === 'firebase-id-token') {
+        return {
+          id: '507f1f77bcf86cd799439011',
+          role: 'cliente',
+          authType: 'firebase',
+        };
+      }
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      return { id: decoded.id, role: 'cliente', authType: 'test' };
+    },
     CardModel: { findById() { return { lean: async () => null }; } },
     LifeModel: fakeLifeModel,
     TurretModel: emptyPersistentModel,
@@ -1341,7 +1352,7 @@ test('PVP socket rejects missing tokens and manipulated presence identities', as
   assert.match(missingTokenError.message, /token/i);
 
   const authenticatedUserId = '507f1f77bcf86cd799439011';
-  const token = jwt.sign({ id: authenticatedUserId, role: 'cliente' }, process.env.JWT_SECRET);
+  const token = 'firebase-id-token';
   const socket = await new Promise((resolve, reject) => {
     const client = createClient(`${url}/pvp`, {
       transports: ['websocket'],

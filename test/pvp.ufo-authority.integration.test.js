@@ -7,6 +7,7 @@ const { Server } = require('socket.io');
 const { io: createClient } = require('socket.io-client');
 const registerPvp = require('../sockets/pvp.socket');
 const ufoRouter = require('../api/routes/ufo');
+const User = require('../api/models/User');
 const geo = require('../utils/geo');
 
 const once = (socket, event, timeoutMs = 5000) => new Promise((resolve, reject) => {
@@ -241,13 +242,26 @@ test('legacy UFO hurt endpoint rejects normal users before touching data', async
   const previousSecret = process.env.JWT_SECRET;
   process.env.JWT_SECRET = 'ufo-route-test-secret';
   t.after(() => { process.env.JWT_SECRET = previousSecret; });
+  const originalFindById = User.findById;
+  User.findById = () => ({
+    select: () => ({
+      lean: async () => ({
+        _id: '507f191e810c19729de860ea',
+        role: 'cliente',
+        firebaseUid: null,
+        email: 'legacy@example.test',
+        nickname: 'Legacy',
+      }),
+    }),
+  });
+  t.after(() => { User.findById = originalFindById; });
   const app = express();
   app.use(express.json());
   app.use('/api/ufo', ufoRouter);
   const server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
-  const token = jwt.sign({ id: 'user-a', role: 'client' }, process.env.JWT_SECRET);
+  const token = jwt.sign({ id: '507f191e810c19729de860ea', role: 'admin' }, process.env.JWT_SECRET);
   const url = `http://127.0.0.1:${server.address().port}/api/ufo/not-a-db-id/hurt`;
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await fetch(url, {

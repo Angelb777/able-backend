@@ -184,8 +184,8 @@
   <main>
     <h2>Crear cuenta</h2>
     <form id="registerForm">
-      <label for="nombre">Nombre completo:</label>
-      <input type="text" class="form-input" id="nombre" placeholder="Nombre completo" required>
+      <label for="nickname">Nickname Able73:</label>
+      <input type="text" class="form-input" id="nickname" placeholder="Nickname único" minlength="3" maxlength="20" required>
 
       <label for="email">Correo electrónico:</label>
       <input type="email" class="form-input" id="email" placeholder="Correo" required>
@@ -195,18 +195,23 @@
 
       <label for="rol">Rol:</label>
       <select id="rol" required>
-        <option value="">Selecciona tu rol</option>
-        <option value="cliente">Cliente</option>
+        <option value="cliente" selected>Usuario</option>
         <option value="comercio">Comercio</option>
       </select>
 
-      <button type="submit" class="form-button">Registrarse</button>
+      <button id="register-submit" type="submit" class="form-button">Crear cuenta con Email</button>
+      <button id="google-register" type="button" class="form-button" style="margin-top:12px;background:#fff;color:#222">Crear o entrar con Google</button>
     </form>
+
+    <div id="verification-actions" hidden>
+      <button id="resend-verification" type="button" class="form-button">Reenviar correo</button>
+      <button id="verified-email" type="button" class="form-button" style="margin-top:10px">Ya he verificado mi correo</button>
+    </div>
 
     <p id="error" style="color: red;"></p>
     <p>¿Ya tienes cuenta? <a href="login.html">Iniciar sesión</a></p>
   </main>
 
-  <script src="js/register.js"></script>
+  <script type="module" src="js/register.js"></script>
 </body>
 </html>

@@ -25,8 +25,15 @@ const userSchema = new mongoose.Schema({
   normalizedNickname: { type: String, trim: true, maxlength: 20 },
   // Dato privado heredado. Nunca debe utilizarse como identidad social.
   nombre: { type: String, default: '' },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
+  email: { type: String, required: true, unique: true, trim: true, lowercase: true },
+  // Solo las cuentas anteriores a la migracion conservan hash local. Los
+  // usuarios Firebase nunca guardan contrasenas en MongoDB.
+  password: {
+    type: String,
+    required() { return !this.firebaseUid; },
+  },
+  firebaseUid: { type: String, trim: true, unique: true, sparse: true },
+  authProviders: { type: [String], default: [] },
 
   role: {
     type: String,

@@ -576,27 +576,37 @@ async function withdrawCommerceRequest(id) {
 }
 
 const nativeFetch = window.fetch.bind(window);
+let able73CsrfToken = '';
+async function ensureAble73CsrfToken() {
+  if (able73CsrfToken) return able73CsrfToken;
+  const response = await nativeFetch('/api/auth/csrf');
+  const data = await response.json();
+  able73CsrfToken = data.csrfToken || '';
+  return able73CsrfToken;
+}
 window.fetch = (input, init = {}) => {
   const url = typeof input === 'string' ? input : input?.url || '';
   if (!url.startsWith('/api/')) return nativeFetch(input, init);
   const headers = new Headers(init.headers || {});
-  const token = localStorage.getItem('token') || '';
-  if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`);
+  const method = String(init.method || 'GET').toUpperCase();
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+    return ensureAble73CsrfToken().then((csrf) => {
+      headers.set('X-CSRF-Token', csrf);
+      return nativeFetch(input, { ...init, headers, credentials: 'same-origin' });
+    });
   }
-  return nativeFetch(input, { ...init, headers });
+  return nativeFetch(input, { ...init, headers, credentials: 'same-origin' });
 };
 
 
 
 document.addEventListener("DOMContentLoaded", async () => {
-  const userRaw = localStorage.getItem("user");
-  if (!userRaw) return window.location.href = "/login.html";
-
   try {
-    user = JSON.parse(userRaw);
-  } catch (e) {
-    console.error("❌ Error al parsear el usuario:", e);
+    const sessionResponse = await fetch('/api/auth/me');
+    if (!sessionResponse.ok) throw new Error('invalid-session');
+    const session = await sessionResponse.json();
+    user = session.user;
+  } catch (_error) {
     localStorage.removeItem("user");
     return window.location.href = "/login.html";
   }
@@ -608,10 +618,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   userId = user.id;
+  // El backend obtiene este rol de MongoDB; la cache del navegador no decide permisos.
   role = String(user.role || "").toLowerCase();
 
   try {
-    const token = localStorage.getItem("token") || "";
+    const token = "";
     const res = await fetch(`/api/users/${userId}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -886,7 +897,7 @@ async function renderTablaMetricas(tipo) {
       <tbody>
         ${metricas.map(m => `
           <tr>
-            <td>${m.period}</td>
+            <td>${commercialEscape(m.period)}</td>
             <td>${m.values.totalUsers}</td>
             <td>${m.values.newUsers}</td>
             <td>${m.values.payingUsers}</td>
@@ -960,8 +971,8 @@ function renderInicio() {
   section.innerHTML = `
     <h2>Inicio</h2>
     <h3>Información del usuario</h3>
-    <label>Nombre: <input id="editNombre" value="${user.nombre}" /></label><br><br>
-    <label>Correo: <input class="readonly" value="${user.email}" readonly /></label><br><br>
+    <label>Nombre: <input id="editNombre" value="${commercialEscape(user.nombre)}" /></label><br><br>
+    <label>Correo: <input class="readonly" value="${commercialEscape(user.email)}" readonly /></label><br><br>
     <button onclick="guardarNombre()">Guardar cambios</button>
     <br><br>
     <div class="stepcoins">🪙 Stepcoins: ${user.stepcoins}</div>
@@ -1243,8 +1254,8 @@ function mostrarListaUsuarios(lista) {
     div.style.padding = "10px";
     div.style.marginBottom = "10px";
     div.innerHTML = `
-      <strong>${user.nombre}</strong> (${user.role})<br>
-      Email: ${user.email}<br>
+      <strong>${commercialEscape(user.nombre)}</strong> (${commercialEscape(user.role)})<br>
+      Email: ${commercialEscape(user.email)}<br>
       Stepcoins: ${user.stepcoins}<br>
       <button onclick="verDetalles('${user._id}')">Ver detalles</button>
       <button onclick="eliminarUsuario('${user._id}')">🗑️ Eliminar</button>
@@ -1259,8 +1270,8 @@ function verDetalles(userId) {
     .then(user => {
       const p = user.profile || {};
       alert(`
-Nombre: ${user.nombre}
-Email: ${user.email}
+Nombre: ${commercialEscape(user.nombre)}
+Email: ${commercialEscape(user.email)}
 Rol: ${user.role}
 Stepcoins: ${user.stepcoins}
 Cartas: ${user.cartas?.join(", ") || "Ninguna"}
@@ -1378,7 +1389,7 @@ async function crearReward(e) {
   }
 
   try {
-    const token = localStorage.getItem("token") || "";
+    const token = "";
     const res = await fetch("/api/rewards", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
@@ -1404,7 +1415,7 @@ async function cargarMisRewards() {
   contenedor.innerHTML = "<p>Cargando...</p>";
 
   try {
-    const token = localStorage.getItem("token") || "";
+    const token = "";
     const url = role === "admin"
       ? "/api/rewards/gestion"
       : `/api/rewards/mis/${userId}`;
@@ -1424,15 +1435,15 @@ async function cargarMisRewards() {
 
     contenedor.innerHTML = rewards.map(r => `
       <div class="reward-card">
-        <h4>${r.titulo}</h4>
+        <h4>${commercialEscape(r.titulo)}</h4>
         <p><strong>${r.tipo === 'descuento' ? 'Descuento' : 'Premio'}</strong></p>
-        <p>${r.descripcion}</p>
+        <p>${commercialEscape(r.descripcion)}</p>
         <p>🎯 Stepcoins: ${r.stepcoins}</p>
         ${r.porcentaje ? `<p>💸 Descuento: ${r.porcentaje}%</p>` : ""}
         ${r.cantidadEuros ? `<p>💶 Descuento: ${r.cantidadEuros}€</p>` : ""}
-        <p>📍 ${r.direccion}</p>
+        <p>📍 ${commercialEscape(r.direccion)}</p>
         <p>🟢 Estado: ${r.validado || r.creadoPorAdmin ? "Publicado" : "Pendiente de validación"}</p>
-        ${r.imagenes.map(img => `<img src="${img}" width="100" style="margin:5px;">`).join("")}
+        ${r.imagenes.map(img => `<img src="${commercialEscape(img)}" width="100" style="margin:5px;">`).join("")}
         <br>
         <button onclick="eliminarReward('${r._id}')">🗑️ Eliminar</button>
       </div>
@@ -1469,14 +1480,14 @@ async function renderValidarRewards() {
 
     contenedor.innerHTML = rewards.map(r => `
       <div class="reward-card">
-        <h4>${r.titulo}</h4>
+        <h4>${commercialEscape(r.titulo)}</h4>
         <p><strong>${r.tipo === 'descuento' ? 'Descuento' : 'Premio'}</strong></p>
-        <p>${r.descripcion}</p>
+        <p>${commercialEscape(r.descripcion)}</p>
         <p>🎯 Stepcoins: ${r.stepcoins}</p>
         ${r.porcentaje ? `<p>💸 Descuento: ${r.porcentaje}%</p>` : ""}
         ${r.cantidadEuros ? `<p>💶 Descuento: ${r.cantidadEuros}€</p>` : ""}
-        <p>📍 ${r.direccion}</p>
-        ${r.imagenes.map(img => `<img src="${img}" width="100" style="margin:5px;">`).join("")}
+        <p>📍 ${commercialEscape(r.direccion)}</p>
+        ${r.imagenes.map(img => `<img src="${commercialEscape(img)}" width="100" style="margin:5px;">`).join("")}
         <br>
         <button onclick="validarReward('${r._id}')">✅ Validar</button>
         <button onclick="eliminarReward('${r._id}')">🗑️ Eliminar</button>
@@ -1491,7 +1502,7 @@ async function renderValidarRewards() {
 async function eliminarReward(id) {
   if (!confirm("¿Seguro que quieres eliminar este anuncio?")) return;
   try {
-    const token = localStorage.getItem("token") || "";
+    const token = sessionStorage.getItem("legacyToken") || "";
     const res = await fetch(`/api/rewards/${id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
@@ -1561,16 +1572,16 @@ async function renderVistaClienteRewards() {
 
     contenedor.innerHTML = rewards.map(r => `
       <div class="reward-card" style="border:1px solid #ccc; padding:12px; margin-bottom:15px; border-radius:10px; background:#f9f9f9">
-        <h4 style="margin-top:0;">${r.titulo}</h4>
+        <h4 style="margin-top:0;">${commercialEscape(r.titulo)}</h4>
         <p><strong>${r.tipo === 'descuento' ? 'Descuento' : 'Premio'}</strong></p>
-        <p>${r.descripcion}</p>
+        <p>${commercialEscape(r.descripcion)}</p>
         <p>🎯 Stepcoins: <strong>${r.stepcoins}</strong></p>
         ${r.porcentaje ? `<p>💸 ${r.porcentaje}% de descuento</p>` : ""}
         ${r.cantidadEuros ? `<p>💶 ${r.cantidadEuros}€ de descuento</p>` : ""}
-        <p>📍 ${r.direccion}</p>
+        <p>📍 ${commercialEscape(r.direccion)}</p>
         <div style="margin-top:8px; margin-bottom:8px;">
           ${r.imagenes.map(img => `
-            <img src="${img}" width="100" style="margin:5px; border-radius:6px;" onerror="this.style.display='none';">
+            <img src="${commercialEscape(img)}" width="100" style="margin:5px; border-radius:6px;" onerror="this.style.display='none';">
           `).join("")}
         </div>
         <button onclick="canjearReward('${r._id}', ${r.stepcoins})" style="padding:6px 12px; background:#ece537; border:none; border-radius:6px; cursor:pointer;">
@@ -1714,9 +1725,9 @@ async function renderMisPromociones() {
 
     contenedor.innerHTML = rewards.map(r => `
       <div class="reward-card">
-        <h3>${r.titulo}</h3>
-        <p>${r.descripcion}</p>
-        <p>📍 ${r.direccion}</p>
+        <h3>${commercialEscape(r.titulo)}</h3>
+        <p>${commercialEscape(r.descripcion)}</p>
+        <p>📍 ${commercialEscape(r.direccion)}</p>
         <p>💰 Stepcoins: ${r.stepcoins}</p>
         <p>Estado: ${r.validado ? '✅ Validado' : '⏳ Pendiente'}</p>
         ${r.destacado ? `<p>🔥 Destacado nivel ${r.nivelDestacado}</p>` : ""}
@@ -1809,8 +1820,8 @@ async function renderListaCompradores() {
         const div = document.createElement("div");
         div.className = "comprador-card";
         div.innerHTML = `
-          <b>${c.compradorNombre}</b> (${c.compradorEmail})<br>
-          Compró: <i>${c.rewardTitulo}</i><br>
+          <b>${commercialEscape(c.compradorNombre)}</b> (${commercialEscape(c.compradorEmail)})<br>
+          Compró: <i>${commercialEscape(c.rewardTitulo)}</i><br>
           <button onclick="validarCompra('${c.rewardId}', '${c.compradorId}')">✅ Validar</button>
         `;
         lista.appendChild(div);
@@ -1859,7 +1870,7 @@ document.addEventListener("click", async (e) => {
     if (!confirm("¿Eliminar esta recompensa?")) return;
 
     try {
-      const token = localStorage.getItem("token") || "";
+      const token = "";
       if (!token) {
         throw new Error("Tu sesión ha caducado. Vuelve a iniciar sesión.");
       }
@@ -1915,9 +1926,9 @@ async function renderUfoManager() {
       li.style.gap = "15px";
 
       li.innerHTML = `
-        <img src="${ufo.imagenOvni}" alt="ovni" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px;">
+        <img src="${commercialEscape(ufo.imagenOvni)}" alt="ovni" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px;">
         <div>
-          <strong>${ufo.nombre}</strong><br>
+          <strong>${commercialEscape(ufo.nombre)}</strong><br>
           🧪 Vida: ${ufo.vida}<br>
           ⏳ Aparece tras: ${ufo.tiempoAparicion}s<br>
           🕒 Dura en pantalla: ${ufo.duracionPantalla}s<br>
@@ -2353,9 +2364,9 @@ async function cargarSkins() {
           <li>Bicicleta: ${s.scripts?.bicicleta?.length || 0} imágenes</li>`;
       return `
       <div class="reward-card">
-        <h4>${s.titulo}</h4>
-        <p>${s.descripcion}</p>
-        <img src="${toSrc(s.portada)}" alt="Portada" style="width: 150px; display:block; margin:5px 0;">
+        <h4>${commercialEscape(s.titulo)}</h4>
+        <p>${commercialEscape(s.descripcion)}</p>
+        <img src="${commercialEscape(toSrc(s.portada))}" alt="Portada" style="width: 150px; display:block; margin:5px 0;">
         <p>🎯 Precio: ${s.precio} Stepcoins</p>
         <p><strong>Render:</strong> ${animated ? "Flame spritesheet (v2)" : "Clásico"}</p>
         <ul>
@@ -2407,9 +2418,9 @@ async function renderSkinsCliente() {
       const div = document.createElement("div");
       div.className = "tarjeta-skin"; // Cambiado de skin-card a tarjeta-skin para estilo tipo carta
       div.innerHTML = `
-        <img src="${skin.portada}" alt="${skin.titulo}" />
-        <h4>${skin.titulo}</h4>
-        <p>${skin.descripcion}</p>
+        <img src="${commercialEscape(skin.portada)}" alt="${commercialEscape(skin.titulo)}" />
+        <h4>${commercialEscape(skin.titulo)}</h4>
+        <p>${commercialEscape(skin.descripcion)}</p>
         <p><strong>${skin.precio} 🪙</strong></p>
         <button onclick="comprarSkin('${skin._id}', ${skin.precio})">Comprar</button>
       `;
@@ -2808,9 +2819,9 @@ async function cargarCartas() {
       div.className = "carta-item";
 
       div.innerHTML = `
-        <h4>${carta.titulo}</h4>
-        ${carta.imagenPortada ? `<img src="${carta.imagenPortada}" alt="Portada">` : ""}
-        <p>${carta.descripcion || "Sin descripción"}</p>
+        <h4>${commercialEscape(carta.titulo)}</h4>
+        ${carta.imagenPortada ? `<img src="${commercialEscape(carta.imagenPortada)}" alt="Portada">` : ""}
+        <p>${commercialEscape(carta.descripcion || "Sin descripción")}</p>
         <p><strong>Tipo:</strong> ${carta.tipoArma}</p>
         ${carta.tipoArma === "Proyectil" ? `<p><strong>Alcance:</strong> ${carta.alcance}m</p>` : ""}
         ${carta.tipoArma === "Proyectil" ? `<p><strong>Render proyectil:</strong> ${carta.projectileRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p>` : ""}
@@ -2879,8 +2890,8 @@ async function cargarCartasCliente() {
       const cardEl = document.createElement("div");
       cardEl.className = "carta-ganada";
       cardEl.innerHTML = `
-        <img src="${carta.imagenPortada}" alt="${carta.titulo}" class="carta-imagen">
-        <p>${carta.titulo}</p>
+        <img src="${commercialEscape(carta.imagenPortada)}" alt="${commercialEscape(carta.titulo)}" class="carta-imagen">
+        <p>${commercialEscape(carta.titulo)}</p>
       `;
       contenedor.appendChild(cardEl);
     });
@@ -5592,7 +5603,7 @@ async function renderRankings() {
           ${usuarios.map((u, i) => `
             <tr>
               <td>${i + 1}</td>
-              <td>${u.nombre}</td>
+              <td>${commercialEscape(u.nickname || u.nombre)}</td>
               <td>${u.stepcoins}</td>
             </tr>
           `).join("")}
@@ -5675,10 +5686,10 @@ const subidaJson = await subida.json();
         const div = document.createElement("div");
         div.className = "reto";
         div.innerHTML = `
-          <h4>${r.titulo}</h4>
-          <img src="${r.imagenPremioUrl}" alt="Premio" style="max-width: 200px;">
-          <p>${r.descripcion}</p>
-          <p><strong>Premio:</strong> ${r.premio}</p>
+          <h4>${commercialEscape(r.titulo)}</h4>
+          <img src="${commercialEscape(r.imagenPremioUrl)}" alt="Premio" style="max-width: 200px;">
+          <p>${commercialEscape(r.descripcion)}</p>
+          <p><strong>Premio:</strong> ${commercialEscape(r.premio)}</p>
           <p><strong>Fechas:</strong> ${new Date(r.fechaInicio).toLocaleDateString()} - ${new Date(r.fechaFin).toLocaleDateString()}</p>
           <button onclick="eliminarReto('${r._id}')">🗑️ Eliminar</button>
         `;
@@ -5732,10 +5743,10 @@ async function renderRetosCliente() {
           const retoDiv = document.createElement("div");
           retoDiv.className = "reto-cliente";
           retoDiv.innerHTML = `
-            <h3>${r.titulo}</h3>
-            ${r.imagenPremioUrl ? `<img src="${r.imagenPremioUrl}" alt="Premio" style="max-width:200px;">` : ""}
-            <p>${r.descripcion ?? ""}</p>
-            <p><strong>Premio:</strong> ${r.premio ?? ""}</p>
+            <h3>${commercialEscape(r.titulo)}</h3>
+            ${r.imagenPremioUrl ? `<img src="${commercialEscape(r.imagenPremioUrl)}" alt="Premio" style="max-width:200px;">` : ""}
+            <p>${commercialEscape(r.descripcion)}</p>
+            <p><strong>Premio:</strong> ${commercialEscape(r.premio)}</p>
             <p><strong>Fechas:</strong> ${new Date(r.fechaInicio).toLocaleDateString()} - ${new Date(r.fechaFin).toLocaleDateString()}</p>
             <button ${yaInscrito ? "disabled" : ""}>
               ${yaInscrito ? "Inscrito" : "Inscribirse"}
@@ -5905,7 +5916,7 @@ async function _pedidosFetchAndRender() {
     if (_pedidosState.q) params.set("q", _pedidosState.q);
     if (_pedidosState.ship) params.set("ship", _pedidosState.ship);
 
-    const token = localStorage.getItem("token") || "";
+    const token = "";
     const resp = await fetch(`/api/admin/orders?${params.toString()}`, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -6010,7 +6021,7 @@ function _pedidoRowHtml(o) {
 
 async function _pedidosOpenDetail(id) {
   try {
-    const token = localStorage.getItem("token") || "";
+    const token = "";
     const resp = await fetch(`/api/admin/orders/${id}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -6090,7 +6101,7 @@ async function _pedidosExportCsv() {
     if (_pedidosState.q) params.set("q", _pedidosState.q);
     if (_pedidosState.ship) params.set("ship", _pedidosState.ship);
 
-    const token = localStorage.getItem("token") || "";
+    const token = "";
     const resp = await fetch(`/api/admin/orders/export.csv?${params.toString()}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -6149,7 +6160,7 @@ function _showModal(html, wrapId, closeId) {
 }
 
 async function _pedidosToggleShip(id, shipped, trackingNumber) {
-  const token = localStorage.getItem("token") || "";
+  const token = "";
   const resp = await fetch(`/api/admin/orders/${id}/ship`, {
     method: "PATCH",
     headers: {

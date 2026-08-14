@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const User = require('../api/models/User');
 
 const commercialRouter = require('../api/routes/commercial');
 const legacyPositioningRouter = require('../api/routes/promoContratada');
@@ -67,10 +68,15 @@ test('CommercialRequest validates workflow enums and normalizes id', async () =>
 
 test('commercial and legacy positioning endpoints enforce role boundaries', async (t) => {
   const previousSecret = process.env.JWT_SECRET;
+  const originalFindById = User.findById;
   process.env.JWT_SECRET = 'commercial-route-test-secret';
   const token = (role) => jwt.sign({
-    id: '507f1f77bcf86cd799439011', role,
+    id: role, role: 'manipulated-client-claim',
   }, process.env.JWT_SECRET);
+  User.findById = (id) => ({
+    select() { return this; },
+    lean: async () => ({ _id: id, role: String(id), email: `${id}@test`, firebaseUid: null }),
+  });
 
   const app = express();
   app.use(express.json());
@@ -84,6 +90,7 @@ test('commercial and legacy positioning endpoints enforce role boundaries', asyn
   t.after(async () => {
     if (previousSecret == null) delete process.env.JWT_SECRET;
     else process.env.JWT_SECRET = previousSecret;
+    User.findById = originalFindById;
     await new Promise((resolve) => server.close(resolve));
   });
 

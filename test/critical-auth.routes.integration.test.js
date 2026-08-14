@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const User = require('../api/models/User');
 
 const stepcoinsRouter = require('../api/routes/stepcoins');
 const lifeRouter = require('../api/routes/life');
@@ -13,10 +14,15 @@ const challengesRouter = require('../api/routes/challenges');
 
 test('critical economy, life, deck and admin routes enforce JWT ownership', async (t) => {
   const previousSecret = process.env.JWT_SECRET;
+  const originalFindById = User.findById;
   process.env.JWT_SECRET = 'critical-auth-route-test-secret';
   const ownId = '507f1f77bcf86cd799439011';
   const otherId = '507f191e810c19729de860ea';
   const token = jwt.sign({ id: ownId, role: 'cliente' }, process.env.JWT_SECRET);
+  User.findById = (id) => ({
+    select() { return this; },
+    lean: async () => ({ _id: id, role: 'cliente', email: 'client@test', firebaseUid: null }),
+  });
 
   const app = express();
   app.use(express.json());
@@ -32,6 +38,7 @@ test('critical economy, life, deck and admin routes enforce JWT ownership', asyn
   t.after(async () => {
     if (previousSecret == null) delete process.env.JWT_SECRET;
     else process.env.JWT_SECRET = previousSecret;
+    User.findById = originalFindById;
     await new Promise((resolve) => server.close(resolve));
   });
 

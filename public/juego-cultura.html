@@ -173,11 +173,14 @@ preguntas.sort(() => Math.random() - 0.5); // Mezclar preguntas
       if (seleccionada === correcta) {
         document.getElementById("estado").textContent = "✅ ¡Correcto! +100 Stepcoins";
         try {
+          const csrfResponse = await fetch("/api/auth/csrf", { credentials: "same-origin" });
+          const { csrfToken } = await csrfResponse.json();
           const res = await fetch("/api/stepcoins/adjust", {
             method: "POST",
+            credentials: "same-origin",
             headers: {
               "Content-Type": "application/json",
-              "Authorization": `Bearer ${localStorage.getItem("token") || ""}`
+              "X-CSRF-Token": csrfToken
             },
             body: JSON.stringify({
               userId,

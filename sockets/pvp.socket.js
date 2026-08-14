@@ -7,7 +7,7 @@ const Mine = require('../api/models/Mine');
 const Airstrike = require('../api/models/Airstrike');
 const User = require('../api/models/User');
 const Ufo = require('../api/models/Ufo');
-const jwt = require('jsonwebtoken');
+const { resolveBearerToken } = require('../api/services/authIdentity');
 const clanMembershipCache = require('../api/services/clanMembershipCache');
 const bountyService = require('../api/services/bountyService');
 const socialRealtime = require('../api/services/socialRealtime');
@@ -25,6 +25,8 @@ module.exports = function(io, dependencies = {}) {
   const AirstrikeModel = dependencies.AirstrikeModel || Airstrike;
   const UserModel = dependencies.UserModel || User;
   const UfoModel = dependencies.UfoModel || Ufo;
+  const resolveSocketIdentity = dependencies.resolveAuthToken ||
+    ((token) => resolveBearerToken(token, { UserModel }));
   const ClanMembershipService = dependencies.ClanMembershipService ||
     (hasInjectedDependencies
       ? {
@@ -376,6 +378,7 @@ module.exports = function(io, dependencies = {}) {
   const BULLET_START_DELAY_MS = 180;
   const PLAYER_HIT_RADIUS_M = 8;
   const ANIMATED_PLAYER_HIT_RADIUS_M = 16;
+  const DIRECT_PROJECTILE_SAFE_DISTANCE_M = 50;
   // El icono del OVNI se dibuja a 90 px y ocupa bastante más superficie
   // visual que un jugador. Un radio propio evita que un disparo que lo roza
   // claramente en pantalla se considere un fallo en el servidor.
@@ -641,12 +644,18 @@ module.exports = function(io, dependencies = {}) {
       const candidates = [];
       const seenUsers = new Set();
       const socketsInZone = roomIndex.get(b.zoneId) || new Set();
+      const shooter = playersForUser(b.byUserId)[0];
       for (const sid of socketsInZone) {
         const player = players.get(sid);
         if (!player || player.gameModeEnabled === false ||
             player.userId === b.byUserId ||
             seenUsers.has(player.userId)) continue;
         seenUsers.add(player.userId);
+        // La zona segura solo afecta a proyectiles directos entre jugadores.
+        // Torres, minas, ataques aereos y NPCs mantienen sus reglas actuales.
+        if (shooter &&
+            geo.distanceMeters(shooter, player) <=
+              DIRECT_PROJECTILE_SAFE_DISTANCE_M) continue;
         const impact = segmentCircleIntersection(
           previous,
           next,
@@ -1178,7 +1187,7 @@ module.exports = function(io, dependencies = {}) {
     };
   }
 
-  nsp.use((socket, next) => {
+  nsp.use(async (socket, next) => {
     if (!requireSocketAuth) return next();
     const raw = String(
       socket.handshake.auth?.token ||
@@ -1188,11 +1197,12 @@ module.exports = function(io, dependencies = {}) {
     const token = raw.startsWith('Bearer ') ? raw.slice(7) : raw;
     if (!token) return next(new Error('Token PVP no proporcionado'));
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const userId = decoded.id || decoded._id || decoded.sub;
-      if (!userId) return next(new Error('Token PVP sin usuario'));
-      socket.data.authUserId = String(userId);
-      socket.data.authRole = decoded.role;
+      const identity = await resolveSocketIdentity(token);
+      if (!identity?.id) return next(new Error('Token PVP sin usuario'));
+      socket.data.authUserId = String(identity.id);
+      // El rol procede del documento MongoDB, nunca del handshake del cliente.
+      socket.data.authRole = identity.role;
+      socket.data.authType = identity.authType;
       next();
     } catch (_error) {
       next(new Error('Token PVP inválido'));
