@@ -154,7 +154,12 @@ function createAuthRouter(dependencies = {}) {
       });
     } catch (error) {
       if (error instanceof AuthenticationError) {
-        return res.status(error.status).json({ error: 'No se pudo validar la cuenta Firebase', code: error.code });
+        return res.status(error.status).json({
+          error: error.code === 'FIREBASE_ADMIN_NOT_CONFIGURED'
+            ? 'El acceso Firebase no esta configurado en el servidor'
+            : 'No se pudo validar la cuenta Firebase',
+          code: error.code,
+        });
       }
       return next(error);
     }
@@ -224,7 +229,12 @@ function createAuthRouter(dependencies = {}) {
       });
     } catch (error) {
       if (error instanceof AuthenticationError) {
-        return res.status(error.status).json({ error: 'No se pudo validar la cuenta Firebase', code: error.code });
+        return res.status(error.status).json({
+          error: error.code === 'FIREBASE_ADMIN_NOT_CONFIGURED'
+            ? 'El acceso Firebase no esta configurado en el servidor'
+            : 'No se pudo validar la cuenta Firebase',
+          code: error.code,
+        });
       }
       return next(error);
     }

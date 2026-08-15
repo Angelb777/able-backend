@@ -288,6 +288,24 @@ test('invalid Firebase token is rejected', async () => {
   );
 });
 
+test('missing Firebase Admin credentials are reported as server configuration', async () => {
+  const credentialError = new Error(
+    'Could not load the default credentials. Browse to Google Cloud auth.',
+  );
+  credentialError.code = 'app/invalid-credential';
+  const auth = {
+    async verifyIdToken() { throw credentialError; },
+  };
+  await assert.rejects(
+    userFromFirebaseToken('valid-looking-token', {
+      firebaseAuth: auth,
+      UserModel: {},
+    }),
+    (error) =>
+      error.code === 'FIREBASE_ADMIN_NOT_CONFIGURED' && error.status === 503,
+  );
+});
+
 test('Google provider does not require email verification and retains Mongo role', async () => {
   const UserModel = {
     findOne() { return query({ _id: 'google-mongo', role: 'comercio', firebaseUid: 'google-uid', email: 'g@test' }); },

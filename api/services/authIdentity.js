@@ -7,7 +7,11 @@ class AuthenticationError extends Error {
     super(message);
     this.name = 'AuthenticationError';
     this.code = code;
-    this.status = code === 'EMAIL_NOT_VERIFIED' ? 403 : 401;
+    this.status = code === 'EMAIL_NOT_VERIFIED'
+      ? 403
+      : code === 'FIREBASE_ADMIN_NOT_CONFIGURED'
+        ? 503
+        : 401;
   }
 }
 
@@ -38,7 +42,19 @@ async function decodeFirebaseIdToken(token, options = {}) {
   let decoded;
   try {
     decoded = await firebaseAuth.verifyIdToken(token, true);
-  } catch (_error) {
+  } catch (error) {
+    const code = String(error?.code || '');
+    const message = String(error?.message || '');
+    const adminNotConfigured =
+      code.startsWith('app/') ||
+      /credential|service account|application default|project id/i.test(message);
+    if (adminNotConfigured) {
+      console.error('[AUTH] Firebase Admin no esta configurado:', code || message);
+      throw new AuthenticationError(
+        'FIREBASE_ADMIN_NOT_CONFIGURED',
+        'El servidor de autenticacion Firebase no esta configurado'
+      );
+    }
     throw new AuthenticationError('INVALID_FIREBASE_TOKEN');
   }
   if (options.requireVerifiedEmail !== false) assertVerifiedEmail(decoded);
