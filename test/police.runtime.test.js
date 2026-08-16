@@ -251,6 +251,28 @@ test('temporary disconnect preserves wanted stars for the reconnect snapshot', a
   assert.equal(snapshot.policeUnits.length, 1);
 });
 
+test('attacking police after player death starts a fresh visible one-star pursuit', async (t) => {
+  const fx = fixture(); t.after(() => fx.runtime.shutdown());
+  const origin = { lat: 41.6567, lng: -0.8785 };
+  const player = fx.addPlayer('a', origin);
+  await fx.runtime.ensureAmbientPatrol(player, origin);
+  let unit = [...fx.runtime._debug.incidents.values()][0].units.values().next().value;
+  fx.runtime.applyBulletDamage(unit.unitId, 1, 'a', 'first-attack');
+  const firstSeq = fx.runtime._debug.wantedUsers.get('a').seq;
+
+  assert.equal(fx.runtime.handlePlayerDeath('a'), true);
+  const zeroEvent = fx.events.filter((event) => event.event === 'police:wanted:update').at(-1).payload;
+  assert.equal(zeroEvent.stars, 0);
+  assert.ok(zeroEvent.seq > firstSeq);
+
+  unit = [...fx.runtime._debug.incidents.values()][0].units.values().next().value;
+  fx.runtime.applyBulletDamage(unit.unitId, 1, 'a', 'second-attack');
+  const restarted = fx.runtime._debug.wantedUsers.get('a');
+  assert.equal(restarted.stars, 1);
+  assert.ok(restarted.seq > zeroEvent.seq,
+    'the new pursuit cannot be rejected as an old HUD event');
+});
+
 test('ending the last pursuit restores only the initial ambient foot patrol', async (t) => {
   const fx = fixture((config) => {
     config.stars[0].footOfficers = 2;

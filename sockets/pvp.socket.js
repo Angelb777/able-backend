@@ -950,7 +950,11 @@ module.exports = function(io, dependencies = {}) {
           geo.distanceMeters(turret, state) <= turret.alcance)
         .sort((a, b) => geo.distanceMeters(turret, a) - geo.distanceMeters(turret, b));
       const ufoTarget = playerTarget ? null : ufoCandidates[0];
-      const target = playerTarget || ufoTarget;
+      const policeCandidates = policeRuntime.getUnitsInZone(turret.zoneId)
+        .filter((unit) => unit.life > 0 && geo.distanceMeters(turret, unit) <= turret.alcance)
+        .sort((a, b) => geo.distanceMeters(turret, a) - geo.distanceMeters(turret, b));
+      const policeTarget = playerTarget || ufoTarget ? null : policeCandidates[0];
+      const target = playerTarget || ufoTarget || policeTarget;
       if (!target) continue;
       turret.nextShotAt = new Date(now + turret.cadenciaDisparo * 1000);
       await TurretModel.updateOne({ _id: turretId }, { $set: { nextShotAt: turret.nextShotAt } }).catch(() => {});
@@ -960,6 +964,7 @@ module.exports = function(io, dependencies = {}) {
         shotId, turretId, ownerUserId: String(turret.ownerUserId),
         targetUserId: playerTarget?.userId || null,
         targetUfoId: ufoTarget?.ufoId || null,
+        targetPoliceUnitId: policeTarget?.unitId || null,
         from: { lat: turret.lat, lng: turret.lng }, to: { lat: target.lat, lng: target.lng },
         speed: TURRET_BULLET_SPEED, dano: turret.dano,
         spriteUrl: turret.imagenesDisparo?.[0] || '', serverTimestamp: now,
@@ -981,6 +986,28 @@ module.exports = function(io, dependencies = {}) {
             shotId,
             turretId,
             targetUfoId: currentUfo.ufoId,
+            lat: target.lat,
+            lng: target.lng,
+          });
+          return;
+        }
+        if (policeTarget) {
+          const currentPolice = policeRuntime.getUnitsInZone(turret.zoneId)
+            .find((unit) => unit.unitId === policeTarget.unitId);
+          if (!currentPolice || geo.distanceMeters(
+            currentPolice,
+            { lat: target.lat, lng: target.lng }
+          ) > (Number(currentPolice.definition.hitRadiusMeters) || PLAYER_HIT_RADIUS_M)) return;
+          policeRuntime.applyBulletDamage(
+            currentPolice.unitId,
+            turret.dano,
+            String(turret.ownerUserId),
+            `turret:${shotId}:police:${currentPolice.unitId}`,
+          );
+          nsp.to(turret.zoneId).emit('turret:shot:explode', {
+            shotId,
+            turretId,
+            targetPoliceUnitId: currentPolice.unitId,
             lat: target.lat,
             lng: target.lng,
           });
@@ -1045,8 +1072,17 @@ module.exports = function(io, dependencies = {}) {
       mine.playersInside ||= new Set();
       const targetEntry = [...currentlyInside]
         .find((userId) => !mine.playersInside.has(userId));
-      if (!targetEntry) {
+      const policeById = new Map(policeRuntime.getUnitsInZone(mine.zoneId)
+        .filter((unit) => unit.life > 0 &&
+          geo.distanceMeters(mine, unit) <= mine.radioActivacion)
+        .map((unit) => [unit.unitId, unit]));
+      const policeCurrentlyInside = new Set(policeById.keys());
+      mine.policeInside ||= new Set();
+      const policeTargetId = targetEntry ? null : [...policeCurrentlyInside]
+        .find((unitId) => !mine.policeInside.has(unitId));
+      if (!targetEntry && !policeTargetId) {
         mine.playersInside = currentlyInside;
+        mine.policeInside = policeCurrentlyInside;
         continue;
       }
 
@@ -1056,23 +1092,32 @@ module.exports = function(io, dependencies = {}) {
         continue;
       }
       mine.playersInside = currentlyInside;
+      mine.policeInside = policeCurrentlyInside;
 
-      const target = candidatesByUser.get(targetEntry);
-      if (!target) continue;
+      const target = targetEntry ? candidatesByUser.get(targetEntry) : null;
+      const policeTarget = policeTargetId ? policeById.get(policeTargetId) : null;
+      if (!target && !policeTarget) continue;
       mine.processing = true;
 
-      const damageResult = await applyPlayerDamage({
-        attackerUserId: String(mine.ownerUserId),
-        target,
-        damage: mine.dano,
-        zoneId: mine.zoneId,
-        source: 'mine',
-        killEventId: `mine:${mineId}:${target.userId}`,
-        eventData: { byMineId: mineId },
-      }).catch((error) => {
-        console.error(`[PVP][${instanceId}] mine damage error`, error);
-        return { protected: false, vida: target.vida ?? MAX_PLAYER_LIFE };
-      });
+      const damageResult = policeTarget
+        ? policeRuntime.applyBulletDamage(
+          policeTarget.unitId,
+          mine.dano,
+          String(mine.ownerUserId),
+          `mine:${mineId}:police:${policeTarget.unitId}`,
+        )
+        : await applyPlayerDamage({
+          attackerUserId: String(mine.ownerUserId),
+          target,
+          damage: mine.dano,
+          zoneId: mine.zoneId,
+          source: 'mine',
+          killEventId: `mine:${mineId}:${target.userId}`,
+          eventData: { byMineId: mineId },
+        }).catch((error) => {
+          console.error(`[PVP][${instanceId}] mine damage error`, error);
+          return { protected: false, vida: target.vida ?? MAX_PLAYER_LIFE };
+        });
 
       // Una mina siempre se destruye al detonar.
       const removeAfterTrigger = true;
@@ -1082,9 +1127,11 @@ module.exports = function(io, dependencies = {}) {
 
       nsp.to(mine.zoneId).emit('mine:trigger', {
         ...minePayload(mine),
-        targetUserId: target.userId,
-        vida: damageResult.vida,
-        protected: damageResult.protected,
+        targetUserId: target?.userId || null,
+        targetPoliceUnitId: policeTarget?.unitId || null,
+        vida: damageResult?.vida ?? null,
+        policeLife: damageResult?.life ?? null,
+        protected: damageResult?.protected || false,
         removed: removeAfterTrigger,
       });
     }
@@ -1160,6 +1207,23 @@ module.exports = function(io, dependencies = {}) {
           userId: target.userId,
           vida: damageResult.vida,
           protected: damageResult.protected,
+        });
+      }
+      for (const policeTarget of policeRuntime.getUnitsInZone(airstrike.zoneId)) {
+        if (policeTarget.life <= 0 ||
+            geo.distanceMeters(airstrike, policeTarget) > airstrike.radioExplosion) {
+          continue;
+        }
+        const damageResult = policeRuntime.applyBulletDamage(
+          policeTarget.unitId,
+          airstrike.dano,
+          String(airstrike.ownerUserId),
+          `airstrike:${airstrikeId}:police:${policeTarget.unitId}`,
+        );
+        hits.push({
+          policeUnitId: policeTarget.unitId,
+          life: damageResult.life ?? 0,
+          dead: damageResult.dead === true,
         });
       }
 

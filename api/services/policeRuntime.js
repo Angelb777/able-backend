@@ -21,6 +21,7 @@ function createPoliceRuntime({
 } = {}) {
   const incidents = new Map();
   const wantedUsers = new Map();
+  const wantedSequenceByUser = new Map();
   const pendingTriggers = new Map();
   const projectiles = new Map();
   const processedDamage = new Set();
@@ -56,7 +57,13 @@ function createPoliceRuntime({
     escapeLossAt: state.escapeLossAt ? new Date(state.escapeLossAt).toISOString() : null,
     seq: state.seq || 1, serverTimestamp: now(),
   });
-  const emitWanted = (state, zoneId) => nsp.to(zoneId).emit('police:wanted:update', wantedPayload(state));
+  const emitWanted = (state, zoneId) => {
+    wantedSequenceByUser.set(
+      state.userId,
+      Math.max(wantedSequenceByUser.get(state.userId) || 0, state.seq || 1),
+    );
+    nsp.to(zoneId).emit('police:wanted:update', wantedPayload(state));
+  };
   const unitPayload = (unit) => ({
     unitId: unit.unitId, incidentId: unit.incidentId, unitType: unit.unitType,
     movementType: unit.definition.movementType, lat: unit.lat, lng: unit.lng,
@@ -113,6 +120,7 @@ function createPoliceRuntime({
     const incident = incidents.get(state.incidentId);
     wantedUsers.delete(id);
     state.stars = 0; state.escapeStartedAt = null; state.escapeLossAt = null; state.seq += 1;
+    wantedSequenceByUser.set(id, Math.max(wantedSequenceByUser.get(id) || 0, state.seq));
     if (incident) {
       incident.wanted.delete(id); incident.seq += 1; emitWanted(state, incident.zoneId);
       if (incident.wanted.size === 0) {
@@ -166,8 +174,10 @@ function createPoliceRuntime({
     const incident = preferredIncident || selectIncident(origin) || createIncident(player, origin);
     const existing = wantedUsers.get(String(player.userId));
     if (existing) return incidents.get(existing.incidentId) || incident;
-    const state = { userId: String(player.userId), incidentId: incident.incidentId,
-      stars: 1, escapeStartedAt: null, escapeLossAt: null, seq: 1 };
+    const userId = String(player.userId);
+    const state = { userId, incidentId: incident.incidentId,
+      stars: 1, escapeStartedAt: null, escapeLossAt: null,
+      seq: (wantedSequenceByUser.get(userId) || 0) + 1 };
     wantedUsers.set(state.userId, state); incident.wanted.set(state.userId, state);
     incident.state = 'active';
     incident.waveLevel = Math.max(1, incident.waveLevel || 1);
@@ -521,7 +531,8 @@ function createPoliceRuntime({
         .map(wantedPayload),
     }),
     shutdown: () => { clearInterval(timer); directions.clear?.(); for (const incident of [...incidents.values()]) removeIncident(incident, 'shutdown'); },
-    _debug: { incidents, wantedUsers, pendingTriggers, projectiles, logicTick, tickProjectiles, loadConfig },
+    _debug: { incidents, wantedUsers, wantedSequenceByUser, pendingTriggers, projectiles,
+      logicTick, tickProjectiles, loadConfig },
   };
 }
 
