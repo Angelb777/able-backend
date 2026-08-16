@@ -101,7 +101,7 @@ export async function logoutWebSession() {
 
 export function friendlyError(error) {
   if (error?.code === 'auth/invalid-email') return 'El correo electronico no es valido.';
-  if (['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found'].includes(error?.code)) {
+  if (['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found', 'INVALID_CREDENTIALS'].includes(error?.code)) {
     return 'El correo o la contrasena no son correctos.';
   }
   if (error?.code === 'auth/email-already-in-use') return 'No se ha podido completar el alta con esos datos.';
@@ -111,6 +111,9 @@ export function friendlyError(error) {
   if (error?.code === 'NICKNAME_TAKEN') return 'Ese nickname ya esta en uso.';
   if (error?.code === 'INVALID_NICKNAME') return 'El nickname no tiene un formato valido.';
   if (error?.code === 'AUTH_RATE_LIMITED') return 'Demasiados intentos. Espera unos minutos.';
+  if (error?.code === 'FIREBASE_WEB_NOT_CONFIGURED') {
+    return 'El acceso Firebase web todavia no esta disponible. Intentalo de nuevo mas tarde.';
+  }
   return 'No se ha podido completar la autenticacion.';
 }
 

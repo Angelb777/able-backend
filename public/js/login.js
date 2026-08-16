@@ -64,6 +64,16 @@ form.addEventListener('submit', async (event) => {
   const email = emailNode.value.trim();
   const password = passwordNode.value; // Nunca modificar la contrasena con trim.
   try {
+    // TEMPORAL (migracion Firebase): los perfiles antiguos con contrasena se
+    // validan primero en el backend. Asi el backoffice legacy no depende de que
+    // Firebase Web este configurado y nunca se crea/vincula un perfil por email.
+    try {
+      await legacyWebLogin(email, password);
+      return;
+    } catch (legacyError) {
+      if (legacyError.code !== 'INVALID_CREDENTIALS') throw legacyError;
+    }
+
     const auth = await firebaseAuth();
     const credential = await signInWithEmailAndPassword(auth, email, password);
     await reload(credential.user);
@@ -74,14 +84,7 @@ form.addEventListener('submit', async (event) => {
     }
     await finishFirebase(credential.user);
   } catch (error) {
-    if (['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found', 'EXISTING_PROFILE_REQUIRES_LEGACY'].includes(error.code)) {
-      try {
-        await legacyWebLogin(email, password);
-        return;
-      } catch (legacyError) { message(friendlyError(legacyError)); }
-    } else {
-      message(friendlyError(error));
-    }
+    message(friendlyError(error));
   } finally { loading(false); }
 });
 

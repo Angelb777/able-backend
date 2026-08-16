@@ -32,3 +32,12 @@ test('web sessions use backend cookies and never persist an authentication token
   assert.doesNotMatch(dashboard, /getItem\(['"]token/);
   assert.doesNotMatch(cultureGame, /localStorage\.getItem\(['"]token/);
 });
+
+test('legacy web accounts are checked before Firebase initialization', () => {
+  const login = readPublic('js/login.js');
+  const legacyAttempt = login.indexOf('await legacyWebLogin(email, password)');
+  const firebaseAttempt = login.indexOf('const auth = await firebaseAuth()', legacyAttempt);
+  assert.ok(legacyAttempt >= 0, 'the legacy login attempt must remain available');
+  assert.ok(firebaseAttempt > legacyAttempt, 'legacy login must not depend on Firebase Web config');
+  assert.match(login, /legacyError\.code !== 'INVALID_CREDENTIALS'/);
+});
