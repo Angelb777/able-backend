@@ -61,20 +61,28 @@ function fixture(customize = () => {}) {
   };
 }
 
-test('delayed spawn reuses one nearby incident for several players', async (t) => {
+test('ambient patrol is shared and shooting alone never starts a pursuit', async (t) => {
   const fx = fixture(); t.after(() => fx.runtime.shutdown());
   const origin = { lat: 41.6567, lng: -0.8785 };
   const a = fx.addPlayer('a', origin);
   const b = fx.addPlayer('b', geo.computeOffset(origin, 500, 90));
+  await fx.runtime.ensureAmbientPatrol(a, origin);
+  await fx.runtime.ensureAmbientPatrol(b, b);
+  assert.equal(fx.runtime._debug.incidents.size, 1);
+  const incident = [...fx.runtime._debug.incidents.values()][0];
+  assert.equal(incident.state, 'ambient');
+  assert.equal(incident.units.size, 1);
+  assert.equal([...incident.units.values()][0].state, 'idle');
+  assert.equal(fx.runtime._debug.wantedUsers.size, 0);
   await fx.runtime.onPlayerShot(a, origin);
-  fx.advance(999); fx.tick();
-  assert.equal(fx.runtime._debug.incidents.size, 0);
-  fx.advance(1); fx.tick();
-  assert.equal(fx.runtime._debug.incidents.size, 1);
-  assert.equal(fx.runtime._debug.wantedUsers.get('a').stars, 1);
   await fx.runtime.onPlayerShot(b, b);
-  fx.advance(1000); fx.tick();
-  assert.equal(fx.runtime._debug.incidents.size, 1);
+  fx.tick();
+  assert.equal(fx.runtime._debug.wantedUsers.size, 0);
+  const unit = [...incident.units.values()][0];
+  fx.runtime.applyBulletDamage(unit.unitId, 1, 'a', 'attack-a');
+  assert.equal(fx.runtime._debug.wantedUsers.get('a').stars, 1);
+  assert.equal(incident.state, 'active');
+  fx.runtime.applyBulletDamage(unit.unitId, 1, 'b', 'attack-b');
   assert.equal([...fx.runtime._debug.incidents.values()][0].wanted.size, 2);
 });
 
@@ -83,7 +91,7 @@ test('destroying each wave escalates progressively and never exceeds five stars'
   t.after(() => fx.runtime.shutdown());
   const origin = { lat: 41.6567, lng: -0.8785 };
   const player = fx.addPlayer('a', origin);
-  await fx.runtime.onPlayerShot(player, origin); fx.tick();
+  await fx.runtime.ensureAmbientPatrol(player, origin); fx.tick();
   for (let expected = 2; expected <= 5; expected += 1) {
     const incident = [...fx.runtime._debug.incidents.values()][0];
     const unit = [...incident.units.values()][0];
@@ -105,12 +113,14 @@ test('targeting prioritizes stars, locks target and respects range/cooldown', as
   const origin = { lat: 41.6567, lng: -0.8785 };
   const a = fx.addPlayer('a', origin);
   const b = fx.addPlayer('b', geo.computeOffset(origin, 20, 90));
-  await fx.runtime.onPlayerShot(a, origin); fx.tick();
-  await fx.runtime.onPlayerShot(b, b); fx.tick();
+  await fx.runtime.ensureAmbientPatrol(a, origin); fx.tick();
+  const unit = [...fx.runtime._debug.incidents.values()][0].units.values().next().value;
+  fx.runtime.applyBulletDamage(unit.unitId, 1, 'a', 'attack-a');
+  fx.runtime.applyBulletDamage(unit.unitId, 1, 'b', 'attack-b');
+  fx.tick();
   fx.runtime._debug.wantedUsers.get('b').stars = 4;
   fx.projectiles().clear();
   fx.advance(4100); fx.tick();
-  const unit = [...fx.runtime._debug.incidents.values()][0].units.values().next().value;
   assert.equal(unit.targetUserId, 'b');
   assert.equal(fx.projectiles().size, 1);
   a.lat = unit.lat; a.lng = unit.lng;
@@ -126,7 +136,11 @@ test('escape blinks one star and removes stars one at a time; death clears every
   t.after(() => fx.runtime.shutdown());
   const origin = { lat: 41.6567, lng: -0.8785 };
   const player = fx.addPlayer('a', origin);
-  await fx.runtime.onPlayerShot(player, origin); fx.tick();
+  await fx.runtime.ensureAmbientPatrol(player, origin);
+  const incident = [...fx.runtime._debug.incidents.values()][0];
+  const unit = [...incident.units.values()][0];
+  fx.runtime.applyBulletDamage(unit.unitId, 1, 'a', 'attack-a');
+  fx.tick();
   const wanted = fx.runtime._debug.wantedUsers.get('a'); wanted.stars = 2;
   const far = geo.computeOffset(origin, 2500, 0); player.lat = far.lat; player.lng = far.lng;
   fx.advance(100); fx.tick();
@@ -135,23 +149,28 @@ test('escape blinks one star and removes stars one at a time; death clears every
   assert.equal(wanted.stars, 1); assert.equal(wanted.escapeStartedAt, null);
   fx.advance(100); fx.tick(); fx.advance(1000); fx.tick();
   assert.equal(fx.runtime._debug.wantedUsers.has('a'), false);
-  await fx.runtime.onPlayerShot(player, player); fx.tick();
+  await fx.runtime.ensureAmbientPatrol(player, player);
+  const neutral = [...fx.runtime._debug.incidents.values()][0].units.values().next().value;
+  fx.runtime.applyBulletDamage(neutral.unitId, 1, 'a', 'attack-again');
   assert.equal(fx.runtime.handlePlayerDeath('a'), true);
   assert.equal(fx.runtime._debug.wantedUsers.size, 0);
-  assert.equal(fx.runtime._debug.incidents.size, 0);
+  assert.equal([...fx.runtime._debug.incidents.values()][0].state, 'ambient');
   assert.equal(fx.runtime._debug.projectiles.size, 0);
 });
 
 test('road follows a cached route while air moves directly and snapshots are shared', async (t) => {
   const fx = fixture((config) => {
-    config.stars[0].spawnDelaySeconds = 0;
-    config.stars[0].footOfficers = 1;
-    config.stars[0].helicopters = 1;
+    config.stars[1].spawnDelaySeconds = 0;
+    config.stars[1].footOfficers = 1;
+    config.stars[1].helicopters = 1;
   });
   t.after(() => fx.runtime.shutdown());
   const origin = { lat: 41.6567, lng: -0.8785 };
   const player = fx.addPlayer('a', origin);
-  await fx.runtime.onPlayerShot(player, origin); fx.tick();
+  await fx.runtime.ensureAmbientPatrol(player, origin);
+  const ambient = [...fx.runtime._debug.incidents.values()][0].units.values().next().value;
+  fx.runtime.applyBulletDamage(ambient.unitId, 999, 'a', 'kill-ambient');
+  fx.tick();
   const incident = [...fx.runtime._debug.incidents.values()][0];
   const foot = [...incident.units.values()].find((unit) => unit.unitType === 'foot');
   const helicopter = [...incident.units.values()].find((unit) => unit.unitType === 'helicopter');
@@ -166,6 +185,38 @@ test('road follows a cached route while air moves directly and snapshots are sha
   assert.equal(snapshot.policeIncidents.length, 1);
   assert.equal(snapshot.policeUnits.length, 2);
   assert.equal(snapshot.policeWanted[0].userId, 'a');
+});
+
+test('ending the last pursuit restores only the initial ambient foot patrol', async (t) => {
+  const fx = fixture((config) => {
+    config.stars[0].footOfficers = 2;
+    config.stars[1].footOfficers = 0;
+    config.stars[1].cars = 1;
+    config.stars[1].helicopters = 1;
+    config.stars[1].spawnDelaySeconds = 0;
+  });
+  t.after(() => fx.runtime.shutdown());
+  const origin = { lat: 41.6567, lng: -0.8785 };
+  const player = fx.addPlayer('a', origin);
+  await fx.runtime.ensureAmbientPatrol(player, origin);
+  const incident = [...fx.runtime._debug.incidents.values()][0];
+  for (const unit of [...incident.units.values()]) {
+    fx.runtime.applyBulletDamage(unit.unitId, 999, 'a', `kill-${unit.unitId}`);
+  }
+  fx.tick();
+  assert.deepEqual(
+    [...incident.units.values()].map((unit) => unit.unitType).sort(),
+    ['car', 'helicopter'],
+  );
+
+  assert.equal(fx.runtime.handlePlayerDeath('a'), true);
+  assert.equal(incident.state, 'ambient');
+  assert.equal(incident.waveLevel, 1);
+  assert.equal(incident.wanted.size, 0);
+  assert.deepEqual(
+    [...incident.units.values()].map((unit) => unit.unitType),
+    ['foot', 'foot'],
+  );
 });
 
 test('Directions polyline decoding and cache avoid duplicate Google calls', async () => {

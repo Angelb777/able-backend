@@ -1413,6 +1413,7 @@ module.exports = function(io, dependencies = {}) {
         const roomUfoProjectiles = [...activeUfoProjectiles.values()]
           .filter((projectile) => projectile.zoneId === zoneId)
           .map((projectile) => ufoProjectilePayload(projectile));
+        await policeRuntime.ensureAmbientPatrol(playerState, { lat, lng });
         const policeSnapshot = policeRuntime.getSnapshot(zoneId);
         const claimed = await UserModel.findOneAndUpdate(
           { _id: userId, stepcoinsTorretaPendientes: { $gt: 0 } },

@@ -111,8 +111,22 @@ function createPoliceRuntime({
     state.stars = 0; state.escapeStartedAt = null; state.escapeLossAt = null; state.seq += 1;
     if (incident) {
       incident.wanted.delete(id); incident.seq += 1; emitWanted(state, incident.zoneId);
+      if (incident.wanted.size === 0) {
+        incident.state = 'ambient';
+        incident.waveLevel = 1;
+        incident.pendingWaveAt = null;
+        for (const unit of [...incident.units.values()]) {
+          cancelUnitProjectiles(unit, reason);
+          nsp.to(unit.zoneId).emit('police:unit:destroy', {
+            ...unitPayload(unit),
+            reason: 'pursuit-ended',
+            attackerUserId: null,
+          });
+        }
+        incident.units.clear();
+        spawnAmbientPatrol(incident);
+      }
       nsp.to(incident.zoneId).emit('police:incident:update', incidentPayload(incident));
-      if (incident.wanted.size === 0) removeIncident(incident, reason);
     }
     return true;
   };
@@ -126,10 +140,10 @@ function createPoliceRuntime({
     if (incidents.size >= config.maxActiveIncidents) return ordered[0]?.item || null;
     return null;
   };
-  const createIncident = (player, origin) => {
+  const createIncident = (player, origin, state = 'pending') => {
     const incidentId = `police-${now()}-${++serial}`;
     const incident = { incidentId, zoneId: player.zoneId, center: { ...origin },
-      state: 'pending', wanted: new Map(), units: new Map(), seq: 1,
+      state, wanted: new Map(), units: new Map(), seq: 1,
       waveLevel: 0, pendingWaveAt: null, waveCompleting: false };
     incidents.set(incidentId, incident);
     nsp.to(player.zoneId).emit('police:incident:spawn', incidentPayload(incident));
@@ -144,27 +158,26 @@ function createPoliceRuntime({
       ...incidentPayload(incident), spawnAt: new Date(incident.pendingWaveAt).toISOString(),
     });
   };
-  const joinIncident = (player, origin) => {
-    let incident = selectIncident(origin) || createIncident(player, origin);
+  const joinIncident = (player, origin, preferredIncident = null) => {
+    const incident = preferredIncident || selectIncident(origin) || createIncident(player, origin);
+    const existing = wantedUsers.get(String(player.userId));
+    if (existing) return incidents.get(existing.incidentId) || incident;
     const state = { userId: String(player.userId), incidentId: incident.incidentId,
       stars: 1, escapeStartedAt: null, escapeLossAt: null, seq: 1 };
     wantedUsers.set(state.userId, state); incident.wanted.set(state.userId, state);
+    incident.state = 'active';
+    incident.waveLevel = Math.max(1, incident.waveLevel || 1);
+    for (const unit of incident.units.values()) unit.state = 'active';
     incident.seq += 1; emitWanted(state, incident.zoneId);
     nsp.to(incident.zoneId).emit('police:incident:update', incidentPayload(incident));
     if (incident.units.size === 0 && !incident.pendingWaveAt) scheduleWave(incident, 1, 0);
     return incident;
   };
   const onPlayerShot = async (player, origin) => {
-    const loaded = await loadConfig(); const userId = String(player?.userId || '');
-    if (!loaded.enabled || !userId || wantedUsers.has(userId) || pendingTriggers.has(userId)) return;
-    const delay = Math.max(0, Number(starConfig(1)?.spawnDelaySeconds) || 0) * 1000;
-    pendingTriggers.set(userId, { userId, zoneId: player.zoneId, origin: { ...origin }, dueAt: now() + delay });
-    nsp.to(player.zoneId).emit('police:trigger:scheduled', {
-      userId, spawnAt: new Date(now() + delay).toISOString(), serverTimestamp: now(),
-    });
+    await ensureAmbientPatrol(player, origin);
   };
 
-  const spawnUnit = (incident, type, index, total) => {
+  const spawnUnit = (incident, type, index, total, state = 'active') => {
     const definition = plain(config.units[type]); if (!definition) return;
     const unitId = `${incident.incidentId}-${type}-${++serial}`;
     const position = geo.computeOffset(incident.center,
@@ -172,9 +185,9 @@ function createPoliceRuntime({
     const unit = { unitId, incidentId: incident.incidentId, zoneId: incident.zoneId,
       unitType: type, definition: { ...definition }, lat: position.lat, lng: position.lng,
       heading: 0, life: Math.max(1, Number(definition.life) || 1),
-      maxLife: Math.max(1, Number(definition.life) || 1), seq: 1, state: 'active',
+      maxLife: Math.max(1, Number(definition.life) || 1), seq: 1, state,
       targetUserId: null, targetLockedUntil: 0, nextShotAt: now(), route: [], routeIndex: 0,
-      routeTarget: null, routePending: false };
+      routeTarget: null, routePending: false, patrolTarget: null };
     incident.units.set(unitId, unit);
     nsp.to(incident.zoneId).emit('police:unit:spawn', unitPayload(unit));
   };
@@ -200,6 +213,38 @@ function createPoliceRuntime({
     }
     nsp.to(incident.zoneId).emit('police:wave:spawn', incidentPayload(incident));
   };
+
+  const spawnAmbientPatrol = (incident) => {
+    if (!incident || incident.units.size > 0) return incident;
+    incident.waveLevel = 1;
+    incident.state = 'ambient';
+    incident.pendingWaveAt = null;
+    incident.seq += 1;
+    const configured = Math.max(0, Number(starConfig(1)?.footOfficers) || 0);
+    const activeTotal = [...incidents.values()].reduce((sum, item) => sum + item.units.size, 0);
+    const total = Math.min(
+      configured,
+      Number(config.maxUnitsPerIncident) || 30,
+      Math.max(0, (Number(config.maxNearbyUnits) || 60) - activeTotal),
+    );
+    for (let index = 0; index < total; index += 1) {
+      spawnUnit(incident, 'foot', index, total, 'idle');
+    }
+    nsp.to(incident.zoneId).emit('police:wave:spawn', incidentPayload(incident));
+    return incident;
+  };
+
+  async function ensureAmbientPatrol(player, origin = player) {
+    const loaded = await loadConfig();
+    if (!loaded.enabled || !player?.zoneId || player.gameModeEnabled === false || (player.vida ?? 0) <= 0) {
+      return null;
+    }
+    const position = { lat: Number(origin?.lat), lng: Number(origin?.lng) };
+    if (!Number.isFinite(position.lat) || !Number.isFinite(position.lng)) return null;
+    const existing = selectIncident(position);
+    if (existing) return existing;
+    return spawnAmbientPatrol(createIncident(player, position, 'ambient'));
+  }
 
   const validTarget = (incident, userId) => {
     if (!userId || !incident.wanted.has(String(userId))) return null;
@@ -252,6 +297,20 @@ function createPoliceRuntime({
       else break;
     }
   };
+  const moveAmbientUnit = (incident, unit, elapsedSeconds) => {
+    const patrolRadius = Math.max(40, Number(config.spawnDistanceMeters) || 180);
+    if (!unit.patrolTarget || geo.distanceMeters(unit, unit.patrolTarget) < 3) {
+      unit.patrolTarget = geo.computeOffset(
+        incident.center,
+        patrolRadius * (0.45 + random() * 0.55),
+        random() * 360,
+      );
+      unit.route = [];
+      unit.routeIndex = 0;
+      unit.routeTarget = null;
+    }
+    moveUnit(unit, unit.patrolTarget, elapsedSeconds);
+  };
   const fire = (incident, unit, target, timestamp) => {
     const distance = geo.distanceMeters(unit, target);
     if (distance > (Number(unit.definition.rangeMeters) || 0) || timestamp < unit.nextShotAt) return;
@@ -303,6 +362,11 @@ function createPoliceRuntime({
   const applyBulletDamage = (unitId, damage, attackerUserId, eventId) => {
     const unit = [...incidents.values()].map((incident) => incident.units.get(unitId)).find(Boolean);
     if (!unit || processedDamage.has(eventId)) return { applied: false, dead: !unit };
+    const incident = incidents.get(unit.incidentId);
+    const attacker = playersForUser(String(attackerUserId || ''))[0];
+    if (incident && attacker && attacker.gameModeEnabled !== false && (attacker.vida ?? 0) > 0) {
+      joinIncident(attacker, attacker, incident);
+    }
     processedDamage.add(eventId); const forget = setTimeout(() => processedDamage.delete(eventId), 60000); forget.unref?.();
     unit.life = Math.max(0, unit.life - Math.max(0, Number(damage) || 0)); unit.seq += 1;
     if (unit.life === 0) { destroyUnit(unit, 'destroyed', attackerUserId); return { applied: true, dead: true }; }
@@ -349,19 +413,26 @@ function createPoliceRuntime({
     }
   };
   const logicTick = (timestamp, elapsedSeconds) => {
-    for (const [userId, pending] of pendingTriggers) {
-      if (pending.dueAt > timestamp) continue; pendingTriggers.delete(userId);
-      const player = playersForUser(userId)[0];
-      if (player && player.gameModeEnabled !== false && (player.vida ?? 0) > 0) joinIncident(player, pending.origin);
-    }
     for (const incident of [...incidents.values()]) {
+      if (incident.state === 'ambient' &&
+          (primaryAlivePlayersInZone?.(incident.zoneId) || []).length === 0) {
+        removeIncident(incident, 'no-players');
+        continue;
+      }
       if (incident.pendingWaveAt && incident.pendingWaveAt <= timestamp) spawnWave(incident);
       for (const unit of incident.units.values()) {
-        const target = selectTarget(incident, unit, timestamp);
-        if (target) { moveUnit(unit, target, elapsedSeconds); fire(incident, unit, target, timestamp); }
+        if (incident.state === 'ambient' || incident.wanted.size === 0) {
+          unit.targetUserId = null;
+          unit.state = 'idle';
+          moveAmbientUnit(incident, unit, elapsedSeconds);
+        } else {
+          const target = selectTarget(incident, unit, timestamp);
+          if (target) { moveUnit(unit, target, elapsedSeconds); fire(incident, unit, target, timestamp); }
+        }
         unit.seq += 1; nsp.to(unit.zoneId).emit('police:unit:update', unitPayload(unit));
       }
-      tickEscape(incident, timestamp); completeWave(incident);
+      if (incident.wanted.size > 0) tickEscape(incident, timestamp);
+      completeWave(incident);
     }
   };
   const timer = setInterval(() => {
@@ -375,7 +446,7 @@ function createPoliceRuntime({
   timer.unref?.(); loadConfig();
 
   return {
-    onPlayerShot, clearWanted, handlePlayerDeath: (userId) => clearWanted(userId, 'player-death'),
+    onPlayerShot, ensureAmbientPatrol, clearWanted, handlePlayerDeath: (userId) => clearWanted(userId, 'player-death'),
     handleDisconnect: (userId) => clearWanted(userId, 'disconnect'), refreshConfig: () => loadConfig(true),
     getUnitsInZone: (zoneId) => [...incidents.values()].filter((item) => item.zoneId === zoneId)
       .flatMap((item) => [...item.units.values()]),

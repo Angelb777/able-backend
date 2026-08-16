@@ -64,29 +64,37 @@ const shoot = (socket, position, id, speed = 0, heading = 0) => ack(socket, 'bul
   clientShotId: id, cardId: 'card', from: position, heading, speed, alcance: 350, dano: 200,
 });
 
-test('police incident, unit, damage and snapshot are shared and authoritative', async (t) => {
+test('ambient police is shared, remains neutral until attacked and then becomes authoritative pursuit', async (t) => {
   const server = await start(); t.after(() => server.close());
   const origin = { lat: 41.6567, lng: -0.8785 };
   const a = await connect(server.url); const b = await connect(server.url);
-  await hello(a, 'a', origin); await hello(b, 'b', { lat: 41.657, lng: -0.8785 });
-  const spawnA = once(a, 'police:unit:spawn'); const spawnB = once(b, 'police:unit:spawn');
-  await shoot(a, origin, 'trigger-a');
-  const [unitA, unitB] = await Promise.all([spawnA, spawnB]);
-  assert.deepEqual(unitA, unitB);
-  assert.equal(unitA.unitId, unitB.unitId);
+  const first = await hello(a, 'a', origin);
+  const second = await hello(b, 'b', { lat: 41.657, lng: -0.8785 });
+  assert.equal(first.policeUnits.length, 1);
+  assert.equal(first.policeWanted.length, 0);
+  assert.equal(first.policeUnits[0].state, 'idle');
+  assert.equal(second.policeUnits[0].unitId, first.policeUnits[0].unitId);
 
-  await shoot(b, { lat: 41.657, lng: -0.8785 }, 'trigger-b');
+  await shoot(a, origin, 'shot-in-the-air');
   await new Promise((resolve) => setTimeout(resolve, 200));
-  const snapshot = await hello(b, 'b', { lat: unitA.lat, lng: unitA.lng });
-  assert.equal(snapshot.policeIncidents.length, 1);
-  assert.equal(snapshot.policeWanted.length, 2);
-  assert.equal(snapshot.policeUnits.length, 1);
+  const neutralSnapshot = await hello(a, 'a', origin);
+  assert.equal(neutralSnapshot.policeWanted.length, 0);
+  const latest = neutralSnapshot.policeUnits[0];
 
-  const latest = snapshot.policeUnits[0];
   const destroyed = once(a, 'police:unit:destroy');
-  await shoot(b, { lat: latest.lat, lng: latest.lng }, 'kill-police', 180, 0);
+  await hello(b, 'b', { lat: latest.lat, lng: latest.lng });
+  await shoot(b, { lat: latest.lat, lng: latest.lng }, 'attack-police', 180, 0);
   const death = await destroyed;
   assert.equal(death.unitId, latest.unitId);
   assert.equal(death.life, 0);
+  assert.equal(death.attackerUserId, 'b');
+
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const snapshot = await hello(b, 'b', { lat: latest.lat, lng: latest.lng });
+  assert.equal(snapshot.policeIncidents.length, 1);
+  assert.equal(snapshot.policeWanted.length, 1);
+  assert.equal(snapshot.policeWanted[0].userId, 'b');
+  assert.equal(snapshot.policeWanted[0].stars, 2);
+  assert.equal(snapshot.policeUnits.length, 1);
   a.disconnect(); b.disconnect();
 });
