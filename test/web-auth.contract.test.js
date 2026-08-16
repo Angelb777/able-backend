@@ -30,6 +30,11 @@ test('web sessions use backend cookies and never persist an authentication token
   assert.match(firebaseClient, /signOut/);
   assert.doesNotMatch(firebaseClient, /setItem\(['"]token/);
   assert.doesNotMatch(dashboard, /getItem\(['"]token/);
+  assert.match(dashboard, /fetch\(`\/api\/users\/\$\{userId\}`\)/);
+  assert.doesNotMatch(
+    dashboard,
+    /fetch\(`\/api\/users\/\$\{userId\}`,\s*\{\s*headers:\s*\{\s*Authorization/
+  );
   assert.doesNotMatch(cultureGame, /localStorage\.getItem\(['"]token/);
 });
 

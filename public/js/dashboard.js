@@ -622,10 +622,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   role = String(user.role || "").toLowerCase();
 
   try {
-    const token = "";
-    const res = await fetch(`/api/users/${userId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await fetch(`/api/users/${userId}`);
     if (!res.ok) throw new Error("Error en la petición");
 
     const updatedUser = await res.json();
