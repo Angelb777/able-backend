@@ -753,6 +753,30 @@
 
   <ul id="listaUfos"></ul>
 </div>
+<div id="policeSection" style="margin-top:30px;">
+  <h2>Policía / Persecuciones</h2>
+  <p>Configuración autoritativa compartida. Road usa Directions; air se interpola libremente.</p>
+  <form id="policeConfigForm" enctype="multipart/form-data">
+    <fieldset>
+      <legend>Límites y rendimiento</legend>
+      <label><input type="checkbox" name="enabled"> Sistema activo</label><br>
+      <label>Radio reutilización (m) <input type="number" name="reuseRadiusMeters" min="100" required></label>
+      <label>Máx. incidentes <input type="number" name="maxActiveIncidents" min="1" required></label>
+      <label>Máx. unidades/incidente <input type="number" name="maxUnitsPerIncident" min="1" required></label>
+      <label>Máx. unidades cercanas <input type="number" name="maxNearbyUnits" min="1" required></label><br>
+      <label>Actualización (ms) <input type="number" name="updateIntervalMs" min="100" required></label>
+      <label>Recálculo ruta (m) <input type="number" name="routeRecalculationDistanceMeters" min="20" required></label>
+      <label>TTL caché (s) <input type="number" name="routeCacheTtlSeconds" min="30" required></label>
+      <label>Persistencia objetivo (s) <input type="number" name="targetLockSeconds" min="0.5" step="0.1" required></label>
+      <label>Distancia spawn (m) <input type="number" name="spawnDistanceMeters" min="30" required></label>
+    </fieldset>
+    <div id="policeUnitFields"></div>
+    <h3>Configuración de las 5 estrellas</h3>
+    <div id="policeStarFields"></div>
+    <button type="submit">Guardar Policía / Persecuciones</button>
+    <p id="policeConfigStatus"></p>
+  </form>
+</div>
 <hr>
 <h2>Promociones de locales físicos</h2>
 

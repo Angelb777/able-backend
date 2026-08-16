@@ -90,6 +90,7 @@ const ensureDirs = [
   path.join(UPLOAD_BASE_DIR, 'skins'),
   path.join(UPLOAD_BASE_DIR, 'cards'),
   path.join(UPLOAD_BASE_DIR, 'ufo'),
+  path.join(UPLOAD_BASE_DIR, 'police'),
   path.join(UPLOAD_BASE_DIR, 'rewards'),
 ];
 for (const d of ensureDirs) {
@@ -176,6 +177,7 @@ app.use('/api/ubicaciones', require('./api/routes/ubicaciones'));
 app.use('/api/mobility', require('./api/routes/mobility'));
 app.use('/api/weather', require('./api/routes/weather'));
 app.use('/api/ufo', require('./api/routes/ufo'));
+app.use('/api/police', require('./api/routes/police'));
 app.use('/api/promociones-negocio', require('./api/routes/promocionesNegocio'));
 app.use('/api/promo-contratada', require('./api/routes/promoContratada'));
 app.use('/api/commercial', require('./api/routes/commercial'));

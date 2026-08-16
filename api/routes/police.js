@@ -1,0 +1,73 @@
+const express = require('express');
+const multer = require('multer');
+const PoliceConfig = require('../models/PoliceConfig');
+const { saveImage } = require('../utils/mediaStorage');
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+
+const router = express.Router();
+const adminOnly = [verifyToken, checkRole(['admin'])];
+const uploadFields = ['footSprite', 'footProjectile', 'footImpact', 'carSprite',
+  'carProjectile', 'carImpact', 'helicopterSprite', 'helicopterProjectile', 'helicopterImpact'];
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => file.mimetype?.startsWith('image/')
+    ? cb(null, true) : cb(new Error('Los recursos policiales deben ser imágenes')) });
+
+const parseConfig = (body) => {
+  const raw = typeof body.config === 'string' ? JSON.parse(body.config) : body;
+  const defaults = PoliceConfig.defaults();
+  const result = { ...defaults, ...raw, key: 'global' };
+  result.units = { ...defaults.units, ...(raw.units || {}) };
+  result.units.foot = { ...defaults.units.foot, ...(raw.units?.foot || {}), movementType: 'road', routeMode: 'walking' };
+  result.units.car = { ...defaults.units.car, ...(raw.units?.car || {}), movementType: 'road', routeMode: 'driving' };
+  result.units.helicopter = { ...defaults.units.helicopter, ...(raw.units?.helicopter || {}), movementType: 'air' };
+  if (!Array.isArray(raw.stars) || raw.stars.length !== 5) {
+    throw new Error('Debes configurar exactamente cinco niveles de estrellas');
+  }
+  result.stars = raw.stars.map((level, index) => ({ ...defaults.stars[index], ...level, level: index + 1 }));
+  return result;
+};
+
+router.get('/', ...adminOnly, async (_req, res) => {
+  try {
+    const stored = await PoliceConfig.findOne({ key: 'global' }).lean();
+    return res.json(stored || PoliceConfig.defaults());
+  } catch (_) {
+    return res.status(500).json({ error: 'No se pudo cargar la configuración policial' });
+  }
+});
+
+router.put('/', ...adminOnly, upload.fields(uploadFields.map((name) => ({ name, maxCount: 1 }))), async (req, res) => {
+  try {
+    const next = parseConfig(req.body);
+    const current = await PoliceConfig.findOne({ key: 'global' }).lean();
+    const resources = {
+      footSprite: ['foot', 'spriteUrl'], footProjectile: ['foot', 'projectileSpriteUrl'], footImpact: ['foot', 'impactSpriteUrl'],
+      carSprite: ['car', 'spriteUrl'], carProjectile: ['car', 'projectileSpriteUrl'], carImpact: ['car', 'impactSpriteUrl'],
+      helicopterSprite: ['helicopter', 'spriteUrl'], helicopterProjectile: ['helicopter', 'projectileSpriteUrl'], helicopterImpact: ['helicopter', 'impactSpriteUrl'],
+    };
+    for (const [field, [type, property]] of Object.entries(resources)) {
+      const file = req.files?.[field]?.[0];
+      if (file) {
+        next.units[type][property] = await saveImage(file, 'police');
+        if (property === 'spriteUrl' && next.units[type].renderType === 'flame_spritesheet') {
+          next.units[type].spritesheet = {
+            ...(next.units[type].spritesheet || {}),
+            url: next.units[type][property],
+          };
+        }
+      }
+      else if (!next.units[type][property] && current?.units?.[type]?.[property]) {
+        next.units[type][property] = current.units[type][property];
+      }
+    }
+    const saved = await PoliceConfig.findOneAndUpdate({ key: 'global' }, { $set: next },
+      { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true });
+    return res.json(saved);
+  } catch (error) {
+    const status = error instanceof SyntaxError || error.name === 'ValidationError' ||
+      /cinco niveles/.test(error.message) ? 400 : 500;
+    return res.status(status).json({ error: error.message || 'No se pudo guardar la configuración policial' });
+  }
+});
+
+module.exports = router;

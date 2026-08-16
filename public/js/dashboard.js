@@ -2175,6 +2175,129 @@ function sincronizarSelectoresArchivoGestion() {
 
 window.addEventListener("pageshow", sincronizarSelectoresArchivoGestion);
 
+const policeUnitMeta = {
+  foot: { title: "Policía a pie", movement: "road / walking" },
+  car: { title: "Coche de policía", movement: "road / driving" },
+  helicopter: { title: "Helicóptero", movement: "air" },
+};
+
+function initializePoliceForm() {
+  const units = document.getElementById("policeUnitFields");
+  const stars = document.getElementById("policeStarFields");
+  if (!units || !stars || units.dataset.ready) return;
+  units.innerHTML = Object.entries(policeUnitMeta).map(([type, meta]) => `
+    <fieldset data-police-unit="${type}"><legend>${meta.title} (${meta.movement})</legend>
+      <label>Nombre <input name="${type}_label" required></label>
+      <label>Sprite <input type="file" name="${type}Sprite" accept="image/*"></label>
+      <label>Render <select name="${type}_renderType"><option value="classic">Clásico</option><option value="flame_spritesheet">Spritesheet</option></select></label>
+      <label>Config spritesheet JSON <textarea name="${type}_spritesheet" rows="2"></textarea></label><br>
+      <label>Vida <input type="number" name="${type}_life" min="1" required></label>
+      <label>Velocidad m/s <input type="number" name="${type}_speedMetersPerSecond" min="0.1" step="0.1" required></label>
+      <label>Daño <input type="number" name="${type}_damage" min="0" required></label>
+      <label>Alcance m <input type="number" name="${type}_rangeMeters" min="1" required></label>
+      <label>Cadencia s <input type="number" name="${type}_fireIntervalSeconds" min="0.1" step="0.1" required></label>
+      <label>Cooldown s <input type="number" name="${type}_cooldownSeconds" min="0.1" step="0.1" required></label>
+      <label>Velocidad proyectil m/s <input type="number" name="${type}_projectileSpeedMetersPerSecond" min="1" required></label>
+      <label>Radio impacto m <input type="number" name="${type}_hitRadiusMeters" min="1" required></label><br>
+      <label>Sprite proyectil <input type="file" name="${type}Projectile" accept="image/*"></label>
+      <label>Sprite impacto <input type="file" name="${type}Impact" accept="image/*"></label>
+    </fieldset>`).join("");
+  stars.innerHTML = Array.from({ length: 5 }, (_, index) => {
+    const level = index + 1;
+    return `<fieldset data-police-star="${level}"><legend>${"⭐".repeat(level)}</legend>
+      <label>Policías a pie <input type="number" name="star${level}_footOfficers" min="0" required></label>
+      <label>Coches <input type="number" name="star${level}_cars" min="0" required></label>
+      <label>Helicópteros <input type="number" name="star${level}_helicopters" min="0" required></label>
+      <label>Retraso s <input type="number" name="star${level}_spawnDelaySeconds" min="0" step="0.1" required></label>
+      <label>Escape m <input type="number" name="star${level}_escapeDistanceMeters" min="1" required></label>
+      <label>Tiempo fuera s <input type="number" name="star${level}_escapeHoldSeconds" min="0.1" step="0.1" required></label>
+      <label>Condición <select name="star${level}_completionCondition"><option value="all_units_destroyed">Eliminar toda la oleada</option></select></label>
+      <label><input type="checkbox" name="star${level}_autoEscalate"> Subir automáticamente</label>
+    </fieldset>`;
+  }).join("");
+  units.dataset.ready = "true";
+}
+
+function setPoliceFormValue(form, name, value) {
+  const field = form.elements.namedItem(name);
+  if (!field) return;
+  if (field.type === "checkbox") field.checked = Boolean(value);
+  else field.value = value ?? "";
+}
+
+async function loadPoliceConfig() {
+  initializePoliceForm();
+  const form = document.getElementById("policeConfigForm");
+  if (!form) return;
+  try {
+    const response = await fetch("/api/police", { headers: { Authorization: `Bearer ${token}` } });
+    const config = await response.json();
+    if (!response.ok) throw new Error(config.error || "No se pudo cargar Policía");
+    ["enabled", "reuseRadiusMeters", "maxActiveIncidents", "maxUnitsPerIncident", "maxNearbyUnits",
+      "updateIntervalMs", "routeRecalculationDistanceMeters", "routeCacheTtlSeconds",
+      "targetLockSeconds", "spawnDistanceMeters"].forEach((name) => setPoliceFormValue(form, name, config[name]));
+    for (const type of Object.keys(policeUnitMeta)) {
+      const unit = config.units?.[type] || {};
+      for (const key of ["label", "renderType", "life", "speedMetersPerSecond", "damage", "rangeMeters",
+        "fireIntervalSeconds", "cooldownSeconds", "projectileSpeedMetersPerSecond", "hitRadiusMeters"]) {
+        setPoliceFormValue(form, `${type}_${key}`, unit[key]);
+      }
+      setPoliceFormValue(form, `${type}_spritesheet`, JSON.stringify(unit.spritesheet || {}));
+    }
+    (config.stars || []).forEach((star, index) => {
+      for (const key of ["footOfficers", "cars", "helicopters", "spawnDelaySeconds", "escapeDistanceMeters",
+        "escapeHoldSeconds", "completionCondition", "autoEscalate"]) {
+        setPoliceFormValue(form, `star${index + 1}_${key}`, star[key]);
+      }
+    });
+  } catch (error) { document.getElementById("policeConfigStatus").textContent = `❌ ${error.message}`; }
+}
+
+function policeNumber(form, name) { return Number(form.elements.namedItem(name)?.value || 0); }
+
+function collectPoliceConfig(form) {
+  const config = { enabled: form.enabled.checked, reuseRadiusMeters: policeNumber(form, "reuseRadiusMeters"),
+    maxActiveIncidents: policeNumber(form, "maxActiveIncidents"), maxUnitsPerIncident: policeNumber(form, "maxUnitsPerIncident"),
+    maxNearbyUnits: policeNumber(form, "maxNearbyUnits"), updateIntervalMs: policeNumber(form, "updateIntervalMs"),
+    routeRecalculationDistanceMeters: policeNumber(form, "routeRecalculationDistanceMeters"),
+    routeCacheTtlSeconds: policeNumber(form, "routeCacheTtlSeconds"), targetLockSeconds: policeNumber(form, "targetLockSeconds"),
+    spawnDistanceMeters: policeNumber(form, "spawnDistanceMeters"), units: {}, stars: [] };
+  for (const type of Object.keys(policeUnitMeta)) {
+    const prefix = `${type}_`; const rawSheet = form.elements.namedItem(`${prefix}spritesheet`).value.trim();
+    config.units[type] = { label: form.elements.namedItem(`${prefix}label`).value.trim(),
+      renderType: form.elements.namedItem(`${prefix}renderType`).value, spritesheet: rawSheet ? JSON.parse(rawSheet) : {},
+      life: policeNumber(form, `${prefix}life`), speedMetersPerSecond: policeNumber(form, `${prefix}speedMetersPerSecond`),
+      damage: policeNumber(form, `${prefix}damage`), rangeMeters: policeNumber(form, `${prefix}rangeMeters`),
+      fireIntervalSeconds: policeNumber(form, `${prefix}fireIntervalSeconds`), cooldownSeconds: policeNumber(form, `${prefix}cooldownSeconds`),
+      projectileSpeedMetersPerSecond: policeNumber(form, `${prefix}projectileSpeedMetersPerSecond`),
+      hitRadiusMeters: policeNumber(form, `${prefix}hitRadiusMeters`) };
+  }
+  for (let level = 1; level <= 5; level += 1) {
+    const prefix = `star${level}_`;
+    config.stars.push({ level, footOfficers: policeNumber(form, `${prefix}footOfficers`), cars: policeNumber(form, `${prefix}cars`),
+      helicopters: policeNumber(form, `${prefix}helicopters`), spawnDelaySeconds: policeNumber(form, `${prefix}spawnDelaySeconds`),
+      escapeDistanceMeters: policeNumber(form, `${prefix}escapeDistanceMeters`), escapeHoldSeconds: policeNumber(form, `${prefix}escapeHoldSeconds`),
+      completionCondition: form.elements.namedItem(`${prefix}completionCondition`).value,
+      autoEscalate: form.elements.namedItem(`${prefix}autoEscalate`).checked });
+  }
+  return config;
+}
+
+function bindPoliceForm() {
+  const form = document.getElementById("policeConfigForm");
+  if (!form || form.dataset.listenerAdded) return;
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault(); const status = document.getElementById("policeConfigStatus");
+    try {
+      const data = new FormData(form); data.set("config", JSON.stringify(collectPoliceConfig(form)));
+      const response = await fetch("/api/police", { method: "PUT", headers: { Authorization: `Bearer ${token}` }, body: data });
+      const result = await response.json(); if (!response.ok) throw new Error(result.error || "No se pudo guardar Policía");
+      status.textContent = "✅ Configuración guardada; se aplicará a nuevos spawns."; await loadPoliceConfig();
+    } catch (error) { status.textContent = `❌ ${error.message}`; }
+  });
+  form.dataset.listenerAdded = "true";
+}
+
 // 🔄 REEMPLAZA la función renderGestionJuego COMPLETAMENTE por esto:
 
 async function renderGestionJuego() {
@@ -2188,6 +2311,9 @@ async function renderGestionJuego() {
 
   seccion.style.display = "block";
   sincronizarSelectoresArchivoGestion();
+  initializePoliceForm();
+  bindPoliceForm();
+  await loadPoliceConfig();
 
   // 🎨 FORMULARIO CREAR SKIN
   const formSkin = document.getElementById("formCrearSkin");

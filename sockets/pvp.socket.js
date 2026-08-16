@@ -7,6 +7,8 @@ const Mine = require('../api/models/Mine');
 const Airstrike = require('../api/models/Airstrike');
 const User = require('../api/models/User');
 const Ufo = require('../api/models/Ufo');
+const PoliceConfig = require('../api/models/PoliceConfig');
+const { createPoliceRuntime } = require('../api/services/policeRuntime');
 const { resolveBearerToken } = require('../api/services/authIdentity');
 const clanMembershipCache = require('../api/services/clanMembershipCache');
 const bountyService = require('../api/services/bountyService');
@@ -25,6 +27,11 @@ module.exports = function(io, dependencies = {}) {
   const AirstrikeModel = dependencies.AirstrikeModel || Airstrike;
   const UserModel = dependencies.UserModel || User;
   const UfoModel = dependencies.UfoModel || Ufo;
+  const PoliceConfigModel = dependencies.PoliceConfigModel ||
+    (hasInjectedDependencies ? {
+      defaults: () => ({ enabled: false, stars: [], units: {} }),
+      findOne: () => ({ lean: async () => null }),
+    } : PoliceConfig);
   const resolveSocketIdentity = dependencies.resolveAuthToken ||
     ((token) => resolveBearerToken(token, { UserModel }));
   const ClanMembershipService = dependencies.ClanMembershipService ||
@@ -70,6 +77,7 @@ module.exports = function(io, dependencies = {}) {
   const processedUfoDamageEvents = new Set();
   const scheduledUfoZones = new Set();
   const pendingUfoTimers = new Map();
+  let policeRuntime = null;
   const TURRET_BULLET_SPEED = 80;
   const DEFAULT_TURRET_RANGE_M = 100;
   const DEFAULT_TURRET_DAMAGE = 10;
@@ -282,6 +290,7 @@ module.exports = function(io, dependencies = {}) {
   socialRealtime.events.on('game-mode-changed', ({ userId, gameModeEnabled }) => {
     const normalizedUserId = String(userId);
     if (gameModeEnabled !== false) return;
+    policeRuntime?.clearWanted(normalizedUserId, 'game-mode-disabled');
     for (const [bulletId, bullet] of bullets) {
       if (bullet.byUserId !== normalizedUserId) continue;
       emitBulletExplosion(bulletId, bullet, 'game-mode-disabled');
@@ -370,8 +379,19 @@ module.exports = function(io, dependencies = {}) {
         bountyPaid: bounty.paid || 0,
       });
     }
+    if (killed) policeRuntime?.handlePlayerDeath(targetUserId);
     return { protected: false, vida: nuevaVida, killed };
   }
+
+  policeRuntime = createPoliceRuntime({
+    nsp,
+    geo,
+    PoliceConfigModel,
+    applyPlayerDamage,
+    playersForUser,
+    primaryAlivePlayersInZone: (zoneId) => primaryAlivePlayersInZone(zoneId),
+    routeProvider: dependencies.PoliceRouteProvider,
+  });
 
   // Tick de balas (server-authoritative)
   const TICK_MS = 50;
@@ -683,6 +703,15 @@ module.exports = function(io, dependencies = {}) {
         );
         if (impact) candidates.push({ type: 'ufo', target: state, impact });
       }
+      for (const unit of policeRuntime.getUnitsInZone(b.zoneId)) {
+        const impact = segmentCircleIntersection(
+          previous,
+          next,
+          unit,
+          Number(unit.definition.hitRadiusMeters) || PLAYER_HIT_RADIUS_M
+        );
+        if (impact) candidates.push({ type: 'police', target: unit, impact });
+      }
       candidates.sort((a, c) => a.impact.t - c.impact.t);
       const collision = candidates[0];
       if (collision) {
@@ -738,6 +767,16 @@ module.exports = function(io, dependencies = {}) {
                 Boolean(target.deathSpritesheet?.url),
             });
           }
+        } else if (collision.type === 'police') {
+          policeRuntime.applyBulletDamage(
+            target.unitId,
+            b.dano,
+            b.byUserId,
+            `bullet:${id}:police:${target.unitId}`
+          );
+          emitBulletExplosion(id, b, 'police', {
+            policeUnitId: target.unitId,
+          });
         } else {
           applyUfoDamage({
             state: target,
@@ -1374,6 +1413,7 @@ module.exports = function(io, dependencies = {}) {
         const roomUfoProjectiles = [...activeUfoProjectiles.values()]
           .filter((projectile) => projectile.zoneId === zoneId)
           .map((projectile) => ufoProjectilePayload(projectile));
+        const policeSnapshot = policeRuntime.getSnapshot(zoneId);
         const claimed = await UserModel.findOneAndUpdate(
           { _id: userId, stepcoinsTorretaPendientes: { $gt: 0 } },
           [{ $set: {
@@ -1391,6 +1431,7 @@ module.exports = function(io, dependencies = {}) {
           airstrikes: roomAirstrikes,
           ufos: roomUfos,
           ufoProjectiles: roomUfoProjectiles,
+          ...policeSnapshot,
           claimedStepcoins,
           clanIds,
           bountyTotal,
@@ -2018,6 +2059,9 @@ module.exports = function(io, dependencies = {}) {
         scheduleUfosAfterFirstShot(p.zoneId, authoritativeFrom).catch((error) => {
           console.error(`[PVP][${instanceId}] ufo schedule error`, error);
         });
+        policeRuntime.onPlayerShot(p, authoritativeFrom).catch((error) => {
+          console.error(`[PVP][${instanceId}] police trigger error`, error);
+        });
 
         // Avisar a la sala para que los clientes la dibujen en local
         nsp.to(p.zoneId).emit('bullet:spawn', {
@@ -2075,6 +2119,11 @@ module.exports = function(io, dependencies = {}) {
       }
     });
 
+    socket.on('police:leave', () => {
+      const p = players.get(socket.id);
+      if (p) policeRuntime.clearWanted(p.userId, 'client-background');
+    });
+
     // 4) Desconexión
     socket.on('disconnect', (reason) => {
       const p = players.get(socket.id);
@@ -2118,6 +2167,7 @@ module.exports = function(io, dependencies = {}) {
             ...presenceMetadata(replacement),
           });
         } else {
+          policeRuntime.handleDisconnect(p.userId);
           primarySocketByUser.delete(p.userId);
           const oldTimer = pendingPresenceLeaves.get(p.userId);
           if (oldTimer) clearTimeout(oldTimer);
