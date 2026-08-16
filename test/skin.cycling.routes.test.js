@@ -5,6 +5,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 
 const Skin = require('../api/models/Skin');
+const User = require('../api/models/User');
 const mediaStorage = require('../api/utils/mediaStorage');
 
 function png(name) {
@@ -30,6 +31,7 @@ test('skin create and edit endpoints accept cycling and bicicleta uploads', asyn
   const originalSaveImage = mediaStorage.saveImage;
   const originalSave = Skin.prototype.save;
   const originalFindById = Skin.findById;
+  const originalUserFindById = User.findById;
   process.env.JWT_SECRET = 'skin-cycling-route-test-secret';
 
   let savedSkin;
@@ -39,6 +41,19 @@ test('skin create and edit endpoints accept cycling and bicicleta uploads', asyn
     return this;
   };
   Skin.findById = async () => savedSkin;
+  User.findById = () => {
+    const query = {
+      select: () => query,
+      lean: async () => ({
+        _id: '507f1f77bcf86cd799439011',
+        role: 'admin',
+        firebaseUid: null,
+        email: 'admin@able73.test',
+        nickname: 'Admin',
+      }),
+    };
+    return query;
+  };
 
   delete require.cache[require.resolve('../api/routes/skins')];
   const skinsRouter = require('../api/routes/skins');
@@ -57,6 +72,7 @@ test('skin create and edit endpoints accept cycling and bicicleta uploads', asyn
     mediaStorage.saveImage = originalSaveImage;
     Skin.prototype.save = originalSave;
     Skin.findById = originalFindById;
+    User.findById = originalUserFindById;
     delete require.cache[require.resolve('../api/routes/skins')];
     if (previousSecret == null) delete process.env.JWT_SECRET;
     else process.env.JWT_SECRET = previousSecret;

@@ -30,7 +30,7 @@ const parseConfig = (body) => {
 router.get('/', ...adminOnly, async (_req, res) => {
   try {
     const stored = await PoliceConfig.findOne({ key: 'global' }).lean();
-    return res.json(stored || PoliceConfig.defaults());
+    return res.json(stored ? parseConfig({ config: JSON.stringify(stored) }) : PoliceConfig.defaults());
   } catch (_) {
     return res.status(500).json({ error: 'No se pudo cargar la configuración policial' });
   }
@@ -45,19 +45,26 @@ router.put('/', ...adminOnly, upload.fields(uploadFields.map((name) => ({ name, 
       carSprite: ['car', 'spriteUrl'], carProjectile: ['car', 'projectileSpriteUrl'], carImpact: ['car', 'impactSpriteUrl'],
       helicopterSprite: ['helicopter', 'spriteUrl'], helicopterProjectile: ['helicopter', 'projectileSpriteUrl'], helicopterImpact: ['helicopter', 'impactSpriteUrl'],
     };
+    const animatedResource = {
+      spriteUrl: ['renderType', 'spritesheet', true],
+      projectileSpriteUrl: ['projectileRenderType', 'projectileSpritesheet', true],
+      impactSpriteUrl: ['impactRenderType', 'impactSpritesheet', false],
+    };
     for (const [field, [type, property]] of Object.entries(resources)) {
       const file = req.files?.[field]?.[0];
       if (file) {
         next.units[type][property] = await saveImage(file, 'police');
-        if (property === 'spriteUrl' && next.units[type].renderType === 'flame_spritesheet') {
-          next.units[type].spritesheet = {
-            ...(next.units[type].spritesheet || {}),
-            url: next.units[type][property],
-          };
-        }
       }
       else if (!next.units[type][property] && current?.units?.[type]?.[property]) {
         next.units[type][property] = current.units[type][property];
+      }
+      const [renderProperty, sheetProperty, defaultLoop] = animatedResource[property];
+      if (next.units[type][renderProperty] === 'flame_spritesheet' && next.units[type][property]) {
+        next.units[type][sheetProperty] = {
+          ...(next.units[type][sheetProperty] || {}),
+          url: next.units[type][property],
+          loop: next.units[type][sheetProperty]?.loop ?? defaultLoop,
+        };
       }
     }
     const saved = await PoliceConfig.findOneAndUpdate({ key: 'global' }, { $set: next },

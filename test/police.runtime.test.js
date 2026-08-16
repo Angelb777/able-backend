@@ -8,7 +8,7 @@ const baseConfig = () => ({
   enabled: true, reuseRadiusMeters: 2000, maxActiveIncidents: 10,
   maxUnitsPerIncident: 30, maxNearbyUnits: 60, updateIntervalMs: 100,
   routeRecalculationDistanceMeters: 100, targetLockSeconds: 4,
-  spawnDistanceMeters: 100,
+  spawnDistanceMeters: 100, patrolPairSpacingMeters: 3,
   units: {
     foot: { movementType: 'road', routeMode: 'walking', life: 100,
       speedMetersPerSecond: 5, damage: 20, rangeMeters: 500,
@@ -86,6 +86,38 @@ test('ambient patrol is shared and shooting alone never starts a pursuit', async
   assert.equal([...fx.runtime._debug.incidents.values()][0].wanted.size, 2);
 });
 
+test('the initial foot patrol walks as a pair and both pursue its attacker', async (t) => {
+  const fx = fixture((config) => {
+    config.stars[0].footOfficers = 2;
+    config.patrolPairSpacingMeters = 4;
+  });
+  t.after(() => fx.runtime.shutdown());
+  const origin = { lat: 41.6567, lng: -0.8785 };
+  const player = fx.addPlayer('a', origin);
+  await fx.runtime.ensureAmbientPatrol(player, origin);
+  const incident = [...fx.runtime._debug.incidents.values()][0];
+  const units = [...incident.units.values()];
+  assert.equal(units.length, 2);
+  assert.ok(geo.distanceMeters(units[0], units[1]) <= 4.1);
+
+  fx.tick(1);
+  await Promise.resolve(); await Promise.resolve();
+  fx.advance(100); fx.tick(1);
+  assert.equal(fx.routeCalls.filter((call) => call.mode === 'walking').length, 1,
+    'only the leader requests the ambient walking route');
+  assert.ok(geo.distanceMeters(units[0], units[1]) <= 8,
+    'the partner stays alongside the leader');
+
+  const before = units.map((unit) => geo.distanceMeters(unit, player));
+  fx.runtime.applyBulletDamage(units[0].unitId, 1, 'a', 'attack-pair');
+  fx.advance(100); fx.tick(1);
+  await Promise.resolve(); await Promise.resolve();
+  fx.advance(100); fx.tick(1);
+  assert.deepEqual(units.map((unit) => unit.targetUserId), ['a', 'a']);
+  assert.ok(units.every((unit, index) => geo.distanceMeters(unit, player) < before[index]),
+    'both officers advance toward the attacker');
+});
+
 test('destroying each wave escalates progressively and never exceeds five stars', async (t) => {
   const fx = fixture((config) => config.stars.forEach((star) => { star.spawnDelaySeconds = 0; }));
   t.after(() => fx.runtime.shutdown());
@@ -108,7 +140,17 @@ test('destroying each wave escalates progressively and never exceeds five stars'
 });
 
 test('targeting prioritizes stars, locks target and respects range/cooldown', async (t) => {
-  const fx = fixture((config) => config.stars[0].spawnDelaySeconds = 0);
+  const fx = fixture((config) => {
+    config.stars[0].spawnDelaySeconds = 0;
+    Object.assign(config.units.foot, {
+      projectileSpriteUrl: '/police-shot.png',
+      projectileRenderType: 'flame_spritesheet',
+      projectileSpritesheet: { url: '/police-shot.png', rows: 1, columns: 4, frames: 4 },
+      impactSpriteUrl: '/police-impact.png',
+      impactRenderType: 'flame_spritesheet',
+      impactSpritesheet: { url: '/police-impact.png', rows: 2, columns: 3, frames: 6, loop: false },
+    });
+  });
   t.after(() => fx.runtime.shutdown());
   const origin = { lat: 41.6567, lng: -0.8785 };
   const a = fx.addPlayer('a', origin);
@@ -123,6 +165,9 @@ test('targeting prioritizes stars, locks target and respects range/cooldown', as
   fx.advance(4100); fx.tick();
   assert.equal(unit.targetUserId, 'b');
   assert.equal(fx.projectiles().size, 1);
+  const projectile = [...fx.projectiles().values()][0];
+  assert.equal(projectile.projectileSpritesheet.columns, 4);
+  assert.equal(projectile.impactSpritesheet.frames, 6);
   a.lat = unit.lat; a.lng = unit.lng;
   fx.advance(500); fx.tick();
   assert.equal(unit.targetUserId, 'b', 'hysteresis keeps the selected target');

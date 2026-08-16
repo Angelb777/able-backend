@@ -769,9 +769,11 @@
       <label>TTL caché (s) <input type="number" name="routeCacheTtlSeconds" min="30" required></label>
       <label>Persistencia objetivo (s) <input type="number" name="targetLockSeconds" min="0.5" step="0.1" required></label>
       <label>Distancia spawn (m) <input type="number" name="spawnDistanceMeters" min="30" required></label>
+      <label>Separación pareja policial (m) <input type="number" name="patrolPairSpacingMeters" min="1" max="12" step="0.5" required></label>
     </fieldset>
     <div id="policeUnitFields"></div>
-    <h3>Configuración de las 5 estrellas</h3>
+    <h3>Oleadas editables de las 5 estrellas</h3>
+    <p>Edita unidades, retraso, distancia y tiempo de escape de cada oleada. La oleada 1 es la patrulla ambiental inicial.</p>
     <div id="policeStarFields"></div>
     <button type="submit">Guardar Policía / Persecuciones</button>
     <p id="policeConfigStatus"></p>
@@ -921,7 +923,7 @@
 
 </main>
 
-<script src="js/dashboard.js?v=commercial-backoffice-1"></script>
+<script src="js/dashboard.js?v=police-pair-effects-3"></script>
 <script type="module">
 import { logoutWebSession } from './js/firebase-client.js';
 document.getElementById('able73-logout').addEventListener('click', async () => {

@@ -26,7 +26,9 @@ test('Police dashboard uses shared session fetch and exposes rows and columns', 
   assert.match(policeSection, /Filas <input[^>]+spritesheetRows/);
   assert.match(policeSection, /Columnas <input[^>]+spritesheetColumns/);
   assert.match(policeSection, /const gridChanged = rows !== Number\(storedSheet\.rows\)/);
-  assert.match(policeSection, /spritesheet: \{ \.\.\.storedSheet, rows, columns, frames \}/);
+  assert.match(policeSection, /spritesheet: collectPoliceSpritesheet\(form/);
+  assert.match(policeSection, /projectileSpritesheet: collectPoliceSpritesheet\(form/);
+  assert.match(policeSection, /impactSpritesheet: collectPoliceSpritesheet\(form/);
 
   const context = vm.createContext({});
   vm.runInContext(
@@ -39,7 +41,8 @@ test('Police dashboard uses shared session fetch and exposes rows and columns', 
   });
   for (const name of ['reuseRadiusMeters', 'maxActiveIncidents', 'maxUnitsPerIncident',
     'maxNearbyUnits', 'updateIntervalMs', 'routeRecalculationDistanceMeters',
-    'routeCacheTtlSeconds', 'targetLockSeconds', 'spawnDistanceMeters']) field(name, 1);
+    'routeCacheTtlSeconds', 'targetLockSeconds', 'spawnDistanceMeters',
+    'patrolPairSpacingMeters']) field(name, 1);
   for (const type of ['foot', 'car', 'helicopter']) {
     field(`${type}_label`, type);
     field(`${type}_renderType`, 'flame_spritesheet');
@@ -51,6 +54,12 @@ test('Police dashboard uses shared session fetch and exposes rows and columns', 
     }));
     field(`${type}_spritesheetRows`, type === 'car' ? 2 : (type === 'foot' ? 2 : 1));
     field(`${type}_spritesheetColumns`, type === 'car' ? 3 : (type === 'foot' ? 4 : 1));
+    for (const effect of ['projectile', 'impact']) {
+      field(`${type}_${effect}RenderType`, 'flame_spritesheet');
+      field(`${type}_${effect}SpritesheetMetadata`, JSON.stringify({ fps: 10 }));
+      field(`${type}_${effect}SpritesheetRows`, effect === 'impact' ? 2 : 1);
+      field(`${type}_${effect}SpritesheetColumns`, effect === 'impact' ? 3 : 4);
+    }
     for (const name of ['life', 'speedMetersPerSecond', 'damage', 'rangeMeters',
       'fireIntervalSeconds', 'cooldownSeconds', 'projectileSpeedMetersPerSecond',
       'hitRadiusMeters']) field(`${type}_${name}`, 1);
@@ -69,6 +78,9 @@ test('Police dashboard uses shared session fetch and exposes rows and columns', 
   assert.equal(collected.units.car.spritesheet.rows, 2);
   assert.equal(collected.units.car.spritesheet.columns, 3);
   assert.equal(collected.units.car.spritesheet.frames, 6);
+  assert.equal(collected.units.foot.projectileSpritesheet.frames, 4);
+  assert.equal(collected.units.foot.impactSpritesheet.frames, 6);
+  assert.equal(collected.units.foot.impactSpritesheet.loop, false);
 });
 
 test('Police configuration saves, reloads and edits spritesheet grids', async (t) => {
@@ -131,6 +143,18 @@ test('Police configuration saves, reloads and edits spritesheet grids', async (t
     url: '/uploads/police/foot.png', rows: 2, columns: 4,
     frames: 8, fps: 12, loop: true,
   };
+  firstConfig.units.foot.projectileRenderType = 'flame_spritesheet';
+  firstConfig.units.foot.projectileSpriteUrl = '/uploads/police/foot-shot.png';
+  firstConfig.units.foot.projectileSpritesheet = {
+    url: '/uploads/police/foot-shot.png', rows: 1, columns: 4,
+    frames: 4, fps: 10, loop: true,
+  };
+  firstConfig.units.foot.impactRenderType = 'flame_spritesheet';
+  firstConfig.units.foot.impactSpriteUrl = '/uploads/police/foot-impact.png';
+  firstConfig.units.foot.impactSpritesheet = {
+    url: '/uploads/police/foot-impact.png', rows: 2, columns: 3,
+    frames: 6, fps: 12, loop: false,
+  };
   const firstBody = new FormData();
   firstBody.set('config', JSON.stringify(firstConfig));
   const firstSave = await fetch(`${baseUrl}/api/police`, {
@@ -144,6 +168,9 @@ test('Police configuration saves, reloads and edits spritesheet grids', async (t
   assert.equal(reloaded.units.foot.spritesheet.rows, 2);
   assert.equal(reloaded.units.foot.spritesheet.columns, 4);
   assert.equal(reloaded.units.foot.spritesheet.frames, 8);
+  assert.equal(reloaded.units.foot.projectileSpritesheet.columns, 4);
+  assert.equal(reloaded.units.foot.impactSpritesheet.frames, 6);
+  assert.equal(reloaded.units.foot.impactSpritesheet.loop, false);
 
   const editedConfig = PoliceConfig.defaults();
   editedConfig.units.foot.renderType = 'flame_spritesheet';

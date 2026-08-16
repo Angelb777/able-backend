@@ -73,7 +73,11 @@ function createPoliceRuntime({
       visualFrom: { lat: shot.from.lat + (shot.to.lat - shot.from.lat) * progress,
         lng: shot.from.lng + (shot.to.lng - shot.from.lng) * progress },
       speed: shot.speed, damage: shot.damage, spriteUrl: shot.spriteUrl,
-      impactSpriteUrl: shot.impactSpriteUrl, createdAt: new Date(shot.createdAt).toISOString(),
+      projectileRenderType: shot.projectileRenderType,
+      projectileSpritesheet: shot.projectileSpritesheet,
+      impactSpriteUrl: shot.impactSpriteUrl, impactRenderType: shot.impactRenderType,
+      impactSpritesheet: shot.impactSpritesheet,
+      createdAt: new Date(shot.createdAt).toISOString(),
       impactAt: new Date(shot.impactAt).toISOString(), serverTimestamp: timestamp,
     };
   };
@@ -177,19 +181,21 @@ function createPoliceRuntime({
     await ensureAmbientPatrol(player, origin);
   };
 
-  const spawnUnit = (incident, type, index, total, state = 'active') => {
+  const spawnUnit = (incident, type, index, total, state = 'active', options = {}) => {
     const definition = plain(config.units[type]); if (!definition) return;
     const unitId = `${incident.incidentId}-${type}-${++serial}`;
-    const position = geo.computeOffset(incident.center,
+    const position = options.position || geo.computeOffset(incident.center,
       Number(config.spawnDistanceMeters) || 180, ((index + 1) / (total + 1)) * 360);
     const unit = { unitId, incidentId: incident.incidentId, zoneId: incident.zoneId,
       unitType: type, definition: { ...definition }, lat: position.lat, lng: position.lng,
-      heading: 0, life: Math.max(1, Number(definition.life) || 1),
+      heading: Number(options.heading) || 0, life: Math.max(1, Number(definition.life) || 1),
       maxLife: Math.max(1, Number(definition.life) || 1), seq: 1, state,
       targetUserId: null, targetLockedUntil: 0, nextShotAt: now(), route: [], routeIndex: 0,
-      routeTarget: null, routePending: false, patrolTarget: null };
+      routeTarget: null, routePending: false, patrolTarget: null,
+      formationIndex: Number.isInteger(options.formationIndex) ? options.formationIndex : null };
     incident.units.set(unitId, unit);
     nsp.to(incident.zoneId).emit('police:unit:spawn', unitPayload(unit));
+    return unit;
   };
   const spawnWave = (incident) => {
     const level = starConfig(incident.waveLevel); if (!level) return;
@@ -227,8 +233,25 @@ function createPoliceRuntime({
       Number(config.maxUnitsPerIncident) || 30,
       Math.max(0, (Number(config.maxNearbyUnits) || 60) - activeTotal),
     );
+    const patrolHeading = random() * 360;
+    const patrolAnchor = geo.computeOffset(
+      incident.center,
+      Number(config.spawnDistanceMeters) || 180,
+      patrolHeading,
+    );
+    const spacing = Math.max(1, Number(config.patrolPairSpacingMeters) || 3);
+    incident.ambientPatrolTarget = null;
+    incident.ambientPatrolLeaderId = null;
     for (let index = 0; index < total; index += 1) {
-      spawnUnit(incident, 'foot', index, total, 'idle');
+      const position = index === 0
+        ? patrolAnchor
+        : geo.computeOffset(patrolAnchor, spacing * index, patrolHeading + 90);
+      const unit = spawnUnit(incident, 'foot', index, total, 'idle', {
+        position,
+        formationIndex: index,
+        heading: patrolHeading,
+      });
+      if (index === 0) incident.ambientPatrolLeaderId = unit?.unitId || null;
     }
     nsp.to(incident.zoneId).emit('police:wave:spawn', incidentPayload(incident));
     return incident;
@@ -297,19 +320,32 @@ function createPoliceRuntime({
       else break;
     }
   };
-  const moveAmbientUnit = (incident, unit, elapsedSeconds) => {
+  const moveAmbientPatrol = (incident, elapsedSeconds) => {
+    const units = [...incident.units.values()].filter((unit) => unit.unitType === 'foot');
+    if (units.length === 0) return;
+    const leader = incident.units.get(incident.ambientPatrolLeaderId) || units[0];
     const patrolRadius = Math.max(40, Number(config.spawnDistanceMeters) || 180);
-    if (!unit.patrolTarget || geo.distanceMeters(unit, unit.patrolTarget) < 3) {
-      unit.patrolTarget = geo.computeOffset(
+    if (!incident.ambientPatrolTarget || geo.distanceMeters(leader, incident.ambientPatrolTarget) < 3) {
+      incident.ambientPatrolTarget = geo.computeOffset(
         incident.center,
         patrolRadius * (0.45 + random() * 0.55),
         random() * 360,
       );
-      unit.route = [];
-      unit.routeIndex = 0;
-      unit.routeTarget = null;
+      leader.route = [];
+      leader.routeIndex = 0;
+      leader.routeTarget = null;
     }
-    moveUnit(unit, unit.patrolTarget, elapsedSeconds);
+    moveUnit(leader, incident.ambientPatrolTarget, elapsedSeconds);
+    const spacing = Math.max(1, Number(config.patrolPairSpacingMeters) || 3);
+    for (const follower of units) {
+      if (follower.unitId === leader.unitId) continue;
+      const index = Math.max(1, Number(follower.formationIndex) || 1);
+      const desired = geo.computeOffset(leader, spacing * index, (leader.heading || 0) + 90);
+      const distance = geo.distanceMeters(follower, desired);
+      const baseBudget = Math.max(0, Number(follower.definition.speedMetersPerSecond) || 0) * elapsedSeconds;
+      moveToward(follower, desired, distance > spacing * 2 ? baseBudget * 2 : baseBudget);
+      follower.heading = leader.heading;
+    }
   };
   const fire = (incident, unit, target, timestamp) => {
     const distance = geo.distanceMeters(unit, target);
@@ -321,7 +357,12 @@ function createPoliceRuntime({
       from: { lat: unit.lat, lng: unit.lng }, to: { lat: target.lat, lng: target.lng },
       speed, damage: Math.max(0, Number(unit.definition.damage) || 0),
       spriteUrl: unit.definition.projectileSpriteUrl || '',
-      impactSpriteUrl: unit.definition.impactSpriteUrl || '', createdAt: timestamp,
+      projectileRenderType: unit.definition.projectileRenderType || 'classic',
+      projectileSpritesheet: plain(unit.definition.projectileSpritesheet) || null,
+      impactSpriteUrl: unit.definition.impactSpriteUrl || '',
+      impactRenderType: unit.definition.impactRenderType || 'classic',
+      impactSpritesheet: plain(unit.definition.impactSpritesheet) || null,
+      createdAt: timestamp,
       impactAt: timestamp + Math.max(1, distance / speed * 1000) };
     const firingDelaySeconds = Math.max(
       Number(unit.definition.cooldownSeconds) || 0,
@@ -420,16 +461,19 @@ function createPoliceRuntime({
         continue;
       }
       if (incident.pendingWaveAt && incident.pendingWaveAt <= timestamp) spawnWave(incident);
-      for (const unit of incident.units.values()) {
-        if (incident.state === 'ambient' || incident.wanted.size === 0) {
+      if (incident.state === 'ambient' || incident.wanted.size === 0) {
+        moveAmbientPatrol(incident, elapsedSeconds);
+        for (const unit of incident.units.values()) {
           unit.targetUserId = null;
           unit.state = 'idle';
-          moveAmbientUnit(incident, unit, elapsedSeconds);
-        } else {
+          unit.seq += 1; nsp.to(unit.zoneId).emit('police:unit:update', unitPayload(unit));
+        }
+      } else {
+        for (const unit of incident.units.values()) {
           const target = selectTarget(incident, unit, timestamp);
           if (target) { moveUnit(unit, target, elapsedSeconds); fire(incident, unit, target, timestamp); }
+          unit.seq += 1; nsp.to(unit.zoneId).emit('police:unit:update', unitPayload(unit));
         }
-        unit.seq += 1; nsp.to(unit.zoneId).emit('police:unit:update', unitPayload(unit));
       }
       if (incident.wanted.size > 0) tickEscape(incident, timestamp);
       completeWave(incident);

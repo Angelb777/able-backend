@@ -41,6 +41,27 @@ let cartaEditandoId = null;
 let ufosGestion = [];
 let ufoEditandoId = null;
 
+function bindGameManagementActions() {
+  if (document.documentElement.dataset.gameManagementActionsBound === "true") return;
+  document.addEventListener("click", (event) => {
+    const button = event.target?.closest?.("button[data-game-management-action]");
+    if (!button) return;
+    const id = button.dataset.entityId || "";
+    if (!id) return;
+    event.preventDefault();
+    const handlers = {
+      "edit-ufo": editarUfo,
+      "delete-ufo": eliminarUfo,
+      "edit-skin": editarSkin,
+      "delete-skin": eliminarSkin,
+      "edit-card": editarCarta,
+      "delete-card": eliminarCarta,
+    };
+    handlers[button.dataset.gameManagementAction]?.(id);
+  });
+  document.documentElement.dataset.gameManagementActionsBound = "true";
+}
+
 function commercialEscape(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -601,6 +622,7 @@ window.fetch = (input, init = {}) => {
 
 
 document.addEventListener("DOMContentLoaded", async () => {
+  bindGameManagementActions();
   try {
     const sessionResponse = await fetch('/api/auth/me');
     if (!sessionResponse.ok) throw new Error('invalid-session');
@@ -1932,8 +1954,8 @@ async function renderUfoManager() {
           💰 Premio: ${ufo.stepcoinsPremio} stepcoins
         </div>
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
-          <button style="background:#1565c0;color:white;padding:5px 10px;border:none;border-radius:4px;cursor:pointer;" onclick="editarUfo('${ufo._id}')">✏️ Editar</button>
-          <button style="background:#c62828;color:white;padding:5px 10px;border:none;border-radius:4px;cursor:pointer;" onclick="eliminarUfo('${ufo._id}')">Eliminar</button>
+          <button type="button" data-game-management-action="edit-ufo" data-entity-id="${commercialEscape(ufo._id)}" style="background:#1565c0;color:white;padding:5px 10px;border:none;border-radius:4px;cursor:pointer;">✏️ Editar</button>
+          <button type="button" data-game-management-action="delete-ufo" data-entity-id="${commercialEscape(ufo._id)}" style="background:#c62828;color:white;padding:5px 10px;border:none;border-radius:4px;cursor:pointer;">Eliminar</button>
         </div>
       `;
 
@@ -2199,11 +2221,20 @@ function initializePoliceForm() {
       <label>Velocidad proyectil m/s <input type="number" name="${type}_projectileSpeedMetersPerSecond" min="1" required></label>
       <label>Radio impacto m <input type="number" name="${type}_hitRadiusMeters" min="1" required></label><br>
       <label>Sprite proyectil <input type="file" name="${type}Projectile" accept="image/*"></label>
-      <label>Sprite impacto <input type="file" name="${type}Impact" accept="image/*"></label>
+      <label>Render proyectil <select name="${type}_projectileRenderType"><option value="classic">Clásico</option><option value="flame_spritesheet">Spritesheet</option></select></label>
+      <input type="hidden" name="${type}_projectileSpritesheetMetadata">
+      <label>Filas proyectil <input type="number" name="${type}_projectileSpritesheetRows" min="1" step="1" required></label>
+      <label>Columnas proyectil <input type="number" name="${type}_projectileSpritesheetColumns" min="1" step="1" required></label><br>
+      <label>Sprite impacto/explosión <input type="file" name="${type}Impact" accept="image/*"></label>
+      <label>Render impacto <select name="${type}_impactRenderType"><option value="classic">Clásico</option><option value="flame_spritesheet">Spritesheet</option></select></label>
+      <input type="hidden" name="${type}_impactSpritesheetMetadata">
+      <label>Filas impacto <input type="number" name="${type}_impactSpritesheetRows" min="1" step="1" required></label>
+      <label>Columnas impacto <input type="number" name="${type}_impactSpritesheetColumns" min="1" step="1" required></label>
     </fieldset>`).join("");
   stars.innerHTML = Array.from({ length: 5 }, (_, index) => {
     const level = index + 1;
-    return `<fieldset data-police-star="${level}"><legend>${"⭐".repeat(level)}</legend>
+    const initial = level === 1 ? " — patrulla ambiental inicial" : "";
+    return `<fieldset data-police-star="${level}"><legend>Oleada ${level}${initial} ${"⭐".repeat(level)}</legend>
       <label>Policías a pie <input type="number" name="star${level}_footOfficers" min="0" required></label>
       <label>Coches <input type="number" name="star${level}_cars" min="0" required></label>
       <label>Helicópteros <input type="number" name="star${level}_helicopters" min="0" required></label>
@@ -2234,7 +2265,7 @@ async function loadPoliceConfig() {
     if (!response.ok) throw new Error(config.error || "No se pudo cargar Policía");
     ["enabled", "reuseRadiusMeters", "maxActiveIncidents", "maxUnitsPerIncident", "maxNearbyUnits",
       "updateIntervalMs", "routeRecalculationDistanceMeters", "routeCacheTtlSeconds",
-      "targetLockSeconds", "spawnDistanceMeters"].forEach((name) => setPoliceFormValue(form, name, config[name]));
+      "targetLockSeconds", "spawnDistanceMeters", "patrolPairSpacingMeters"].forEach((name) => setPoliceFormValue(form, name, config[name]));
     for (const type of Object.keys(policeUnitMeta)) {
       const unit = config.units?.[type] || {};
       for (const key of ["label", "renderType", "life", "speedMetersPerSecond", "damage", "rangeMeters",
@@ -2245,6 +2276,13 @@ async function loadPoliceConfig() {
       setPoliceFormValue(form, `${type}_spritesheetMetadata`, JSON.stringify(spritesheet));
       setPoliceFormValue(form, `${type}_spritesheetRows`, spritesheet.rows || 1);
       setPoliceFormValue(form, `${type}_spritesheetColumns`, spritesheet.columns || 1);
+      for (const effect of ["projectile", "impact"]) {
+        const sheet = unit[`${effect}Spritesheet`] || {};
+        setPoliceFormValue(form, `${type}_${effect}RenderType`, unit[`${effect}RenderType`] || "classic");
+        setPoliceFormValue(form, `${type}_${effect}SpritesheetMetadata`, JSON.stringify(sheet));
+        setPoliceFormValue(form, `${type}_${effect}SpritesheetRows`, sheet.rows || 1);
+        setPoliceFormValue(form, `${type}_${effect}SpritesheetColumns`, sheet.columns || 1);
+      }
     }
     (config.stars || []).forEach((star, index) => {
       for (const key of ["footOfficers", "cars", "helicopters", "spawnDelaySeconds", "escapeDistanceMeters",
@@ -2257,25 +2295,35 @@ async function loadPoliceConfig() {
 
 function policeNumber(form, name) { return Number(form.elements.namedItem(name)?.value || 0); }
 
+function collectPoliceSpritesheet(form, prefix, defaultLoop = true) {
+  const storedSheet = JSON.parse(form.elements.namedItem(`${prefix}Metadata`).value || "{}");
+  const rows = policeNumber(form, `${prefix}Rows`);
+  const columns = policeNumber(form, `${prefix}Columns`);
+  const gridChanged = rows !== Number(storedSheet.rows) || columns !== Number(storedSheet.columns);
+  const storedFrames = Number(storedSheet.frames);
+  const frames = !gridChanged && Number.isInteger(storedFrames) && storedFrames > 0
+    ? storedFrames : rows * columns;
+  return { ...storedSheet, rows, columns, frames,
+    loop: storedSheet.loop == null ? defaultLoop : Boolean(storedSheet.loop) };
+}
+
 function collectPoliceConfig(form) {
   const config = { enabled: form.enabled.checked, reuseRadiusMeters: policeNumber(form, "reuseRadiusMeters"),
     maxActiveIncidents: policeNumber(form, "maxActiveIncidents"), maxUnitsPerIncident: policeNumber(form, "maxUnitsPerIncident"),
     maxNearbyUnits: policeNumber(form, "maxNearbyUnits"), updateIntervalMs: policeNumber(form, "updateIntervalMs"),
     routeRecalculationDistanceMeters: policeNumber(form, "routeRecalculationDistanceMeters"),
     routeCacheTtlSeconds: policeNumber(form, "routeCacheTtlSeconds"), targetLockSeconds: policeNumber(form, "targetLockSeconds"),
-    spawnDistanceMeters: policeNumber(form, "spawnDistanceMeters"), units: {}, stars: [] };
+    spawnDistanceMeters: policeNumber(form, "spawnDistanceMeters"),
+    patrolPairSpacingMeters: policeNumber(form, "patrolPairSpacingMeters"), units: {}, stars: [] };
   for (const type of Object.keys(policeUnitMeta)) {
     const prefix = `${type}_`;
-    const storedSheet = JSON.parse(form.elements.namedItem(`${prefix}spritesheetMetadata`).value || "{}");
-    const rows = policeNumber(form, `${prefix}spritesheetRows`);
-    const columns = policeNumber(form, `${prefix}spritesheetColumns`);
-    const gridChanged = rows !== Number(storedSheet.rows) || columns !== Number(storedSheet.columns);
-    const storedFrames = Number(storedSheet.frames);
-    const frames = !gridChanged && Number.isInteger(storedFrames) && storedFrames > 0
-      ? storedFrames : rows * columns;
     config.units[type] = { label: form.elements.namedItem(`${prefix}label`).value.trim(),
       renderType: form.elements.namedItem(`${prefix}renderType`).value,
-      spritesheet: { ...storedSheet, rows, columns, frames },
+      spritesheet: collectPoliceSpritesheet(form, `${prefix}spritesheet`),
+      projectileRenderType: form.elements.namedItem(`${prefix}projectileRenderType`).value,
+      projectileSpritesheet: collectPoliceSpritesheet(form, `${prefix}projectileSpritesheet`),
+      impactRenderType: form.elements.namedItem(`${prefix}impactRenderType`).value,
+      impactSpritesheet: collectPoliceSpritesheet(form, `${prefix}impactSpritesheet`, false),
       life: policeNumber(form, `${prefix}life`), speedMetersPerSecond: policeNumber(form, `${prefix}speedMetersPerSecond`),
       damage: policeNumber(form, `${prefix}damage`), rangeMeters: policeNumber(form, `${prefix}rangeMeters`),
       fireIntervalSeconds: policeNumber(form, `${prefix}fireIntervalSeconds`), cooldownSeconds: policeNumber(form, `${prefix}cooldownSeconds`),
@@ -2508,8 +2556,8 @@ async function cargarSkins() {
         <ul>
           ${animationSummary}
         </ul>
-        <button onclick="editarSkin('${s._id}')">✏️ Editar</button>
-        <button onclick="eliminarSkin('${s._id}')">🗑️ Eliminar</button>
+        <button type="button" data-game-management-action="edit-skin" data-entity-id="${commercialEscape(s._id)}">✏️ Editar</button>
+        <button type="button" data-game-management-action="delete-skin" data-entity-id="${commercialEscape(s._id)}">🗑️ Eliminar</button>
       </div>
     `;
     }).join("");
@@ -2966,8 +3014,8 @@ async function cargarCartas() {
         <p><strong>Daño:</strong> ${carta.dano}</p>
         <p><strong>Dispositivo:</strong> ${carta.dispositivo || "Ambos"}</p>
         <p><strong>Tiempo de espera:</strong> ${carta.tiempoEspera || 0} segundos</p>
-        <button onclick="editarCarta('${carta._id}')">✏️ Editar</button>
-        <button onclick="eliminarCarta('${carta._id}')">🗑️ Eliminar</button>
+        <button type="button" data-game-management-action="edit-card" data-entity-id="${commercialEscape(carta._id)}">✏️ Editar</button>
+        <button type="button" data-game-management-action="delete-card" data-entity-id="${commercialEscape(carta._id)}">🗑️ Eliminar</button>
       `;
 
       contenedor.appendChild(div);

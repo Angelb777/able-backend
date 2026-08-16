@@ -18,7 +18,12 @@ const unitSchema = new mongoose.Schema({
   spritesheet: { type: spriteSheetSchema, default: () => ({}) },
   life: { type: Number, default: 300, min: 1 },
   speedMetersPerSecond: { type: Number, default: 8, min: 0.1 },
-  projectileSpriteUrl: { type: String, default: '' }, impactSpriteUrl: { type: String, default: '' },
+  projectileSpriteUrl: { type: String, default: '' },
+  projectileRenderType: { type: String, enum: ['classic', 'flame_spritesheet'], default: 'classic' },
+  projectileSpritesheet: { type: spriteSheetSchema, default: () => ({}) },
+  impactSpriteUrl: { type: String, default: '' },
+  impactRenderType: { type: String, enum: ['classic', 'flame_spritesheet'], default: 'classic' },
+  impactSpritesheet: { type: spriteSheetSchema, default: () => ({ loop: false }) },
   damage: { type: Number, default: 50, min: 0 }, rangeMeters: { type: Number, default: 250, min: 1 },
   fireIntervalSeconds: { type: Number, default: 3, min: 0.1 },
   cooldownSeconds: { type: Number, default: 3, min: 0.1 },
@@ -47,6 +52,7 @@ const PoliceConfigSchema = new mongoose.Schema({
   routeCacheTtlSeconds: { type: Number, default: 300, min: 30 },
   targetLockSeconds: { type: Number, default: 4, min: 0.5 },
   spawnDistanceMeters: { type: Number, default: 180, min: 30 },
+  patrolPairSpacingMeters: { type: Number, default: 3, min: 1, max: 12 },
   units: {
     foot: { type: unitSchema, required: true }, car: { type: unitSchema, required: true },
     helicopter: { type: unitSchema, required: true },
@@ -60,15 +66,18 @@ const PoliceConfigSchema = new mongoose.Schema({
 
 PoliceConfigSchema.statics.defaults = function defaults() {
   const unit = (label, movementType, routeMode, speed) => ({
-    label, movementType, routeMode, life: 300, speedMetersPerSecond: speed,
+    label, movementType, routeMode, renderType: 'classic', spritesheet: {},
+    life: 300, speedMetersPerSecond: speed,
     damage: 50, rangeMeters: 250, fireIntervalSeconds: 3, cooldownSeconds: 3,
     projectileSpeedMetersPerSecond: 100, hitRadiusMeters: 18,
+    projectileRenderType: 'classic', projectileSpritesheet: {},
+    impactRenderType: 'classic', impactSpritesheet: { loop: false },
   });
   return {
     key: 'global', enabled: false, reuseRadiusMeters: 2000, maxActiveIncidents: 50,
     maxUnitsPerIncident: 30, maxNearbyUnits: 60, updateIntervalMs: 500,
     routeRecalculationDistanceMeters: 100, routeCacheTtlSeconds: 300,
-    targetLockSeconds: 4, spawnDistanceMeters: 180,
+    targetLockSeconds: 4, spawnDistanceMeters: 180, patrolPairSpacingMeters: 3,
     units: {
       foot: unit('Policía a pie', 'road', 'walking', 3),
       car: unit('Coche de policía', 'road', 'driving', 14),
