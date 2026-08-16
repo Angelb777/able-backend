@@ -59,6 +59,11 @@
       cursor: pointer;
     }
 
+    .navbar-logo-link {
+      display: flex;
+      align-items: center;
+    }
+
     .nav-links {
       display: flex;
       list-style: none;
@@ -170,7 +175,9 @@
 
   <nav>
     <div class="nav-container">
-      <img src="img/Logo Able 73.png" alt="Logo" class="navbar-logo" onclick="window.location.href='/'">
+      <a href="/" class="navbar-logo-link" aria-label="Inicio">
+        <img src="img/Logo Able 73.png" alt="Logo" class="navbar-logo">
+      </a>
       <ul class="nav-links">
         <li><a href="usuarios.html">Usuarios</a></li>
         <!-- <li><a href="candados.html">Candados</a></li> -->

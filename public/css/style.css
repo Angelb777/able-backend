@@ -76,8 +76,10 @@ nav {
 }
 
 .login-btn {
+  display: inline-block;
   background-color: rgb(44, 156, 82);
   color: white;
+  text-decoration: none;
   border: none;
   padding: 14px 28px;
   font-size: 1rem;
@@ -242,4 +244,9 @@ nav {
   width: 180px;
   height: auto;
   cursor: pointer;
+}
+
+.navbar-logo-link {
+  display: flex;
+  align-items: center;
 }
