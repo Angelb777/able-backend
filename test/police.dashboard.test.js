@@ -29,6 +29,9 @@ test('Police dashboard uses shared session fetch and exposes rows and columns', 
   assert.match(policeSection, /spritesheet: collectPoliceSpritesheet\(form/);
   assert.match(policeSection, /projectileSpritesheet: collectPoliceSpritesheet\(form/);
   assert.match(policeSection, /impactSpritesheet: collectPoliceSpritesheet\(form/);
+  assert.match(policeSection, /renderPoliceSavedConfig\(config\)/);
+  assert.match(policeSection, /data-action="edit-police-config"/);
+  assert.match(policeSection, /spriteUrl: form\.elements\.namedItem/);
 
   const context = vm.createContext({});
   vm.runInContext(
@@ -42,9 +45,13 @@ test('Police dashboard uses shared session fetch and exposes rows and columns', 
   for (const name of ['reuseRadiusMeters', 'maxActiveIncidents', 'maxUnitsPerIncident',
     'maxNearbyUnits', 'updateIntervalMs', 'routeRecalculationDistanceMeters',
     'routeCacheTtlSeconds', 'targetLockSeconds', 'spawnDistanceMeters',
-    'patrolPairSpacingMeters']) field(name, 1);
+    'patrolPairSpacingMeters', 'helicopterOrbitRadiusMeters',
+    'helicopterOrbitDegreesPerSecond']) field(name, 1);
   for (const type of ['foot', 'car', 'helicopter']) {
     field(`${type}_label`, type);
+    field(`${type}_spriteUrl`, `/uploads/police/${type}.png`);
+    field(`${type}_projectileSpriteUrl`, `/uploads/police/${type}-shot.png`);
+    field(`${type}_impactSpriteUrl`, `/uploads/police/${type}-impact.png`);
     field(`${type}_renderType`, 'flame_spritesheet');
     field(`${type}_spritesheetMetadata`, JSON.stringify({
       rows: type === 'foot' ? 2 : 1,
@@ -74,10 +81,11 @@ test('Police dashboard uses shared session fetch and exposes rows and columns', 
     enabled: { checked: true },
     elements: { namedItem: (name) => fields.get(name) },
   });
-  assert.equal(collected.units.foot.spritesheet.frames, 6);
+  assert.equal(collected.units.foot.spritesheet.frames, 4);
+  assert.equal(collected.units.foot.spritesheet.multipleOrientations, true);
   assert.equal(collected.units.car.spritesheet.rows, 2);
   assert.equal(collected.units.car.spritesheet.columns, 3);
-  assert.equal(collected.units.car.spritesheet.frames, 6);
+  assert.equal(collected.units.car.spritesheet.frames, 3);
   assert.equal(collected.units.foot.projectileSpritesheet.frames, 4);
   assert.equal(collected.units.foot.impactSpritesheet.frames, 6);
   assert.equal(collected.units.foot.impactSpritesheet.loop, false);
@@ -167,7 +175,8 @@ test('Police configuration saves, reloads and edits spritesheet grids', async (t
   const reloaded = await firstReload.json();
   assert.equal(reloaded.units.foot.spritesheet.rows, 2);
   assert.equal(reloaded.units.foot.spritesheet.columns, 4);
-  assert.equal(reloaded.units.foot.spritesheet.frames, 8);
+  assert.equal(reloaded.units.foot.spritesheet.frames, 4);
+  assert.equal(reloaded.units.foot.spritesheet.multipleOrientations, true);
   assert.equal(reloaded.units.foot.projectileSpritesheet.columns, 4);
   assert.equal(reloaded.units.foot.impactSpritesheet.frames, 6);
   assert.equal(reloaded.units.foot.impactSpritesheet.loop, false);
@@ -178,7 +187,7 @@ test('Police configuration saves, reloads and edits spritesheet grids', async (t
     ...reloaded.units.foot.spritesheet,
     rows: 3,
     columns: 5,
-    frames: 15,
+    frames: 5,
   };
   const editBody = new FormData();
   editBody.set('config', JSON.stringify(editedConfig));
@@ -192,6 +201,8 @@ test('Police configuration saves, reloads and edits spritesheet grids', async (t
   const edited = await editedReload.json();
   assert.equal(edited.units.foot.spritesheet.rows, 3);
   assert.equal(edited.units.foot.spritesheet.columns, 5);
-  assert.equal(edited.units.foot.spritesheet.frames, 15);
+  assert.equal(edited.units.foot.spritesheet.frames, 5);
   assert.equal(edited.units.foot.spritesheet.url, '/uploads/police/foot.png');
+  assert.equal(edited.units.foot.projectileSpriteUrl, '/uploads/police/foot-shot.png');
+  assert.equal(edited.units.foot.impactSpriteUrl, '/uploads/police/foot-impact.png');
 });

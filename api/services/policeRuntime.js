@@ -191,7 +191,8 @@ function createPoliceRuntime({
       heading: Number(options.heading) || 0, life: Math.max(1, Number(definition.life) || 1),
       maxLife: Math.max(1, Number(definition.life) || 1), seq: 1, state,
       targetUserId: null, targetLockedUntil: 0, nextShotAt: now(), route: [], routeIndex: 0,
-      routeTarget: null, routePending: false, patrolTarget: null,
+      routeTarget: null, routePending: false, routeRetryAt: 0, patrolTarget: null,
+      orbitAngle: ((index + 1) / (total + 1)) * 360,
       formationIndex: Number.isInteger(options.formationIndex) ? options.formationIndex : null };
     incident.units.set(unitId, unit);
     nsp.to(incident.zoneId).emit('police:unit:spawn', unitPayload(unit));
@@ -297,7 +298,7 @@ function createPoliceRuntime({
   };
   const requestRoute = (unit, target) => {
     const threshold = Number(config.routeRecalculationDistanceMeters) || 100;
-    if (unit.routePending || (unit.routeTarget && unit.route.length > unit.routeIndex &&
+    if (unit.routePending || now() < (unit.routeRetryAt || 0) || (unit.routeTarget && unit.route.length > unit.routeIndex &&
       geo.distanceMeters(unit.routeTarget, target) < threshold)) return;
     unit.routePending = true; const from = { lat: unit.lat, lng: unit.lng };
     const destination = { lat: target.lat, lng: target.lng };
@@ -307,18 +308,32 @@ function createPoliceRuntime({
       if (!incidents.get(unit.incidentId)?.units.has(unit.unitId)) return;
       if (Array.isArray(points) && points.length > 1) {
         unit.route = points; unit.routeIndex = 1; unit.routeTarget = destination;
+        unit.routeRetryAt = 0;
+      } else {
+        unit.routeRetryAt = now() + 10000;
       }
-    }).finally(() => { unit.routePending = false; });
+    }).catch(() => { unit.routeRetryAt = now() + 10000; })
+      .finally(() => { unit.routePending = false; });
   };
   const moveUnit = (unit, target, elapsedSeconds) => {
     const budget = Math.max(0, Number(unit.definition.speedMetersPerSecond) || 0) * elapsedSeconds;
-    if (unit.definition.movementType === 'air') { moveToward(unit, target, budget); return; }
+    if (unit.definition.movementType === 'air') {
+      const configuredRadius = Math.max(10, Number(config.helicopterOrbitRadiusMeters) || 80);
+      const weaponRange = Math.max(1, Number(unit.definition.rangeMeters) || configuredRadius);
+      const radius = Math.max(1, Math.min(configuredRadius, weaponRange * 0.65));
+      unit.orbitAngle = ((unit.orbitAngle || 0) +
+        Math.max(1, Number(config.helicopterOrbitDegreesPerSecond) || 12) * elapsedSeconds) % 360;
+      moveToward(unit, geo.computeOffset(target, radius, unit.orbitAngle), budget);
+      return;
+    }
     requestRoute(unit, target); let remaining = budget;
+    const start = { lat: unit.lat, lng: unit.lng };
     while (remaining > 0 && unit.routeIndex < unit.route.length) {
       remaining = moveToward(unit, unit.route[unit.routeIndex], remaining);
       if (geo.distanceMeters(unit, unit.route[unit.routeIndex]) < 1) unit.routeIndex += 1;
       else break;
     }
+    if (geo.distanceMeters(start, unit) > 0.1) unit.heading = bearingBetween(start, unit);
   };
   const moveAmbientPatrol = (incident, elapsedSeconds) => {
     const units = [...incident.units.values()].filter((unit) => unit.unitType === 'foot');
@@ -491,7 +506,9 @@ function createPoliceRuntime({
 
   return {
     onPlayerShot, ensureAmbientPatrol, clearWanted, handlePlayerDeath: (userId) => clearWanted(userId, 'player-death'),
-    handleDisconnect: (userId) => clearWanted(userId, 'disconnect'), refreshConfig: () => loadConfig(true),
+    // Network/background disconnects must not cancel authoritative wanted state.
+    // Presence registration restores it through getSnapshot on reconnect.
+    handleDisconnect: () => false, refreshConfig: () => loadConfig(true),
     getUnitsInZone: (zoneId) => [...incidents.values()].filter((item) => item.zoneId === zoneId)
       .flatMap((item) => [...item.units.values()]),
     applyBulletDamage,

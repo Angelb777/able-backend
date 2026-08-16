@@ -2208,6 +2208,8 @@ function initializePoliceForm() {
     <fieldset data-police-unit="${type}"><legend>${meta.title} (${meta.movement})</legend>
       <label>Nombre <input name="${type}_label" required></label>
       <label>Sprite <input type="file" name="${type}Sprite" accept="image/*"></label>
+      <input type="hidden" name="${type}_spriteUrl">
+      <img data-police-preview="${type}_spriteUrl" alt="Sprite actual ${meta.title}" style="display:none;max-width:120px;max-height:90px;vertical-align:middle">
       <label>Render <select name="${type}_renderType"><option value="classic">Clásico</option><option value="flame_spritesheet">Spritesheet</option></select></label>
       <input type="hidden" name="${type}_spritesheetMetadata">
       <label>Filas <input type="number" name="${type}_spritesheetRows" min="1" step="1" required></label>
@@ -2221,11 +2223,15 @@ function initializePoliceForm() {
       <label>Velocidad proyectil m/s <input type="number" name="${type}_projectileSpeedMetersPerSecond" min="1" required></label>
       <label>Radio impacto m <input type="number" name="${type}_hitRadiusMeters" min="1" required></label><br>
       <label>Sprite proyectil <input type="file" name="${type}Projectile" accept="image/*"></label>
+      <input type="hidden" name="${type}_projectileSpriteUrl">
+      <img data-police-preview="${type}_projectileSpriteUrl" alt="Proyectil actual ${meta.title}" style="display:none;max-width:80px;max-height:60px;vertical-align:middle">
       <label>Render proyectil <select name="${type}_projectileRenderType"><option value="classic">Clásico</option><option value="flame_spritesheet">Spritesheet</option></select></label>
       <input type="hidden" name="${type}_projectileSpritesheetMetadata">
       <label>Filas proyectil <input type="number" name="${type}_projectileSpritesheetRows" min="1" step="1" required></label>
       <label>Columnas proyectil <input type="number" name="${type}_projectileSpritesheetColumns" min="1" step="1" required></label><br>
       <label>Sprite impacto/explosión <input type="file" name="${type}Impact" accept="image/*"></label>
+      <input type="hidden" name="${type}_impactSpriteUrl">
+      <img data-police-preview="${type}_impactSpriteUrl" alt="Impacto actual ${meta.title}" style="display:none;max-width:80px;max-height:60px;vertical-align:middle">
       <label>Render impacto <select name="${type}_impactRenderType"><option value="classic">Clásico</option><option value="flame_spritesheet">Spritesheet</option></select></label>
       <input type="hidden" name="${type}_impactSpritesheetMetadata">
       <label>Filas impacto <input type="number" name="${type}_impactSpritesheetRows" min="1" step="1" required></label>
@@ -2245,6 +2251,20 @@ function initializePoliceForm() {
       <label><input type="checkbox" name="star${level}_autoEscalate"> Subir automáticamente</label>
     </fieldset>`;
   }).join("");
+  const resourceNames = {
+    footSprite: "foot_spriteUrl", footProjectile: "foot_projectileSpriteUrl", footImpact: "foot_impactSpriteUrl",
+    carSprite: "car_spriteUrl", carProjectile: "car_projectileSpriteUrl", carImpact: "car_impactSpriteUrl",
+    helicopterSprite: "helicopter_spriteUrl", helicopterProjectile: "helicopter_projectileSpriteUrl",
+    helicopterImpact: "helicopter_impactSpriteUrl"
+  };
+  units.querySelectorAll('input[type="file"]').forEach(input => {
+    input.addEventListener("change", () => {
+      const preview = units.querySelector(`[data-police-preview="${resourceNames[input.name]}"]`);
+      if (!preview || !input.files?.[0]) return;
+      preview.src = URL.createObjectURL(input.files[0]);
+      preview.style.display = "inline-block";
+    });
+  });
   units.dataset.ready = "true";
 }
 
@@ -2255,6 +2275,38 @@ function setPoliceFormValue(form, name, value) {
   else field.value = value ?? "";
 }
 
+function policeEscapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, character => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[character]);
+}
+
+function renderPoliceSavedConfig(config) {
+  const target = document.getElementById("policeSavedConfig");
+  if (!target) return;
+  const unitCards = Object.entries(policeUnitMeta).map(([type, meta]) => {
+    const unit = config.units?.[type] || {};
+    const image = unit.spriteUrl || unit.spritesheet?.url || "";
+    return `<article style="border:1px solid #aaa;padding:10px;min-width:220px;flex:1">
+      <strong>${policeEscapeHtml(meta.title)}</strong>
+      ${image ? `<img src="${policeEscapeHtml(image)}" alt="${policeEscapeHtml(meta.title)}" style="display:block;max-width:140px;max-height:100px;margin:8px 0">` : "<p>Sin imagen</p>"}
+      <div>Vida: ${Number(unit.life) || 0} · Velocidad: ${Number(unit.speedMetersPerSecond) || 0} m/s</div>
+      <div>Daño: ${Number(unit.damage) || 0} · Alcance: ${Number(unit.rangeMeters) || 0} m</div>
+      <div>Proyectil: ${unit.projectileSpriteUrl ? "guardado" : "sin imagen"} · Impacto: ${unit.impactSpriteUrl ? "guardado" : "sin imagen"}</div>
+    </article>`;
+  }).join("");
+  const waves = (config.stars || []).map(level =>
+    `<div>${"⭐".repeat(Number(level.level) || 1)} Pie ${Number(level.footOfficers) || 0}, coches ${Number(level.cars) || 0}, helicópteros ${Number(level.helicopters) || 0}, alcance de escape ${Number(level.escapeDistanceMeters) || 0} m</div>`
+  ).join("");
+  target.innerHTML = `<section style="border:1px solid #777;padding:12px;margin:12px 0">
+    <h3>Configuración policial guardada</h3>
+    ${config.routingConfigured ? "" : '<p style="color:#a00"><strong>Directions no configurado:</strong> las unidades road no podrán calcular calles hasta definir GOOGLE_MAPS_SERVER_API_KEY en el servidor.</p>'}
+    <div style="display:flex;gap:10px;flex-wrap:wrap">${unitCards}</div>
+    <div style="margin-top:10px">${waves}</div>
+    <button type="button" data-action="edit-police-config" style="margin-top:10px">Editar esta configuración</button>
+  </section>`;
+}
+
 async function loadPoliceConfig() {
   initializePoliceForm();
   const form = document.getElementById("policeConfigForm");
@@ -2263,14 +2315,24 @@ async function loadPoliceConfig() {
     const response = await fetch("/api/police");
     const config = await response.json();
     if (!response.ok) throw new Error(config.error || "No se pudo cargar Policía");
+    form.querySelectorAll('input[type="file"]').forEach(input => { input.value = ""; });
     ["enabled", "reuseRadiusMeters", "maxActiveIncidents", "maxUnitsPerIncident", "maxNearbyUnits",
       "updateIntervalMs", "routeRecalculationDistanceMeters", "routeCacheTtlSeconds",
-      "targetLockSeconds", "spawnDistanceMeters", "patrolPairSpacingMeters"].forEach((name) => setPoliceFormValue(form, name, config[name]));
+      "targetLockSeconds", "spawnDistanceMeters", "patrolPairSpacingMeters",
+      "helicopterOrbitRadiusMeters", "helicopterOrbitDegreesPerSecond"].forEach((name) => setPoliceFormValue(form, name, config[name]));
     for (const type of Object.keys(policeUnitMeta)) {
       const unit = config.units?.[type] || {};
       for (const key of ["label", "renderType", "life", "speedMetersPerSecond", "damage", "rangeMeters",
         "fireIntervalSeconds", "cooldownSeconds", "projectileSpeedMetersPerSecond", "hitRadiusMeters"]) {
         setPoliceFormValue(form, `${type}_${key}`, unit[key]);
+      }
+      for (const property of ["spriteUrl", "projectileSpriteUrl", "impactSpriteUrl"]) {
+        setPoliceFormValue(form, `${type}_${property}`, unit[property]);
+        const preview = form.querySelector(`[data-police-preview="${type}_${property}"]`);
+        if (preview) {
+          preview.src = unit[property] || "";
+          preview.style.display = unit[property] ? "inline-block" : "none";
+        }
       }
       const spritesheet = unit.spritesheet || {};
       setPoliceFormValue(form, `${type}_spritesheetMetadata`, JSON.stringify(spritesheet));
@@ -2290,6 +2352,7 @@ async function loadPoliceConfig() {
         setPoliceFormValue(form, `star${index + 1}_${key}`, star[key]);
       }
     });
+    renderPoliceSavedConfig(config);
   } catch (error) { document.getElementById("policeConfigStatus").textContent = `❌ ${error.message}`; }
 }
 
@@ -2301,9 +2364,17 @@ function collectPoliceSpritesheet(form, prefix, defaultLoop = true) {
   const columns = policeNumber(form, `${prefix}Columns`);
   const gridChanged = rows !== Number(storedSheet.rows) || columns !== Number(storedSheet.columns);
   const storedFrames = Number(storedSheet.frames);
-  const frames = !gridChanged && Number.isInteger(storedFrames) && storedFrames > 0
-    ? storedFrames : rows * columns;
+  const directional = prefix.endsWith("spritesheet") && !prefix.includes("projectile") && !prefix.includes("impact");
+  const frames = directional && rows > 1 ? columns
+    : (!gridChanged && Number.isInteger(storedFrames) && storedFrames > 0 ? storedFrames : rows * columns);
+  const orientationRows = directional && rows > 1 && !storedSheet.orientationRows?.length
+    ? (rows === 2 ? ["south", "north"] : rows === 3 ? ["south", "west", "north"]
+      : rows === 4 ? ["south", "southWest", "west", "north"]
+        : ["south", "southWest", "west", "northWest", "north"])
+    : storedSheet.orientationRows;
   return { ...storedSheet, rows, columns, frames,
+    multipleOrientations: directional && rows > 1 ? true : Boolean(storedSheet.multipleOrientations),
+    orientationRows: orientationRows || [],
     loop: storedSheet.loop == null ? defaultLoop : Boolean(storedSheet.loop) };
 }
 
@@ -2314,15 +2385,20 @@ function collectPoliceConfig(form) {
     routeRecalculationDistanceMeters: policeNumber(form, "routeRecalculationDistanceMeters"),
     routeCacheTtlSeconds: policeNumber(form, "routeCacheTtlSeconds"), targetLockSeconds: policeNumber(form, "targetLockSeconds"),
     spawnDistanceMeters: policeNumber(form, "spawnDistanceMeters"),
-    patrolPairSpacingMeters: policeNumber(form, "patrolPairSpacingMeters"), units: {}, stars: [] };
+    patrolPairSpacingMeters: policeNumber(form, "patrolPairSpacingMeters"),
+    helicopterOrbitRadiusMeters: policeNumber(form, "helicopterOrbitRadiusMeters"),
+    helicopterOrbitDegreesPerSecond: policeNumber(form, "helicopterOrbitDegreesPerSecond"), units: {}, stars: [] };
   for (const type of Object.keys(policeUnitMeta)) {
     const prefix = `${type}_`;
     config.units[type] = { label: form.elements.namedItem(`${prefix}label`).value.trim(),
+      spriteUrl: form.elements.namedItem(`${prefix}spriteUrl`).value,
       renderType: form.elements.namedItem(`${prefix}renderType`).value,
       spritesheet: collectPoliceSpritesheet(form, `${prefix}spritesheet`),
       projectileRenderType: form.elements.namedItem(`${prefix}projectileRenderType`).value,
+      projectileSpriteUrl: form.elements.namedItem(`${prefix}projectileSpriteUrl`).value,
       projectileSpritesheet: collectPoliceSpritesheet(form, `${prefix}projectileSpritesheet`),
       impactRenderType: form.elements.namedItem(`${prefix}impactRenderType`).value,
+      impactSpriteUrl: form.elements.namedItem(`${prefix}impactSpriteUrl`).value,
       impactSpritesheet: collectPoliceSpritesheet(form, `${prefix}impactSpritesheet`, false),
       life: policeNumber(form, `${prefix}life`), speedMetersPerSecond: policeNumber(form, `${prefix}speedMetersPerSecond`),
       damage: policeNumber(form, `${prefix}damage`), rangeMeters: policeNumber(form, `${prefix}rangeMeters`),
@@ -2354,6 +2430,11 @@ function bindPoliceForm() {
     } catch (error) { status.textContent = `❌ ${error.message}`; }
   });
   form.dataset.listenerAdded = "true";
+  document.getElementById("policeSavedConfig")?.addEventListener("click", event => {
+    if (!event.target.closest('[data-action="edit-police-config"]')) return;
+    form.scrollIntoView({ behavior: "smooth", block: "start" });
+    form.querySelector("input,select")?.focus();
+  });
 }
 
 // 🔄 REEMPLAZA la función renderGestionJuego COMPLETAMENTE por esto:

@@ -9,6 +9,7 @@ const baseConfig = () => ({
   maxUnitsPerIncident: 30, maxNearbyUnits: 60, updateIntervalMs: 100,
   routeRecalculationDistanceMeters: 100, targetLockSeconds: 4,
   spawnDistanceMeters: 100, patrolPairSpacingMeters: 3,
+  helicopterOrbitRadiusMeters: 80, helicopterOrbitDegreesPerSecond: 12,
   units: {
     foot: { movementType: 'road', routeMode: 'walking', life: 100,
       speedMetersPerSecond: 5, damage: 20, rangeMeters: 500,
@@ -203,7 +204,7 @@ test('escape blinks one star and removes stars one at a time; death clears every
   assert.equal(fx.runtime._debug.projectiles.size, 0);
 });
 
-test('road follows a cached route while air moves directly and snapshots are shared', async (t) => {
+test('road follows a cached route while air orbits and snapshots are shared', async (t) => {
   const fx = fixture((config) => {
     config.stars[1].spawnDelaySeconds = 0;
     config.stars[1].footOfficers = 1;
@@ -225,11 +226,29 @@ test('road follows a cached route while air moves directly and snapshots are sha
   fx.advance(100); fx.tick(1);
   assert.ok(geo.distanceMeters(footStart, foot) > 0);
   assert.ok(geo.distanceMeters(airStart, helicopter) > 0);
+  assert.ok(geo.distanceMeters(helicopter, player) > 1,
+    'the helicopter never targets the exact player coordinate');
   assert.equal(fx.routeCalls.filter((call) => call.mode === 'walking').length, 1);
   const snapshot = fx.runtime.getSnapshot('GLOBAL_TEST_ROOM');
   assert.equal(snapshot.policeIncidents.length, 1);
   assert.equal(snapshot.policeUnits.length, 2);
   assert.equal(snapshot.policeWanted[0].userId, 'a');
+});
+
+test('temporary disconnect preserves wanted stars for the reconnect snapshot', async (t) => {
+  const fx = fixture(); t.after(() => fx.runtime.shutdown());
+  const origin = { lat: 41.6567, lng: -0.8785 };
+  const player = fx.addPlayer('a', origin);
+  await fx.runtime.ensureAmbientPatrol(player, origin);
+  const unit = [...fx.runtime._debug.incidents.values()][0].units.values().next().value;
+  fx.runtime.applyBulletDamage(unit.unitId, 1, 'a', 'attack-before-background');
+  fx.runtime._debug.wantedUsers.get('a').stars = 3;
+
+  fx.players.delete('a');
+  assert.equal(fx.runtime.handleDisconnect('a'), false);
+  const snapshot = fx.runtime.getSnapshot('GLOBAL_TEST_ROOM');
+  assert.equal(snapshot.policeWanted[0].stars, 3);
+  assert.equal(snapshot.policeUnits.length, 1);
 });
 
 test('ending the last pursuit restores only the initial ambient foot patrol', async (t) => {

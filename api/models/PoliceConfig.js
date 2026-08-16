@@ -53,6 +53,8 @@ const PoliceConfigSchema = new mongoose.Schema({
   targetLockSeconds: { type: Number, default: 4, min: 0.5 },
   spawnDistanceMeters: { type: Number, default: 180, min: 30 },
   patrolPairSpacingMeters: { type: Number, default: 3, min: 1, max: 12 },
+  helicopterOrbitRadiusMeters: { type: Number, default: 80, min: 10, max: 500 },
+  helicopterOrbitDegreesPerSecond: { type: Number, default: 12, min: 1, max: 90 },
   units: {
     foot: { type: unitSchema, required: true }, car: { type: unitSchema, required: true },
     helicopter: { type: unitSchema, required: true },
@@ -78,6 +80,7 @@ PoliceConfigSchema.statics.defaults = function defaults() {
     maxUnitsPerIncident: 30, maxNearbyUnits: 60, updateIntervalMs: 500,
     routeRecalculationDistanceMeters: 100, routeCacheTtlSeconds: 300,
     targetLockSeconds: 4, spawnDistanceMeters: 180, patrolPairSpacingMeters: 3,
+    helicopterOrbitRadiusMeters: 80, helicopterOrbitDegreesPerSecond: 12,
     units: {
       foot: unit('Policía a pie', 'road', 'walking', 3),
       car: unit('Coche de policía', 'road', 'driving', 14),

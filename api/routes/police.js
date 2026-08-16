@@ -12,6 +12,24 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
   fileFilter: (_req, file, cb) => file.mimetype?.startsWith('image/')
     ? cb(null, true) : cb(new Error('Los recursos policiales deben ser imágenes')) });
 
+const directionalRows = (rows) => {
+  if (rows <= 1) return [];
+  if (rows === 2) return ['south', 'north'];
+  if (rows === 3) return ['south', 'west', 'north'];
+  if (rows === 4) return ['south', 'southWest', 'west', 'north'];
+  return ['south', 'southWest', 'west', 'northWest', 'north'];
+};
+
+const normalizeDirectionalSheet = (sheet = {}) => {
+  const rows = Math.max(1, Number(sheet.rows) || 1);
+  const columns = Math.max(1, Number(sheet.columns) || 1);
+  if (rows <= 1) return { ...sheet, rows, columns };
+  const orientations = Array.isArray(sheet.orientationRows) && sheet.orientationRows.length
+    ? sheet.orientationRows : directionalRows(rows);
+  return { ...sheet, rows, columns, frames: columns,
+    multipleOrientations: true, orientationRows: orientations };
+};
+
 const parseConfig = (body) => {
   const raw = typeof body.config === 'string' ? JSON.parse(body.config) : body;
   const defaults = PoliceConfig.defaults();
@@ -20,6 +38,11 @@ const parseConfig = (body) => {
   result.units.foot = { ...defaults.units.foot, ...(raw.units?.foot || {}), movementType: 'road', routeMode: 'walking' };
   result.units.car = { ...defaults.units.car, ...(raw.units?.car || {}), movementType: 'road', routeMode: 'driving' };
   result.units.helicopter = { ...defaults.units.helicopter, ...(raw.units?.helicopter || {}), movementType: 'air' };
+  for (const type of ['foot', 'car', 'helicopter']) {
+    if (result.units[type].renderType === 'flame_spritesheet') {
+      result.units[type].spritesheet = normalizeDirectionalSheet(result.units[type].spritesheet);
+    }
+  }
   if (!Array.isArray(raw.stars) || raw.stars.length !== 5) {
     throw new Error('Debes configurar exactamente cinco niveles de estrellas');
   }
@@ -30,7 +53,9 @@ const parseConfig = (body) => {
 router.get('/', ...adminOnly, async (_req, res) => {
   try {
     const stored = await PoliceConfig.findOne({ key: 'global' }).lean();
-    return res.json(stored ? parseConfig({ config: JSON.stringify(stored) }) : PoliceConfig.defaults());
+    const normalized = stored ? parseConfig({ config: JSON.stringify(stored) }) : PoliceConfig.defaults();
+    return res.json({ ...normalized,
+      routingConfigured: Boolean(process.env.GOOGLE_MAPS_SERVER_API_KEY || process.env.GOOGLE_MAPS_API_KEY) });
   } catch (_) {
     return res.status(500).json({ error: 'No se pudo cargar la configuración policial' });
   }

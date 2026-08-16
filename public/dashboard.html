@@ -756,6 +756,7 @@
 <div id="policeSection" style="margin-top:30px;">
   <h2>Policía / Persecuciones</h2>
   <p>Configuración autoritativa compartida. Road usa Directions; air se interpola libremente.</p>
+  <div id="policeSavedConfig"></div>
   <form id="policeConfigForm" enctype="multipart/form-data">
     <fieldset>
       <legend>Límites y rendimiento</legend>
@@ -770,6 +771,8 @@
       <label>Persistencia objetivo (s) <input type="number" name="targetLockSeconds" min="0.5" step="0.1" required></label>
       <label>Distancia spawn (m) <input type="number" name="spawnDistanceMeters" min="30" required></label>
       <label>Separación pareja policial (m) <input type="number" name="patrolPairSpacingMeters" min="1" max="12" step="0.5" required></label>
+      <label>Radio órbita helicóptero (m) <input type="number" name="helicopterOrbitRadiusMeters" min="10" max="500" required></label>
+      <label>Velocidad órbita (°/s) <input type="number" name="helicopterOrbitDegreesPerSecond" min="1" max="90" step="0.5" required></label>
     </fieldset>
     <div id="policeUnitFields"></div>
     <h3>Oleadas editables de las 5 estrellas</h3>
@@ -923,7 +926,7 @@
 
 </main>
 
-<script src="js/dashboard.js?v=police-pair-effects-3"></script>
+<script src="js/dashboard.js?v=police-persistence-routing-4"></script>
 <script type="module">
 import { logoutWebSession } from './js/firebase-client.js';
 document.getElementById('able73-logout').addEventListener('click', async () => {
