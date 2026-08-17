@@ -87,8 +87,8 @@ async function connect(url) {
   await once(socket, 'connect'); return socket;
 }
 const hello = (socket, userId, position) => ack(socket, 'presence:hello', { userId, ...position, heading: 0 });
-const shoot = (socket, position, id, speed = 0, heading = 0) => ack(socket, 'bullet:spawn', {
-  clientShotId: id, cardId: 'card', from: position, heading, speed, alcance: 350, dano: 200,
+const shoot = (socket, position, id, speed = 0, heading = 0, damage = 200) => ack(socket, 'bullet:spawn', {
+  clientShotId: id, cardId: 'card', from: position, heading, speed, alcance: 350, dano: damage,
 });
 
 test('ambient police is shared, remains neutral until attacked and then becomes authoritative pursuit', async (t) => {
@@ -126,8 +126,10 @@ test('ambient police is shared, remains neutral until attacked and then becomes 
   a.disconnect(); b.disconnect();
 });
 
-test('a user turret targets and damages ambient police', async (t) => {
+test('a user turret ignores neutral police and retaliates once its owner is wanted', async (t) => {
   const server = await start({ cards: {
+    card: { _id: 'card', tipoArma: 'Proyectil', alcance: 350,
+      dano: 1, tiempoEspera: 0 },
     turret: { _id: 'turret', tipoArma: 'Arrastre', vida: 100, alcance: 300,
       dano: 40, cadenciaDisparo: 1, duracion: 30 },
   } });
@@ -136,16 +138,32 @@ test('a user turret targets and damages ambient police', async (t) => {
   const origin = { lat: 41.6567, lng: -0.8785 };
   const snapshot = await hello(socket, 'tower-owner', origin);
   const officer = snapshot.policeUnits[0];
-  const shotPromise = until(socket, 'turret:shot',
-    (event) => event.targetPoliceUnitId === officer.unitId, 4000);
-  const damagePromise = until(socket, 'police:unit:update',
-    (event) => event.unitId === officer.unitId && event.life === 60, 5000);
+  let neutralPoliceShots = 0;
+  const countNeutralShots = (event) => {
+    if (event.targetPoliceUnitId === officer.unitId) neutralPoliceShots += 1;
+  };
+  socket.on('turret:shot', countNeutralShots);
   const placed = await ack(socket, 'turret:place', {
     cardId: 'turret', lat: officer.lat, lng: officer.lng,
   });
   assert.equal(placed.ok, true, placed.error);
+  await new Promise((resolve) => setTimeout(resolve, 1300));
+  assert.equal(neutralPoliceShots, 0);
+
+  const latest = (await hello(socket, 'tower-owner', origin)).policeUnits[0];
+  const wantedPromise = until(socket, 'police:wanted:update',
+    (event) => event.userId === 'tower-owner' && event.stars === 1, 4000);
+  await hello(socket, 'tower-owner', { lat: latest.lat, lng: latest.lng });
+  await shoot(socket, { lat: latest.lat, lng: latest.lng }, 'owner-attacks-police', 0, 0, 1);
+  await wantedPromise;
+  socket.off('turret:shot', countNeutralShots);
+
+  const shotPromise = until(socket, 'turret:shot',
+    (event) => event.targetPoliceUnitId === officer.unitId, 4000);
+  const damagePromise = until(socket, 'police:unit:update',
+    (event) => event.unitId === officer.unitId && event.life === 59, 5000);
   assert.equal((await shotPromise).targetPoliceUnitId, officer.unitId);
-  assert.equal((await damagePromise).life, 60);
+  assert.equal((await damagePromise).life, 59);
   socket.disconnect();
 });
 

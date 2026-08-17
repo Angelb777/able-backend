@@ -87,6 +87,18 @@ test('ambient patrol is shared and shooting alone never starts a pursuit', async
   assert.equal([...fx.runtime._debug.incidents.values()][0].wanted.size, 2);
 });
 
+test('ambient police is never created outside game mode', async (t) => {
+  const fx = fixture(); t.after(() => fx.runtime.shutdown());
+  const player = fx.addPlayer('disabled', { lat: 41.6567, lng: -0.8785 });
+  player.gameModeEnabled = false;
+
+  const incident = await fx.runtime.ensureAmbientPatrol(player, player);
+
+  assert.equal(incident, null);
+  assert.equal(fx.runtime._debug.incidents.size, 0);
+  assert.equal(fx.runtime.getSnapshot(player.zoneId).policeUnits.length, 0);
+});
+
 test('the initial foot patrol walks as a pair and both pursue its attacker', async (t) => {
   const fx = fixture((config) => {
     config.stars[0].footOfficers = 2;

@@ -951,7 +951,9 @@ module.exports = function(io, dependencies = {}) {
         .sort((a, b) => geo.distanceMeters(turret, a) - geo.distanceMeters(turret, b));
       const ufoTarget = playerTarget ? null : ufoCandidates[0];
       const policeCandidates = policeRuntime.getUnitsInZone(turret.zoneId)
-        .filter((unit) => unit.life > 0 && geo.distanceMeters(turret, unit) <= turret.alcance)
+        .filter((unit) => unit.life > 0 &&
+          policeRuntime.isUnitHostileToUser(unit.unitId, String(turret.ownerUserId)) &&
+          geo.distanceMeters(turret, unit) <= turret.alcance)
         .sort((a, b) => geo.distanceMeters(turret, a) - geo.distanceMeters(turret, b));
       const policeTarget = playerTarget || ufoTarget ? null : policeCandidates[0];
       const target = playerTarget || ufoTarget || policeTarget;
@@ -994,7 +996,11 @@ module.exports = function(io, dependencies = {}) {
         if (policeTarget) {
           const currentPolice = policeRuntime.getUnitsInZone(turret.zoneId)
             .find((unit) => unit.unitId === policeTarget.unitId);
-          if (!currentPolice || geo.distanceMeters(
+          if (!currentPolice ||
+              !policeRuntime.isUnitHostileToUser(
+                currentPolice.unitId,
+                String(turret.ownerUserId)
+              ) || geo.distanceMeters(
             currentPolice,
             { lat: target.lat, lng: target.lng }
           ) > (Number(currentPolice.definition.hitRadiusMeters) || PLAYER_HIT_RADIUS_M)) return;
