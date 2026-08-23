@@ -164,7 +164,7 @@ test('reconnect and two sockets preserve one logical presence', async (t) => {
   const duplicate = await ack(first, 'bullet:spawn', shotPayload);
   assert.equal(shot.ok, true);
   assert.equal(duplicate.duplicate, true);
-  // 180 ms de retardo inicial + ~333 ms de vuelo hasta el objetivo a 60 m.
+  // ~333 ms de vuelo hasta el objetivo a 60 m, sin retardo inicial artificial.
   await wait(650);
   assert.equal(bulletSpawns, 1);
   assert.equal(lifeUpdates, 1);

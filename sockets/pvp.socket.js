@@ -395,7 +395,10 @@ module.exports = function(io, dependencies = {}) {
 
   // Tick de balas (server-authoritative)
   const TICK_MS = 50;
-  const BULLET_START_DELAY_MS = 180;
+  // El cliente ya representa el disparo inmediatamente. Iniciar también la
+  // simulación autoritativa sin una espera artificial evita que ambas
+  // trayectorias se separen antes del impacto.
+  const BULLET_START_DELAY_MS = 0;
   const PLAYER_HIT_RADIUS_M = 8;
   const ANIMATED_PLAYER_HIT_RADIUS_M = 16;
   const DIRECT_PROJECTILE_SAFE_DISTANCE_M = 50;

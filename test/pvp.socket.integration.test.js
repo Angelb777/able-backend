@@ -880,9 +880,9 @@ test('two players share presence, movement, one hit, life and explosions', async
   const shortSpawnReceivedAt = Date.now();
   const shortExplosion = await shortExplosionOnB;
   assert.equal(shortSpawn.bulletId, shortAck.bulletId);
-  assert.equal(shortSpawn.startDelayMs, 180);
+  assert.equal(shortSpawn.startDelayMs, 0);
   assert.equal(shortExplosion.reason, 'range');
-  assert.ok(Date.now() - shortSpawnReceivedAt >= 140);
+  assert.ok(Date.now() - shortSpawnReceivedAt < 200);
   assert.ok(shortExplosion.lat < origin.lat);
   assert.ok(
     Math.abs(
