@@ -1408,10 +1408,8 @@ async function crearReward(e) {
   }
 
   try {
-    const token = "";
     const res = await fetch("/api/rewards", {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
       body: formData,
     });
     const data = await res.json();
@@ -1434,15 +1432,12 @@ async function cargarMisRewards() {
   contenedor.innerHTML = "<p>Cargando...</p>";
 
   try {
-    const token = "";
     const url = role === "admin"
       ? "/api/rewards/gestion"
       : `/api/rewards/mis/${userId}`;
-    const res = await fetch(url, {
-      headers: role === "admin"
-        ? { Authorization: `Bearer ${token}` }
-        : {}
-    });
+    // La web usa la cookie HttpOnly de sesiÃ³n. Un Authorization vacÃ­o se
+    // normalizaba a "Bearer" y provocaba un 401 aunque la cookie fuera vÃ¡lida.
+    const res = await fetch(url);
     const rewards = await res.json();
     if (!res.ok) throw new Error(rewards.error || "No se pudo cargar el catálogo");
     if (!Array.isArray(rewards)) throw new Error("Respuesta inválida");
@@ -1521,10 +1516,8 @@ async function renderValidarRewards() {
 async function eliminarReward(id) {
   if (!confirm("¿Seguro que quieres eliminar este anuncio?")) return;
   try {
-    const token = sessionStorage.getItem("legacyToken") || "";
     const res = await fetch(`/api/rewards/${id}`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "No se pudo eliminar");
@@ -1798,40 +1791,51 @@ async function renderListaCompradores() {
   const lista = document.getElementById("listaCompradores");
   const buscador = document.getElementById("buscadorCompradores");
 
-  if (!user || !user._id || !user.role) {
+  const authenticatedUserId = user?.id || user?._id;
+  if (!user || !authenticatedUserId || !user.role) {
     console.warn("⚠️ Usuario no encontrado o incompleto");
+    lista.innerHTML = "<p>No se ha podido identificar la sesión.</p>";
     return;
   }
 
   let url;
   if (user.role === "admin") {
-    url = `/api/rewards/compras`; // <-- una ruta que devuelva todos los compradores
+    url = "/api/rewards/compras";
   } else {
-    url = `/api/rewards/compras/${user._id}`; // para comercios, sigue usando su id
+    url = `/api/rewards/compras/${authenticatedUserId}`;
   }
 
   try {
+    lista.innerHTML = "<p>Cargando compradores pendientes...</p>";
     const res = await fetch(url);
-    const compradores = await res.json();
+    const compradores = await res.json().catch(() => []);
+    if (!res.ok) {
+      throw new Error(compradores.error || `Error ${res.status} al cargar compradores`);
+    }
 
     console.log("📦 Compradores recibidos:", compradores);
 
     let filtrados = Array.isArray(compradores) ? compradores : [];
 
-    buscador.addEventListener("input", () => {
+    buscador.oninput = () => {
       const q = buscador.value.toLowerCase();
       filtrados = compradores.filter(c =>
-        c.compradorNombre.toLowerCase().includes(q) ||
-        c.compradorEmail.toLowerCase().includes(q)
+        String(c.compradorNombre || "").toLowerCase().includes(q) ||
+        String(c.compradorEmail || "").toLowerCase().includes(q)
       );
       pintar();
-    });
+    };
 
     function pintar() {
       lista.innerHTML = "";
 
       if (!Array.isArray(filtrados)) {
         console.warn("⚠️ filtrados no es un array, se cancela renderizado.");
+        return;
+      }
+
+      if (filtrados.length === 0) {
+        lista.innerHTML = "<p>No hay compradores pendientes de validación.</p>";
         return;
       }
 
@@ -1850,21 +1854,24 @@ async function renderListaCompradores() {
     pintar();
   } catch (err) {
     console.error("❌ Error al cargar compradores", err);
+    lista.innerHTML = `<p>❌ ${commercialEscape(err.message || "Error al cargar compradores")}</p>`;
   }
 }
 
 async function validarCompra(rewardId, compradorId) {
-  if (!confirm("¿Confirmar que ha usado el descuento?")) return;
+  if (!confirm("¿Confirmar que el premio o descuento ha sido entregado?")) return;
   try {
-    await fetch("/api/rewards/validar-compra", {
+    const res = await fetch("/api/rewards/validar-compra", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ rewardId, compradorId })
     });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "No se pudo validar la compra");
     alert("✅ Compra validada");
-    renderListaCompradores();
+    await renderListaCompradores();
   } catch (err) {
-    alert("❌ Error al validar compra");
+    alert(`❌ ${err.message || "Error al validar compra"}`);
     console.error(err);
   }
 }
@@ -1889,14 +1896,8 @@ document.addEventListener("click", async (e) => {
     if (!confirm("¿Eliminar esta recompensa?")) return;
 
     try {
-      const token = "";
-      if (!token) {
-        throw new Error("Tu sesión ha caducado. Vuelve a iniciar sesión.");
-      }
-
       const res = await fetch(`/api/rewards/${rewardId}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -6181,12 +6182,7 @@ async function _pedidosFetchAndRender() {
     if (_pedidosState.q) params.set("q", _pedidosState.q);
     if (_pedidosState.ship) params.set("ship", _pedidosState.ship);
 
-    const token = "";
-    const resp = await fetch(`/api/admin/orders?${params.toString()}`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
+    const resp = await fetch(`/api/admin/orders?${params.toString()}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
 
@@ -6286,10 +6282,7 @@ function _pedidoRowHtml(o) {
 
 async function _pedidosOpenDetail(id) {
   try {
-    const token = "";
-    const resp = await fetch(`/api/admin/orders/${id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const resp = await fetch(`/api/admin/orders/${id}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const o = await resp.json();
 
@@ -6366,10 +6359,7 @@ async function _pedidosExportCsv() {
     if (_pedidosState.q) params.set("q", _pedidosState.q);
     if (_pedidosState.ship) params.set("ship", _pedidosState.ship);
 
-    const token = "";
-    const resp = await fetch(`/api/admin/orders/export.csv?${params.toString()}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const resp = await fetch(`/api/admin/orders/export.csv?${params.toString()}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
     const blob = await resp.blob();
@@ -6425,12 +6415,10 @@ function _showModal(html, wrapId, closeId) {
 }
 
 async function _pedidosToggleShip(id, shipped, trackingNumber) {
-  const token = "";
   const resp = await fetch(`/api/admin/orders/${id}/ship`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ shipped, trackingNumber }),
   });

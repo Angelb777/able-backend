@@ -407,8 +407,18 @@ router.post("/:id/comprar", verifyToken, checkRole(["cliente"]), async (req, res
       return res.status(404).json({ error: "Reward no encontrado" });
     }
 
-    if (!reward.validado || ["disabled", "retired"].includes(reward.publicationStatus)) {
+    if ((!reward.validado && !reward.creadoPorAdmin) ||
+        ["disabled", "retired"].includes(reward.publicationStatus)) {
       return res.status(409).json({ error: "Reward no disponible" });
+    }
+
+    const alreadyPending = (reward.compradores || []).some(
+      (purchase) => String(purchase.userId) === String(userId) && !purchase.validado
+    );
+    if (alreadyPending) {
+      return res.status(409).json({
+        error: "Ya tienes este descuento o premio pendiente de validar",
+      });
     }
 
     if (!user) {
@@ -427,7 +437,7 @@ router.post("/:id/comprar", verifyToken, checkRole(["cliente"]), async (req, res
 
     // Guardar la compra
     if (!reward.compradores) reward.compradores = [];
-    reward.compradores.push({ userId, validado: false });
+    reward.compradores.push({ userId, validado: false, purchasedAt: new Date() });
     await reward.save();
 
     console.log(`✅ Compra registrada. Usuario ${userId} compró reward ${rewardId}`);
@@ -471,7 +481,7 @@ router.get("/mis-compras", verifyToken, checkRole(["cliente"]), async (req, res)
         cantidadEuros: r.cantidadEuros,
         stepcoins: r.stepcoins,
         imagenes: r.imagenes || [],
-        createdAt: r.fechaCreacion || new Date(0),
+        createdAt: compra.purchasedAt || r.fechaCreacion || new Date(0),
       });
     }
 
@@ -507,9 +517,13 @@ router.patch("/:id/validar-compra/:userId", verifyToken, requireRewardOwnerOrAdm
     const reward = await Reward.findById(req.params.id);
     if (!reward || !reward.compradores) return res.status(404).json({ error: "No encontrado" });
 
-    const comprador = reward.compradores.find(c => c.userId.toString() === req.params.userId);
+    const comprador = reward.compradores.find(
+      c => String(c.userId) === String(req.params.userId) && !c.validado
+    );
     if (comprador) {
       comprador.validado = true;
+      comprador.validatedAt = new Date();
+      comprador.validatedBy = req.user.id;
       await reward.save();
       res.json({ message: "Compra validada" });
     } else {
@@ -528,21 +542,23 @@ router.get("/compras/:comercioId", verifyToken, async (req, res) => {
       return res.status(403).json({ error: "No puedes consultar otro comercio" });
     }
     const rewards = await Reward.find({ comercioId: req.params.comercioId })
-      .populate("compradores.userId", "nombre email")
+      .populate("compradores.userId", "nickname nombre email")
       .select("titulo compradores");
 
     const compradores = rewards.flatMap(reward =>
       (reward.compradores || [])
-        .filter(c => !c.validado)
+        .filter(c => !c.validado && c.userId)
         .map(c => ({
           rewardId: reward._id,
           rewardTitulo: reward.titulo,
           compradorId: c.userId._id,
-          compradorNombre: c.userId.nombre,
-          compradorEmail: c.userId.email
+          compradorNombre: c.userId.nickname || c.userId.nombre || "Usuario Able",
+          compradorEmail: c.userId.email,
+          purchasedAt: c.purchasedAt || null,
         }))
     );
 
+    compradores.sort((a, b) => new Date(b.purchasedAt || 0) - new Date(a.purchasedAt || 0));
     res.json(compradores);
   } catch (err) {
     console.error("❌ Error al cargar compradores:", err);
@@ -556,10 +572,14 @@ router.post("/validar-compra", verifyToken, requireRewardOwnerOrAdmin, async (re
 
   try {
     const reward = await Reward.findById(rewardId);
-    const comprador = (reward.compradores || []).find(c => c.userId.toString() === compradorId);
+    const comprador = (reward.compradores || []).find(
+      c => String(c.userId) === String(compradorId) && !c.validado
+    );
     if (!comprador) return res.status(404).json({ error: "Comprador no encontrado" });
 
     comprador.validado = true;
+    comprador.validatedAt = new Date();
+    comprador.validatedBy = req.user.id;
     await reward.save();
 
     res.json({ message: "Compra validada correctamente" });
@@ -569,11 +589,14 @@ router.post("/validar-compra", verifyToken, requireRewardOwnerOrAdmin, async (re
   }
 });
 
-// Obtener todas las compras si es admin
+// El Superadmin entrega únicamente premios creados por Able. Las compras de
+// un comercio aparecen exclusivamente en la cuenta propietaria del anuncio.
 router.get("/compras", ...adminOnly, async (req, res) => {
   try {
-    const rewards = await Reward.find()
-      .populate("compradores.userId", "nombre email")
+    const rewards = await Reward.find({
+      $or: [{ creadoPorAdmin: true }, { comercioId: null }],
+    })
+      .populate("compradores.userId", "nickname nombre email")
       .select("titulo compradores");
 
     const compradores = rewards.flatMap(reward =>
@@ -583,11 +606,13 @@ router.get("/compras", ...adminOnly, async (req, res) => {
           rewardId: reward._id,
           rewardTitulo: reward.titulo,
           compradorId: c.userId._id,
-          compradorNombre: c.userId.nombre,
-          compradorEmail: c.userId.email
+          compradorNombre: c.userId.nickname || c.userId.nombre || "Usuario Able",
+          compradorEmail: c.userId.email,
+          purchasedAt: c.purchasedAt || null,
         }))
     );
 
+    compradores.sort((a, b) => new Date(b.purchasedAt || 0) - new Date(a.purchasedAt || 0));
     res.json(compradores);
   } catch (err) {
     console.error("❌ Error al obtener compras (admin):", err);

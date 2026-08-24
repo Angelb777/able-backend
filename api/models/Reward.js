@@ -15,7 +15,10 @@ const rewardSchema = new mongoose.Schema({
   compradores: [
     {
       userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-      validado: { type: Boolean, default: false }
+      validado: { type: Boolean, default: false },
+      purchasedAt: { type: Date, default: Date.now },
+      validatedAt: Date,
+      validatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
     }
   ],
   destacado: { type: Boolean, default: false }, // ✅ Para destacar

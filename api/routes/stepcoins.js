@@ -338,19 +338,50 @@ router.post("/ruleta", verifyToken, async (req, res) => {
 });
 
 
-// Obtener usuarios ordenados por Stepcoins (ranking)
+// Ranking de actividad: solo Stepcoins positivos obtenidos por movilidad.
+// El saldo de User.stepcoins no interviene, por lo que gastar no resta puestos.
 router.get("/ranking", async (req, res) => {
   try {
-    const topUsuarios = await User.find({ role: "cliente" }) // solo clientes, puedes quitarlo si quieres incluir todos
-      .sort({ stepcoins: -1 })
-      .select("nickname stepcoins")
-      .limit(100)
-      .lean();
+    const period = ['week', 'month', 'all'].includes(req.query.period)
+      ? req.query.period
+      : 'all';
+    const since = period === 'week'
+      ? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+      : period === 'month'
+        ? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+        : null;
 
-    res.json(topUsuarios.map((user) => ({
-      id: String(user._id),
-      nickname: publicNickname(user),
-      stepcoins: user.stepcoins || 0,
+    const transactionMatch = {
+      cantidad: { $gt: 0 },
+      tipo: 'recompensa',
+      'metadata.source': 'pedometer',
+      ...(since ? { fecha: { $gte: since } } : {}),
+    };
+
+    const topUsuarios = await StepcoinTransaction.aggregate([
+      { $match: transactionMatch },
+      { $group: { _id: '$userId', mobilityStepcoins: { $sum: '$cantidad' } } },
+      {
+        $lookup: {
+          from: User.collection.name,
+          localField: '_id',
+          foreignField: '_id',
+          as: 'user',
+        },
+      },
+      { $unwind: '$user' },
+      { $match: { 'user.role': 'cliente' } },
+      { $sort: { mobilityStepcoins: -1, _id: 1 } },
+      { $limit: 100 },
+      { $project: { _id: 0, userId: '$_id', mobilityStepcoins: 1, user: 1 } },
+    ]);
+
+    res.json(topUsuarios.map((entry) => ({
+      id: String(entry.userId),
+      nickname: publicNickname(entry.user),
+      mobilityStepcoins: entry.mobilityStepcoins || 0,
+      // Alias para clientes antiguos del ranking; ya no representa el saldo.
+      stepcoins: entry.mobilityStepcoins || 0,
     })));
   } catch (err) {
     console.error("❌ Error obteniendo ranking:", err);
