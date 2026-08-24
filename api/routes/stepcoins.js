@@ -351,34 +351,42 @@ router.get("/ranking", async (req, res) => {
         ? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
         : null;
 
-    const transactionMatch = {
-      cantidad: { $gt: 0 },
-      tipo: 'recompensa',
-      'metadata.source': 'pedometer',
-      ...(since ? { fecha: { $gte: since } } : {}),
-    };
+    const transactionConditions = [
+      { $eq: ['$userId', '$$userId'] },
+      { $gt: ['$cantidad', 0] },
+      { $eq: ['$tipo', 'recompensa'] },
+      { $eq: ['$metadata.source', 'pedometer'] },
+      ...(since ? [{ $gte: ['$fecha', since] }] : []),
+    ];
 
-    const topUsuarios = await StepcoinTransaction.aggregate([
-      { $match: transactionMatch },
-      { $group: { _id: '$userId', mobilityStepcoins: { $sum: '$cantidad' } } },
+    const topUsuarios = await User.aggregate([
+      { $match: { role: 'cliente' } },
       {
         $lookup: {
-          from: User.collection.name,
-          localField: '_id',
-          foreignField: '_id',
-          as: 'user',
+          from: StepcoinTransaction.collection.name,
+          let: { userId: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $and: transactionConditions } } },
+            { $group: { _id: null, total: { $sum: '$cantidad' } } },
+          ],
+          as: 'mobility',
         },
       },
-      { $unwind: '$user' },
-      { $match: { 'user.role': 'cliente' } },
+      {
+        $set: {
+          mobilityStepcoins: {
+            $ifNull: [{ $arrayElemAt: ['$mobility.total', 0] }, 0],
+          },
+        },
+      },
       { $sort: { mobilityStepcoins: -1, _id: 1 } },
       { $limit: 100 },
-      { $project: { _id: 0, userId: '$_id', mobilityStepcoins: 1, user: 1 } },
+      { $project: { nickname: 1, mobilityStepcoins: 1 } },
     ]);
 
     res.json(topUsuarios.map((entry) => ({
-      id: String(entry.userId),
-      nickname: publicNickname(entry.user),
+      id: String(entry._id),
+      nickname: publicNickname(entry),
       mobilityStepcoins: entry.mobilityStepcoins || 0,
       // Alias para clientes antiguos del ranking; ya no representa el saldo.
       stepcoins: entry.mobilityStepcoins || 0,
