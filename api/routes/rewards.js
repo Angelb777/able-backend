@@ -2,6 +2,7 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
+const mongoose = require("mongoose");
 const Reward = require("../models/Reward");
 const User = require("../models/User");
 const Establishment = require("../models/Establishment");
@@ -10,6 +11,18 @@ const { recordTransition } = require("../services/commercialWorkflow");
 const { verifyToken, checkRole } = require("../middlewares/authMiddleware");
 const { saveImage } = require("../utils/mediaStorage");
 const adminOnly = [verifyToken, checkRole(["admin"])];
+
+const publicRewardFilter = {
+  $or: [
+    { validado: true },
+    { creadoPorAdmin: true }
+  ],
+  publicationStatus: { $nin: ["disabled", "retired"] }
+};
+
+function hasCatalogOrder(reward) {
+  return Number.isFinite(reward.ordenCatalogo) && reward.ordenCatalogo >= 0;
+}
 
 async function requireRewardOwnerOrAdmin(req, res, next) {
   try {
@@ -188,13 +201,7 @@ router.get("/validados", async (req, res) => {
   try {
     // Incluye también rewards antiguos del admin que quedaron guardados como
     // pendientes antes de que la publicación automática estuviera corregida.
-    const rewards = await Reward.find({
-      $or: [
-        { validado: true },
-        { creadoPorAdmin: true }
-      ],
-      publicationStatus: { $nin: ["disabled", "retired"] }
-    });
+    const rewards = await Reward.find(publicRewardFilter);
 
     const conPrioridad = rewards.map(r => {
       let prioridad = 0;
@@ -219,11 +226,18 @@ router.get("/validados", async (req, res) => {
         imagenes: r.imagenes,
         prioridad,
         fechaCreacion: r.fechaCreacion || new Date(0), // fallback
-        creadoPorAdmin: r.creadoPorAdmin
+        creadoPorAdmin: r.creadoPorAdmin,
+        ordenCatalogo: r.ordenCatalogo
       };
     });
 
     conPrioridad.sort((a, b) => {
+      const aOrdenado = hasCatalogOrder(a);
+      const bOrdenado = hasCatalogOrder(b);
+      if (aOrdenado && bOrdenado && a.ordenCatalogo !== b.ordenCatalogo) {
+        return a.ordenCatalogo - b.ordenCatalogo;
+      }
+      if (aOrdenado !== bOrdenado) return aOrdenado ? -1 : 1;
       if (b.prioridad !== a.prioridad) return b.prioridad - a.prioridad;
       return new Date(b.fechaCreacion) - new Date(a.fechaCreacion);
     });
@@ -238,13 +252,7 @@ router.get("/validados", async (req, res) => {
 // Obtener todos los rewards validados (para clientes)
 router.get("/", async (req, res) => {
   try {
-    const rewards = await Reward.find({
-      $or: [
-        { validado: true },
-        { creadoPorAdmin: true }
-      ],
-      publicationStatus: { $nin: ["disabled", "retired"] }
-    }).sort({ fechaCreacion: -1 });
+    const rewards = await Reward.find(publicRewardFilter).sort({ fechaCreacion: -1 });
     res.json(rewards);
   } catch (err) {
     res.status(500).json({ error: "Error al obtener rewards" });
@@ -261,6 +269,44 @@ router.get("/gestion", verifyToken, checkRole(["admin"]), async (req, res) => {
   } catch (err) {
     console.error("Error al obtener el catálogo para gestión:", err);
     res.status(500).json({ error: "Error al obtener el catálogo" });
+  }
+});
+
+// Guarda el orden exacto del catalogo que consumen Flutter y los clientes web.
+// Se exige la lista completa para detectar catalogos desactualizados.
+router.patch("/orden-catalogo", ...adminOnly, async (req, res) => {
+  try {
+    const orderedIds = req.body?.orderedIds;
+    if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+      return res.status(400).json({ error: "Debes enviar el catalogo publicado completo" });
+    }
+
+    const normalizedIds = orderedIds.map(String);
+    if (new Set(normalizedIds).size !== normalizedIds.length
+      || normalizedIds.some((id) => !mongoose.isValidObjectId(id))) {
+      return res.status(400).json({ error: "El orden contiene identificadores no validos o repetidos" });
+    }
+
+    const published = await Reward.find(publicRewardFilter).select("_id").lean();
+    const publishedIds = new Set(published.map((reward) => String(reward._id)));
+    if (publishedIds.size !== normalizedIds.length
+      || normalizedIds.some((id) => !publishedIds.has(id))) {
+      return res.status(409).json({
+        error: "El catalogo ha cambiado. Actualiza la lista antes de volver a ordenar."
+      });
+    }
+
+    await Reward.bulkWrite(normalizedIds.map((id, index) => ({
+      updateOne: {
+        filter: { _id: id },
+        update: { $set: { ordenCatalogo: index } }
+      }
+    })));
+
+    res.json({ message: "Orden del catalogo guardado", orderedIds: normalizedIds });
+  } catch (err) {
+    console.error("Error al ordenar el catalogo de rewards:", err);
+    res.status(500).json({ error: "No se pudo guardar el orden del catalogo" });
   }
 });
 

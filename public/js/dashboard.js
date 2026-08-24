@@ -1373,7 +1373,8 @@ async function renderRewardsSection() {
     </form>
 
     <h3>${role === "admin" ? "Todos los anuncios publicados y pendientes" : "Mis Anuncios"}</h3>
-    <div id="misRewards" class="lista-rewards"></div>
+    ${role === "admin" ? '<p class="catalog-order-help">Usa las flechas para decidir el orden exacto que verá el usuario en Flutter. Los pendientes se incorporan al catálogo cuando se validan.</p>' : ''}
+    <div id="misRewards" class="lista-rewards reward-catalog-grid"></div>
   `;
 
   document.getElementById("tipo").addEventListener("change", actualizarCampos);
@@ -1381,6 +1382,27 @@ async function renderRewardsSection() {
 
   actualizarCampos();
   cargarMisRewards();
+}
+
+let rewardsCatalogoAdmin = [];
+let guardandoOrdenCatalogo = false;
+
+function rewardEstaPublicado(reward) {
+  return Boolean(reward.validado || reward.creadoPorAdmin)
+    && !["disabled", "retired"].includes(reward.publicationStatus);
+}
+
+function ordenarRewardsParaGestion(rewards) {
+  const publicados = rewards.filter(rewardEstaPublicado).sort((a, b) => {
+    const ordenA = Number.isFinite(a.ordenCatalogo) ? a.ordenCatalogo : Number.MAX_SAFE_INTEGER;
+    const ordenB = Number.isFinite(b.ordenCatalogo) ? b.ordenCatalogo : Number.MAX_SAFE_INTEGER;
+    if (ordenA !== ordenB) return ordenA - ordenB;
+    return new Date(b.fechaCreacion || 0) - new Date(a.fechaCreacion || 0);
+  });
+  const pendientes = rewards.filter(r => !rewardEstaPublicado(r)).sort(
+    (a, b) => new Date(b.fechaCreacion || 0) - new Date(a.fechaCreacion || 0)
+  );
+  return [...publicados, ...pendientes];
 }
 
 function actualizarCampos() {
@@ -1447,8 +1469,15 @@ async function cargarMisRewards() {
       return;
     }
 
-    contenedor.innerHTML = rewards.map(r => `
+    rewardsCatalogoAdmin = role === "admin" ? ordenarRewardsParaGestion(rewards) : rewards;
+    const publicados = rewardsCatalogoAdmin.filter(rewardEstaPublicado);
+
+    contenedor.innerHTML = rewardsCatalogoAdmin.map(r => {
+      const publicado = rewardEstaPublicado(r);
+      const posicion = publicado ? publicados.findIndex(item => item._id === r._id) : -1;
+      return `
       <div class="reward-card">
+        ${role === "admin" && publicado ? `<div class="catalog-position">Posición ${posicion + 1} en Flutter</div>` : ""}
         <h4>${commercialEscape(r.titulo)}</h4>
         <p><strong>${r.tipo === 'descuento' ? 'Descuento' : 'Premio'}</strong></p>
         <p>${commercialEscape(r.descripcion)}</p>
@@ -1457,14 +1486,47 @@ async function cargarMisRewards() {
         ${r.cantidadEuros ? `<p>💶 Descuento: ${r.cantidadEuros}€</p>` : ""}
         <p>📍 ${commercialEscape(r.direccion)}</p>
         <p>🟢 Estado: ${r.validado || r.creadoPorAdmin ? "Publicado" : "Pendiente de validación"}</p>
-        ${r.imagenes.map(img => `<img src="${commercialEscape(img)}" width="100" style="margin:5px;">`).join("")}
+        ${(r.imagenes || []).map(img => `<img src="${commercialEscape(img)}" width="100" style="margin:5px;">`).join("")}
         <br>
+        ${role === "admin" && publicado ? `<div class="catalog-order-actions">
+          <button type="button" onclick="moverRewardCatalogo('${r._id}', -1)" ${posicion === 0 ? "disabled" : ""}>&#8593; Subir</button>
+          <button type="button" onclick="moverRewardCatalogo('${r._id}', 1)" ${posicion === publicados.length - 1 ? "disabled" : ""}>&#8595; Bajar</button>
+        </div>` : ""}
         <button onclick="eliminarReward('${r._id}')">🗑️ Eliminar</button>
       </div>
-    `).join("");
+    `; }).join("");
   } catch (err) {
     console.error("Error cargando rewards:", err);
     contenedor.innerHTML = "<p>❌ Error al cargar tus anuncios</p>";
+  }
+}
+
+async function moverRewardCatalogo(id, desplazamiento) {
+  if (role !== "admin" || guardandoOrdenCatalogo) return;
+
+  const publicados = rewardsCatalogoAdmin.filter(rewardEstaPublicado);
+  const posicionActual = publicados.findIndex(reward => reward._id === id);
+  const nuevaPosicion = posicionActual + desplazamiento;
+  if (posicionActual < 0 || nuevaPosicion < 0 || nuevaPosicion >= publicados.length) return;
+
+  [publicados[posicionActual], publicados[nuevaPosicion]] =
+    [publicados[nuevaPosicion], publicados[posicionActual]];
+
+  guardandoOrdenCatalogo = true;
+  try {
+    const res = await fetch("/api/rewards/orden-catalogo", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orderedIds: publicados.map(reward => reward._id) })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "No se pudo guardar el orden");
+    await cargarMisRewards();
+  } catch (err) {
+    alert(`No se pudo cambiar el orden: ${err.message}`);
+    await cargarMisRewards();
+  } finally {
+    guardandoOrdenCatalogo = false;
   }
 }
 

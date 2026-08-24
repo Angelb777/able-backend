@@ -33,7 +33,10 @@ const rewardSchema = new mongoose.Schema({
     default: 'pending'
   },
   publishedAt: Date,
-  retiredAt: Date
+  retiredAt: Date,
+  // Posicion elegida por el Superadmin para el catalogo publico (Flutter).
+  // Los registros antiguos sin valor se muestran despues de los ordenados.
+  ordenCatalogo: { type: Number, min: 0, default: null, index: true }
 });
 
 module.exports = mongoose.model('Reward', rewardSchema);

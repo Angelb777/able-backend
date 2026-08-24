@@ -114,4 +114,6 @@ test('commercial and legacy positioning endpoints enforce role boundaries', asyn
   assert.equal((await call('/api/promociones-negocio', 'comercio', 'POST')).status, 403);
   assert.equal((await call('/api/rewards', null, 'POST')).status, 401);
   assert.equal((await call('/api/rewards', 'cliente', 'POST')).status, 403);
+  assert.equal((await call('/api/rewards/orden-catalogo', 'comercio', 'PATCH')).status, 403);
+  assert.equal((await call('/api/rewards/orden-catalogo', 'admin', 'PATCH')).status, 400);
 });

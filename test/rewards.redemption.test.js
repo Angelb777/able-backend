@@ -88,3 +88,39 @@ test('the web reward flow never sends an empty bearer token', () => {
   assert.doesNotMatch(source, /const token = ["']{2}/);
   assert.match(source, /const res = await fetch\(url\);/);
 });
+
+test('the Flutter catalog honors the order chosen by the superadmin', async (t) => {
+  const originalRewardFind = Reward.find;
+  Reward.find = async () => [
+    {
+      _id: 'legacy-admin', titulo: 'Legacy', creadoPorAdmin: true,
+      fechaCreacion: new Date('2026-08-24T10:00:00Z'), imagenes: [],
+    },
+    {
+      _id: 'second', titulo: 'Segundo', validado: true, ordenCatalogo: 1,
+      fechaCreacion: new Date('2026-08-20T10:00:00Z'), imagenes: [],
+    },
+    {
+      _id: 'first', titulo: 'Primero', validado: true, ordenCatalogo: 0,
+      fechaCreacion: new Date('2026-08-19T10:00:00Z'), imagenes: [],
+    },
+  ];
+
+  const app = express();
+  app.use('/api/rewards', rewardsRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    Reward.find = originalRewardFind;
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/rewards/validados`,
+  );
+  assert.equal(response.status, 200);
+  const catalog = await response.json();
+  assert.deepEqual(catalog.map((reward) => reward.titulo), [
+    'Primero', 'Segundo', 'Legacy',
+  ]);
+});

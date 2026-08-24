@@ -13,7 +13,7 @@ test('the served web dashboard exposes the centralized commerce workflow', () =>
 
   assert.match(server, /express\.static\(path\.join\(__dirname,\s*['"]public['"]\)\)/);
   assert.match(server, /app\.use\(['"]\/api\/commercial['"]/);
-  assert.match(html, /<script src="js\/dashboard\.js\?v=police-persistence-routing-4"><\/script>/);
+  assert.match(html, /<script src="js\/dashboard\.js\?v=reward-catalog-order-1"><\/script>/);
 
   for (const id of [
     'commerceEstablishment',
