@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const spritesheetSchema = require('./spritesheetSchema');
 
 const mineSchema = new mongoose.Schema({
   ownerUserId: {
@@ -22,6 +23,10 @@ const mineSchema = new mongoose.Schema({
   imagenPortada: { type: String, default: '' },
   imagenesActivacion: [String],
   imagenesExplosion: [String],
+  renderType: { type: String, enum: ['classic', 'flame_spritesheet'], default: 'classic' },
+  spritesheet: spritesheetSchema,
+  explosionRenderType: { type: String, enum: ['classic', 'flame_spritesheet'], default: 'classic' },
+  explosionSpritesheet: spritesheetSchema,
 }, { timestamps: true });
 
 module.exports = mongoose.model('Mine', mineSchema);

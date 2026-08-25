@@ -1,10 +1,23 @@
 const mongoose = require('mongoose');
+const spritesheetSchema = require('./spritesheetSchema');
 
 const UfoSchema = new mongoose.Schema({
   nombre: String,
   imagenOvni: String,
+  ufoRenderType: {
+    type: String,
+    enum: ['classic', 'flame_spritesheet'],
+    default: 'classic'
+  },
+  ufoSpritesheet: spritesheetSchema,
   vida: Number,
   imagenBala: String,
+  bulletRenderType: {
+    type: String,
+    enum: ['classic', 'flame_spritesheet'],
+    default: 'classic'
+  },
+  bulletSpritesheet: spritesheetSchema,
   velocidadBala: Number,
   velocidadMovimiento: Number,
   tiempoAparicion: Number,

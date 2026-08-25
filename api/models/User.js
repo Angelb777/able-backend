@@ -50,6 +50,9 @@ const userSchema = new mongoose.Schema({
   cardUpgrades: { type: [cardUpgradeSchema], default: [] },
   cardUpgradeRequestIds: { type: [String], default: [], select: false },
   rouletteRequestIds: { type: [String], default: [], select: false },
+  // Claves autoritativas de recompensas de racha ya aplicadas. Permiten que
+  // el abono y su proteccion contra duplicados ocurran en una sola escritura.
+  streakRewardKeys: { type: [String], default: [], select: false },
   rewardsComprados: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Reward' }],
   skinsCompradas: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Skin' }],
   mazo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Card' }],

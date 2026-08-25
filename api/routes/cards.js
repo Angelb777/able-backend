@@ -22,7 +22,12 @@ const SPRITESHEET_FIELDS = new Set([
   "projectileSpritesheetPng",
   "explosionSpritesheetPng",
   "turretIdleSpritesheetPng",
-  "turretDeathSpritesheetPng"
+  "turretDeathSpritesheetPng",
+  "mineSpritesheetPng",
+  "mineExplosionSpritesheetPng",
+  "airstrikePlaneSpritesheetPng",
+  "airstrikeBombSpritesheetPng",
+  "airstrikeExplosionSpritesheetPng"
 ]);
 
 class SpritesheetValidationError extends Error {}
@@ -168,6 +173,11 @@ router.post(
     { name: "explosionSpritesheetPng", maxCount: 1 },
     { name: "turretIdleSpritesheetPng", maxCount: 1 },
     { name: "turretDeathSpritesheetPng", maxCount: 1 },
+    { name: "mineSpritesheetPng", maxCount: 1 },
+    { name: "mineExplosionSpritesheetPng", maxCount: 1 },
+    { name: "airstrikePlaneSpritesheetPng", maxCount: 1 },
+    { name: "airstrikeBombSpritesheetPng", maxCount: 1 },
+    { name: "airstrikeExplosionSpritesheetPng", maxCount: 1 },
     { name: "imagenesExtras", maxCount: 5 },
 
     { name: "imagenesMovimiento", maxCount: 4 },
@@ -199,6 +209,11 @@ router.post(
       const projectileRenderType = normalizedRenderType(body.projectileRenderType);
       const explosionRenderType = normalizedRenderType(body.explosionRenderType);
       const turretRenderType = normalizedRenderType(body.turretRenderType);
+      const mineRenderType = normalizedRenderType(body.mineRenderType);
+      const mineExplosionRenderType = normalizedRenderType(body.mineExplosionRenderType);
+      const airstrikePlaneRenderType = normalizedRenderType(body.airstrikePlaneRenderType);
+      const airstrikeBombRenderType = normalizedRenderType(body.airstrikeBombRenderType);
+      const airstrikeExplosionRenderType = normalizedRenderType(body.airstrikeExplosionRenderType);
 
       // ✅ Validaciones mínimas (evita 500 de Mongoose)
       if (!body.titulo || !body.tipoArma) {
@@ -219,6 +234,14 @@ router.post(
       if (body.tipoArma === "Arrastre" && turretRenderType === "flame_spritesheet" && !files.turretIdleSpritesheetPng?.length) {
         return res.status(400).json({ error: "Debes subir un PNG spritesheet para el Idle Flame de la torre." });
       }
+      const requiredSheet = (enabled, field, label) => {
+        if (enabled && !files[field]?.length) invalidSpritesheet(`Debes subir un PNG spritesheet para ${label}.`);
+      };
+      requiredSheet(body.tipoArma === "Trampa" && mineRenderType === "flame_spritesheet", "mineSpritesheetPng", "la mina");
+      requiredSheet(body.tipoArma === "Trampa" && mineExplosionRenderType === "flame_spritesheet", "mineExplosionSpritesheetPng", "la explosiÃ³n de mina");
+      requiredSheet(body.tipoArma === "Invocacion" && airstrikePlaneRenderType === "flame_spritesheet", "airstrikePlaneSpritesheetPng", "el aviÃ³n");
+      requiredSheet(body.tipoArma === "Invocacion" && airstrikeBombRenderType === "flame_spritesheet", "airstrikeBombSpritesheetPng", "la bomba");
+      requiredSheet(body.tipoArma === "Invocacion" && airstrikeExplosionRenderType === "flame_spritesheet", "airstrikeExplosionSpritesheetPng", "la explosiÃ³n del ataque aÃ©reo");
       if (body.tipoArma === "Arrastre" &&
           (toInt(body.alcance, 0) <= 0 || toInt(body.dano, 0) <= 0)) {
         return res.status(400).json({
@@ -262,6 +285,11 @@ router.post(
       const explosionSheetFile = files.explosionSpritesheetPng?.[0];
       const turretIdleSheetFile = files.turretIdleSpritesheetPng?.[0];
       const turretDeathSheetFile = files.turretDeathSpritesheetPng?.[0];
+      const mineSheetFile = files.mineSpritesheetPng?.[0];
+      const mineExplosionSheetFile = files.mineExplosionSpritesheetPng?.[0];
+      const airstrikePlaneSheetFile = files.airstrikePlaneSpritesheetPng?.[0];
+      const airstrikeBombSheetFile = files.airstrikeBombSpritesheetPng?.[0];
+      const airstrikeExplosionSheetFile = files.airstrikeExplosionSpritesheetPng?.[0];
       const projectileSpritesheet = projectileRenderType === "flame_spritesheet"
         ? parseSpritesheetConfig(body.projectileSpritesheetConfig, "proyectil", normalizarRuta(projectileSheetFile), projectileSheetFile)
         : undefined;
@@ -274,6 +302,16 @@ router.post(
       const turretDeathSpritesheet = turretRenderType === "flame_spritesheet" && turretDeathSheetFile
         ? parseSpritesheetConfig(body.turretDeathSpritesheetConfig, "Death de torre", normalizarRuta(turretDeathSheetFile), turretDeathSheetFile, null, false)
         : undefined;
+      const mineSpritesheet = mineRenderType === "flame_spritesheet"
+        ? parseSpritesheetConfig(body.mineSpritesheetConfig, "mina", normalizarRuta(mineSheetFile), mineSheetFile, null, true) : undefined;
+      const mineExplosionSpritesheet = mineExplosionRenderType === "flame_spritesheet"
+        ? parseSpritesheetConfig(body.mineExplosionSpritesheetConfig, "explosiÃ³n de mina", normalizarRuta(mineExplosionSheetFile), mineExplosionSheetFile, null, false) : undefined;
+      const airstrikePlaneSpritesheet = airstrikePlaneRenderType === "flame_spritesheet"
+        ? parseSpritesheetConfig(body.airstrikePlaneSpritesheetConfig, "aviÃ³n", normalizarRuta(airstrikePlaneSheetFile), airstrikePlaneSheetFile, null, true) : undefined;
+      const airstrikeBombSpritesheet = airstrikeBombRenderType === "flame_spritesheet"
+        ? parseSpritesheetConfig(body.airstrikeBombSpritesheetConfig, "bomba", normalizarRuta(airstrikeBombSheetFile), airstrikeBombSheetFile, null, true) : undefined;
+      const airstrikeExplosionSpritesheet = airstrikeExplosionRenderType === "flame_spritesheet"
+        ? parseSpritesheetConfig(body.airstrikeExplosionSpritesheetConfig, "explosiÃ³n de ataque aÃ©reo", normalizarRuta(airstrikeExplosionSheetFile), airstrikeExplosionSheetFile, null, false) : undefined;
       const imgsDisparo = [];
       if (files.imagenesDisparo) imgsDisparo.push(...files.imagenesDisparo.map(normalizarRuta));
       if (files.imagenesBala)     imgsDisparo.push(...files.imagenesBala.map(normalizarRuta));
@@ -319,6 +357,16 @@ router.post(
         turretRenderType,
         turretIdleSpritesheet,
         turretDeathSpritesheet,
+        mineRenderType,
+        mineSpritesheet,
+        mineExplosionRenderType,
+        mineExplosionSpritesheet,
+        airstrikePlaneRenderType,
+        airstrikePlaneSpritesheet,
+        airstrikeBombRenderType,
+        airstrikeBombSpritesheet,
+        airstrikeExplosionRenderType,
+        airstrikeExplosionSpritesheet,
 
         // Específicos
         vida: toInt(body.vida, 0),
@@ -378,6 +426,11 @@ router.put(
     { name: "explosionSpritesheetPng", maxCount: 1 },
     { name: "turretIdleSpritesheetPng", maxCount: 1 },
     { name: "turretDeathSpritesheetPng", maxCount: 1 },
+    { name: "mineSpritesheetPng", maxCount: 1 },
+    { name: "mineExplosionSpritesheetPng", maxCount: 1 },
+    { name: "airstrikePlaneSpritesheetPng", maxCount: 1 },
+    { name: "airstrikeBombSpritesheetPng", maxCount: 1 },
+    { name: "airstrikeExplosionSpritesheetPng", maxCount: 1 },
     { name: "imagenesExtras", maxCount: 5 },
     { name: "imagenesMovimiento", maxCount: 4 },
     { name: "imagenesDisparo", maxCount: 4 },
@@ -459,10 +512,20 @@ router.put(
       const projectileRenderType = normalizedRenderType(body.projectileRenderType || card.projectileRenderType);
       const explosionRenderType = normalizedRenderType(body.explosionRenderType || card.explosionRenderType);
       const turretRenderType = normalizedRenderType(body.turretRenderType || card.turretRenderType);
+      const mineRenderType = normalizedRenderType(body.mineRenderType || card.mineRenderType);
+      const mineExplosionRenderType = normalizedRenderType(body.mineExplosionRenderType || card.mineExplosionRenderType);
+      const airstrikePlaneRenderType = normalizedRenderType(body.airstrikePlaneRenderType || card.airstrikePlaneRenderType);
+      const airstrikeBombRenderType = normalizedRenderType(body.airstrikeBombRenderType || card.airstrikeBombRenderType);
+      const airstrikeExplosionRenderType = normalizedRenderType(body.airstrikeExplosionRenderType || card.airstrikeExplosionRenderType);
       const projectileSheetFile = files.projectileSpritesheetPng?.[0];
       const explosionSheetFile = files.explosionSpritesheetPng?.[0];
       const turretIdleSheetFile = files.turretIdleSpritesheetPng?.[0];
       const turretDeathSheetFile = files.turretDeathSpritesheetPng?.[0];
+      const mineSheetFile = files.mineSpritesheetPng?.[0];
+      const mineExplosionSheetFile = files.mineExplosionSpritesheetPng?.[0];
+      const airstrikePlaneSheetFile = files.airstrikePlaneSpritesheetPng?.[0];
+      const airstrikeBombSheetFile = files.airstrikeBombSpritesheetPng?.[0];
+      const airstrikeExplosionSheetFile = files.airstrikeExplosionSpritesheetPng?.[0];
       const projectileSpritesheet = projectileRenderType === "flame_spritesheet"
         ? parseSpritesheetConfig(body.projectileSpritesheetConfig, "proyectil", normalizarRuta(projectileSheetFile) || card.projectileSpritesheet?.url, projectileSheetFile, card.projectileSpritesheet)
         : card.projectileSpritesheet;
@@ -476,6 +539,14 @@ router.put(
       const turretDeathSpritesheet = turretRenderType === "flame_spritesheet" && hasTurretDeath
         ? parseSpritesheetConfig(body.turretDeathSpritesheetConfig, "Death de torre", normalizarRuta(turretDeathSheetFile) || card.turretDeathSpritesheet?.url, turretDeathSheetFile, card.turretDeathSpritesheet, false)
         : card.turretDeathSpritesheet;
+      const updateSheet = (renderType, raw, label, file, previous, loop) => renderType === "flame_spritesheet"
+        ? parseSpritesheetConfig(raw, label, normalizarRuta(file) || previous?.url, file, previous, loop)
+        : previous;
+      const mineSpritesheet = updateSheet(mineRenderType, body.mineSpritesheetConfig, "mina", mineSheetFile, card.mineSpritesheet, true);
+      const mineExplosionSpritesheet = updateSheet(mineExplosionRenderType, body.mineExplosionSpritesheetConfig, "explosiÃ³n de mina", mineExplosionSheetFile, card.mineExplosionSpritesheet, false);
+      const airstrikePlaneSpritesheet = updateSheet(airstrikePlaneRenderType, body.airstrikePlaneSpritesheetConfig, "aviÃ³n", airstrikePlaneSheetFile, card.airstrikePlaneSpritesheet, true);
+      const airstrikeBombSpritesheet = updateSheet(airstrikeBombRenderType, body.airstrikeBombSpritesheetConfig, "bomba", airstrikeBombSheetFile, card.airstrikeBombSpritesheet, true);
+      const airstrikeExplosionSpritesheet = updateSheet(airstrikeExplosionRenderType, body.airstrikeExplosionSpritesheetConfig, "explosiÃ³n de ataque aÃ©reo", airstrikeExplosionSheetFile, card.airstrikeExplosionSpritesheet, false);
       Object.assign(card, {
         titulo: body.titulo,
         descripcion: body.descripcion || "",
@@ -513,7 +584,17 @@ router.put(
         explosionSpritesheet,
         turretRenderType,
         turretIdleSpritesheet,
-        turretDeathSpritesheet
+        turretDeathSpritesheet,
+        mineRenderType,
+        mineSpritesheet,
+        mineExplosionRenderType,
+        mineExplosionSpritesheet,
+        airstrikePlaneRenderType,
+        airstrikePlaneSpritesheet,
+        airstrikeBombRenderType,
+        airstrikeBombSpritesheet,
+        airstrikeExplosionRenderType,
+        airstrikeExplosionSpritesheet
       });
 
       if (files.imagenPortada?.length) {

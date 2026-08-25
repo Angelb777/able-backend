@@ -64,6 +64,18 @@ const CardSchema = new mongoose.Schema({
   usoUnico: { type: Boolean, default: true },
   imagenesActivacion: [String], // al explotar o activarse
   imagenesExplosionTrampa: [String],
+  mineRenderType: {
+    type: String,
+    enum: ["classic", "flame_spritesheet"],
+    default: "classic"
+  },
+  mineSpritesheet: cardSpritesheetSchema,
+  mineExplosionRenderType: {
+    type: String,
+    enum: ["classic", "flame_spritesheet"],
+    default: "classic"
+  },
+  mineExplosionSpritesheet: cardSpritesheetSchema,
 
   // ===== Invocacion =====
   // (duracion se usa también aquí; queda definido arriba como común)
@@ -73,6 +85,24 @@ const CardSchema = new mongoose.Schema({
   imagenesAvion: [String],
   imagenesBomba: [String],
   imagenesExplosionInvocacion: [String],
+  airstrikePlaneRenderType: {
+    type: String,
+    enum: ["classic", "flame_spritesheet"],
+    default: "classic"
+  },
+  airstrikePlaneSpritesheet: cardSpritesheetSchema,
+  airstrikeBombRenderType: {
+    type: String,
+    enum: ["classic", "flame_spritesheet"],
+    default: "classic"
+  },
+  airstrikeBombSpritesheet: cardSpritesheetSchema,
+  airstrikeExplosionRenderType: {
+    type: String,
+    enum: ["classic", "flame_spritesheet"],
+    default: "classic"
+  },
+  airstrikeExplosionSpritesheet: cardSpritesheetSchema,
   radioExplosion: { type: Number, default: 1 },
   tiempoHastaAtaque: { type: Number, default: 0 },
 

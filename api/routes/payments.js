@@ -2,24 +2,37 @@ const express = require("express");
 const router = express.Router();
 const Payment = require("../models/Payment");
 const User = require("../models/User");
+const mongoose = require("mongoose");
+const {
+  verifyToken,
+  checkRole,
+  requireSelfOrAdmin,
+} = require('../middlewares/authMiddleware');
 
-// Crear pago
-router.post("/", async (req, res) => {
+const adminOnly = [verifyToken, checkRole(['admin'])];
+
+// Crear un registro monetario manual. Solo Superadmin puede certificarlo.
+router.post("/", ...adminOnly, async (req, res) => {
   const { userId, cantidad } = req.body;
+  const amount = Number(cantidad);
 
-  if (!userId || !cantidad) {
-    return res.status(400).json({ error: "Faltan datos requeridos" });
+  if (!mongoose.Types.ObjectId.isValid(userId) || !Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: "El usuario y un importe positivo son obligatorios" });
   }
 
   try {
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
 
+    const now = new Date();
     const pago = new Payment({
       userId,
-      nombre: user.nombre,
-      cantidad,
-      fecha: new Date(), // ⬅️ esto asegura que se guarde bien
+      nombre: user.nombre || user.nickname || user.email || 'Usuario',
+      cantidad: amount,
+      fecha: now,
+      verified: true,
+      verifiedAt: now,
+      source: 'admin_manual',
     });
 
     await pago.save();
@@ -31,7 +44,7 @@ router.post("/", async (req, res) => {
 });
 
 // Obtener pagos
-router.get("/", async (req, res) => {
+router.get("/", ...adminOnly, async (req, res) => {
   try {
     const pagos = await Payment.find().sort({ fecha: -1 }); // ⬅️ usamos "fecha"
     res.json(pagos);
@@ -42,9 +55,7 @@ router.get("/", async (req, res) => {
 });
 
 // Obtener pagos por userId (para cliente)
-const mongoose = require("mongoose");
-
-router.get("/:userId", async (req, res) => {
+router.get("/:userId", verifyToken, requireSelfOrAdmin('userId'), async (req, res) => {
   const { userId } = req.params;
 
   if (!mongoose.Types.ObjectId.isValid(userId)) {

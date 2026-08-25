@@ -619,9 +619,66 @@ window.fetch = (input, init = {}) => {
   return nativeFetch(input, { ...init, headers, credentials: 'same-origin' });
 };
 
+let ultimoDiaActividadEnviado = '';
+async function registrarActividadDiaria() {
+  if (!['cliente', 'user'].includes(String(role || '').toLowerCase())) return;
+  const day = new Date().toISOString().slice(0, 10);
+  if (ultimoDiaActividadEnviado === day) return;
+  try {
+    const response = await fetch('/api/activity', { method: 'POST' });
+    if (response.ok) ultimoDiaActividadEnviado = day;
+  } catch (error) {
+    console.warn('No se pudo registrar la actividad diaria:', error);
+  }
+}
 
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') void registrarActividadDiaria();
+});
+
+
+
+function installSimpleSpriteEditor(kind) {
+  const container = document.getElementById(`${kind}FlameFields`);
+  if (!container || container.dataset.ready) return;
+  container.dataset.ready = "true";
+  container.innerHTML = `
+    <input type="file" id="${kind}SpritesheetPng" name="${kind}SpritesheetPng" accept="image/png">
+    <img id="${kind}SpritesheetPreview" style="display:none;max-width:320px;max-height:180px;margin:8px 0">
+    <label>Columnas <input type="number" min="1" value="1" data-sheet="${kind}" data-key="columns"></label>
+    <label>Filas <input type="number" min="1" value="1" data-sheet="${kind}" data-key="rows"></label>
+    <label>Frames <input type="number" min="1" value="1" data-sheet="${kind}" data-key="frames"></label>
+    <label>FPS <input type="number" min="0.01" step="0.01" value="12" data-sheet="${kind}" data-key="fps"></label>
+    <label><input type="checkbox" checked data-sheet="${kind}" data-key="loop"> Bucle</label>
+    <label><input type="checkbox" data-sheet="${kind}" data-key="multipleOrientations"> Orientaciones</label>
+    <select data-sheet="${kind}" data-key="readOrder"><option value="row-major">Por filas</option><option value="column-major">Por columnas</option><option value="row-major-reverse">Por filas, inverso</option></select>
+    <input type="text" placeholder='Orientaciones ["north","east"]' data-sheet="${kind}" data-key="orientationRows">
+    <input type="text" placeholder="Orden de frames [0,1,2]" data-sheet="${kind}" data-key="frameOrder">`;
+  const file = document.getElementById(`${kind}SpritesheetPng`);
+  const preview = document.getElementById(`${kind}SpritesheetPreview`);
+  file?.addEventListener("change", () => {
+    const selected = file.files?.[0];
+    preview.style.display = selected ? "block" : "none";
+    if (selected) preview.src = URL.createObjectURL(selected);
+  });
+}
+
+function simpleSpriteConfig(root, kind) {
+  const get = (key) => root.querySelector(`[data-sheet="${kind}"][data-key="${key}"]`);
+  const columns = Number(get("columns")?.value), rows = Number(get("rows")?.value);
+  const frames = Number(get("frames")?.value), fps = Number(get("fps")?.value);
+  if (![columns, rows, frames].every(Number.isInteger) || columns < 1 || rows < 1 || frames < 1 || !(fps > 0)) {
+    throw new Error(`Completa columnas, filas, frames y FPS para ${kind}.`);
+  }
+  const array = (value) => value?.trim() ? JSON.parse(value) : [];
+  return { columns, rows, frames, fps, frameTime: 1 / fps,
+    loop: Boolean(get("loop")?.checked), multipleOrientations: Boolean(get("multipleOrientations")?.checked),
+    readOrder: get("readOrder")?.value || "row-major",
+    orientationRows: array(get("orientationRows")?.value), frameOrder: array(get("frameOrder")?.value) };
+}
 
 document.addEventListener("DOMContentLoaded", async () => {
+  ["ufo", "bullet"].forEach(installSimpleSpriteEditor);
   bindGameManagementActions();
   try {
     const sessionResponse = await fetch('/api/auth/me');
@@ -642,6 +699,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   userId = user.id;
   // El backend obtiene este rol de MongoDB; la cache del navegador no decide permisos.
   role = String(user.role || "").toLowerCase();
+  void registrarActividadDiaria();
 
   try {
     const res = await fetch(`/api/users/${userId}`);
@@ -883,51 +941,105 @@ async function renderDatos() {
       <button onclick="descargarExcel('monthly')">⬇️ Excel mensual</button>
       <button onclick="descargarExcel('yearly')">⬇️ Excel anual</button>
     </div>
+    <div id="metricasResumen"></div>
     <div id="metricasTabla"></div>
   `;
 
-  renderTablaMetricas("monthly");
+  await Promise.all([renderResumenMetricas(), renderTablaMetricas("monthly")]);
+}
+
+function valorMetrica(value, decimals = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return number.toLocaleString("es-ES", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+async function renderResumenMetricas() {
+  const contenedor = document.getElementById("metricasResumen");
+  if (!contenedor) return;
+  try {
+    const res = await fetch("/api/metrics/summary");
+    const resumen = await res.json();
+    if (!res.ok) throw new Error(resumen.error || "No se pudo cargar el resumen");
+    const tarjetas = [
+      ["Usuarios registrados", valorMetrica(resumen.registeredUsers)],
+      ["Activos últimos 7 días", valorMetrica(resumen.activeUsers)],
+      ["Recurrentes últimos 7 días", valorMetrica(resumen.recurrentUsers)],
+      ["% de recurrencia", `${valorMetrica(resumen.recurrencePercent, 1)} %`],
+      ["Usuarios que han pagado", valorMetrica(resumen.payingUsers)],
+      ["Facturación total", `${valorMetrica(resumen.totalRevenue, 2)} €`],
+    ];
+    contenedor.innerHTML = `
+      <h3>Resumen global</h3>
+      <div class="metrics-summary">
+        ${tarjetas.map(([label, value]) => `
+          <div class="metrics-summary-card">
+            <span>${label}</span>
+            <strong>${value}</strong>
+          </div>
+        `).join("")}
+      </div>
+      <p class="metrics-note">Pagadores y facturación incluyen únicamente pagos monetarios verificados.</p>
+    `;
+  } catch (error) {
+    console.error("Error al cargar el resumen de métricas:", error);
+    contenedor.innerHTML = `<p>No se pudo cargar el resumen global.</p>`;
+  }
 }
 
 async function renderTablaMetricas(tipo) {
-  const res = await fetch(`/api/metrics?type=${tipo}`);
-  const metricas = await res.json();
   const contenedor = document.getElementById("metricasTabla");
+  try {
+    const res = await fetch(`/api/metrics?type=${tipo}`);
+    const metricas = await res.json();
+    if (!res.ok) throw new Error(metricas.error || "No se pudieron cargar las métricas");
 
-  if (!metricas.length) {
-    contenedor.innerHTML = `<p>No hay métricas registradas aún.</p>`;
-    return;
-  }
+    if (!metricas.length) {
+      contenedor.innerHTML = `<p>No hay métricas registradas aún.</p>`;
+      return;
+    }
 
-  contenedor.innerHTML = `
-    <h3>${tipo === 'monthly' ? 'Métricas Mensuales' : 'Métricas Anuales'}</h3>
-    <table>
+    contenedor.innerHTML = `
+    <h3>${tipo === 'monthly' ? 'Métricas mensuales' : 'Métricas anuales'}</h3>
+    <div class="metrics-table-wrap"><table>
       <thead>
         <tr>
           <th>Periodo</th>
           <th>Usuarios totales</th>
           <th>Usuarios nuevos</th>
+          <th>Usuarios activos</th>
+          <th>Usuarios recurrentes</th>
           <th>Usuarios que han pagado</th>
           <th>% que han pagado</th>
           <th>Facturación total (€)</th>
-          <th>Ticket medio (€)</th>
+          <th>Ticket medio por pago (€)</th>
         </tr>
       </thead>
       <tbody>
         ${metricas.map(m => `
           <tr>
             <td>${commercialEscape(m.period)}</td>
-            <td>${m.values.totalUsers}</td>
-            <td>${m.values.newUsers}</td>
-            <td>${m.values.payingUsers}</td>
-            <td>${m.values.payingUsersPercent}%</td>
-            <td>${m.values.totalRevenue.toFixed(2)}</td>
-            <td>${m.values.avgTicket.toFixed(2)}</td>
+            <td>${valorMetrica(m.values.totalUsers)}</td>
+            <td>${valorMetrica(m.values.newUsers)}</td>
+            <td>${valorMetrica(m.values.activeUsers)}</td>
+            <td>${valorMetrica(m.values.recurrentUsers)}</td>
+            <td>${valorMetrica(m.values.payingUsers)}</td>
+            <td>${valorMetrica(m.values.payingUsersPercent, 1)} %</td>
+            <td>${valorMetrica(m.values.totalRevenue, 2)}</td>
+            <td>${valorMetrica(m.values.avgTicket, 2)}</td>
           </tr>
         `).join("")}
       </tbody>
-    </table>
+    </table></div>
+    <p class="metrics-note">Recurrente: actividad en al menos 2 días diferentes del periodo. Los importes nuevos incluyen únicamente pagos verificados; el ticket medio es la facturación dividida entre esos pagos. Las filas anteriores al despliegue se conservan con su cálculo histórico.</p>
   `;
+  } catch (error) {
+    console.error("Error al cargar las métricas:", error);
+    contenedor.innerHTML = `<p>No se pudieron cargar las métricas.</p>`;
+  }
 }
 
 async function generarMetricas() {
@@ -936,7 +1048,7 @@ async function generarMetricas() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Error del servidor");
     alert(data.message || "✅ Métricas generadas correctamente");
-    renderTablaMetricas("monthly"); // recarga vista mensual
+    await Promise.all([renderResumenMetricas(), renderTablaMetricas("monthly")]);
   } catch (err) {
     alert("❌ Error al generar métricas");
     console.error(err);
@@ -2039,6 +2151,10 @@ function cancelarEdicionUfo() {
   form.reset();
   form.querySelector('[name="imagenOvni"]').required = true;
   form.querySelector('[name="imagenBala"]').required = true;
+  ["ufo", "bullet"].forEach((kind) => {
+    const mode = document.getElementById(`${kind}RenderType`);
+    if (mode) { mode.value = "classic"; mode.dispatchEvent(new Event("change")); }
+  });
 
   const submit = document.getElementById("submitUfo");
   const cancelar = document.getElementById("cancelarEdicionUfo");
@@ -2076,6 +2192,19 @@ function editarUfo(id) {
 
   form.querySelector('[name="imagenOvni"]').required = false;
   form.querySelector('[name="imagenBala"]').required = false;
+  ["ufo", "bullet"].forEach((kind) => {
+    const mode = document.getElementById(`${kind}RenderType`);
+    const config = ufo[`${kind}Spritesheet`] || {};
+    if (mode) { mode.value = ufo[`${kind}RenderType`] || "classic"; mode.dispatchEvent(new Event("change")); }
+    Object.entries(config).forEach(([key, value]) => {
+      const input = form.querySelector(`[data-sheet="${kind}"][data-key="${key}"]`);
+      if (!input) return;
+      if (input.type === "checkbox") input.checked = Boolean(value);
+      else input.value = Array.isArray(value) ? JSON.stringify(value) : (value ?? "");
+    });
+    const preview = document.getElementById(`${kind}SpritesheetPreview`);
+    if (preview && config.url) { preview.src = config.url; preview.style.display = "block"; }
+  });
 
   const submit = document.getElementById("submitUfo");
   const cancelar = document.getElementById("cancelarEdicionUfo");
@@ -2562,6 +2691,21 @@ async function renderGestionJuego() {
   // 🛸 FORMULARIO CREAR OVNI
   const formUfo = document.getElementById("crearUfoForm");
   if (formUfo && !formUfo.dataset.listenerAdded) {
+    const ufoClassicInputs = { ufo: "imagenOvni", bullet: "imagenBala" };
+    const toggleUfoRender = (kind) => {
+      const animated = document.getElementById(`${kind}RenderType`)?.value === "flame_spritesheet";
+      const classic = document.getElementById(ufoClassicInputs[kind]);
+      const flame = document.getElementById(`${kind}FlameFields`);
+      if (classic) { classic.disabled = animated; classic.required = !animated && !ufoEditandoId; }
+      if (flame) {
+        flame.style.display = animated ? "block" : "none";
+        flame.querySelectorAll("input,select").forEach((el) => { el.disabled = !animated; });
+      }
+    };
+    ["ufo", "bullet"].forEach((kind) => {
+      document.getElementById(`${kind}RenderType`)?.addEventListener("change", () => toggleUfoRender(kind));
+      toggleUfoRender(kind);
+    });
     const cancelarUfo = document.getElementById("cancelarEdicionUfo");
     cancelarUfo?.addEventListener("click", cancelarEdicionUfo);
 
@@ -2574,16 +2718,21 @@ async function renderGestionJuego() {
       // Validaciones mínimas de archivos
       const imagenOvni = formData.get("imagenOvni");
       const imagenBala = formData.get("imagenBala");
-      if (!esEdicion && (!imagenOvni || !imagenOvni.name || imagenOvni.size === 0)) {
+      if (!esEdicion && formData.get("ufoRenderType") !== "flame_spritesheet" && (!imagenOvni || !imagenOvni.name || imagenOvni.size === 0)) {
         alert("⚠️ Selecciona una imagen válida para el OVNI");
         return;
       }
-      if (!esEdicion && (!imagenBala || !imagenBala.name || imagenBala.size === 0)) {
+      if (!esEdicion && formData.get("bulletRenderType") !== "flame_spritesheet" && (!imagenBala || !imagenBala.name || imagenBala.size === 0)) {
         alert("⚠️ Selecciona una imagen válida para la bala");
         return;
       }
 
       try {
+        ["ufo", "bullet"].forEach((kind) => {
+          if (formData.get(`${kind}RenderType`) === "flame_spritesheet") {
+            formData.set(`${kind}SpritesheetConfig`, JSON.stringify(simpleSpriteConfig(formUfo, kind)));
+          }
+        });
         const res = await fetch(esEdicion ? `/api/ufo/${ufoEditandoId}` : "/api/ufo", {
           method: esEdicion ? "PUT" : "POST",
           body: formData
@@ -4504,6 +4653,8 @@ async function renderMisSkinsCliente() {
 }
 
 document.addEventListener("DOMContentLoaded", function () {
+  const extendedCardSpriteKinds = ["mine", "mineExplosion", "airstrikePlane", "airstrikeBomb", "airstrikeExplosion"];
+  extendedCardSpriteKinds.forEach(installSimpleSpriteEditor);
   const tipoSelect = document.getElementById("tipoArmaSelect");
   const seccionComun = document.getElementById("comunCarta");
 
@@ -4554,17 +4705,21 @@ document.addEventListener("DOMContentLoaded", function () {
     const mode = document.getElementById(`${kind}RenderType`)?.value || "classic";
     const classic = document.getElementById(`${kind}ClassicFields`);
     const flame = document.getElementById(`${kind}FlameFields`);
-    if (!classic || !flame) return;
+    if (!flame) return;
     const animated = mode === "flame_spritesheet";
-    classic.style.display = animated ? "none" : "block";
+    if (classic) classic.style.display = animated ? "none" : "block";
     flame.style.display = animated ? "block" : "none";
-    classic.querySelectorAll("input,select,textarea").forEach(el => { el.disabled = animated; });
+    if (classic) classic.querySelectorAll("input,select,textarea").forEach(el => { el.disabled = animated; });
+    const classicInputIds = { mine: "imagenesActivacion", mineExplosion: "imagenesExplosionTrampa",
+      airstrikePlane: "imagenesAvion", airstrikeBomb: "imagenesBomba", airstrikeExplosion: "imagenesExplosionInvocacion" };
+    const classicInput = document.getElementById(classicInputIds[kind]);
+    if (classicInput) classicInput.disabled = animated;
     flame.querySelectorAll("input,select,textarea").forEach(el => { el.disabled = !animated; });
   };
 
   document.getElementById("turretRenderType")?.addEventListener("change", () => setRenderFields("turret"));
 
-  ["projectile", "explosion", "turretIdle", "turretDeath"].forEach((kind) => {
+  ["projectile", "explosion", "turretIdle", "turretDeath", ...extendedCardSpriteKinds].forEach((kind) => {
     document.getElementById(`${kind}RenderType`)?.addEventListener("change", () => setRenderFields(kind));
     const file = document.getElementById(`${kind}SpritesheetPng`);
     const preview = document.getElementById(`${kind}SpritesheetPreview`);
@@ -4629,6 +4784,10 @@ document.addEventListener("DOMContentLoaded", function () {
           setRenderFields("explosion");
         } else if (key === "Arrastre") {
           setRenderFields("turret");
+        } else if (key === "Trampa") {
+          setRenderFields("mine"); setRenderFields("mineExplosion");
+        } else if (key === "Invocacion") {
+          setRenderFields("airstrikePlane"); setRenderFields("airstrikeBomb"); setRenderFields("airstrikeExplosion");
         }
       } else {
         seccion.style.display = "none";
@@ -4728,7 +4887,7 @@ document.addEventListener("DOMContentLoaded", function () {
     form.querySelectorAll('div[id^="preview"]').forEach((div) => {
       div.innerHTML = "";
     });
-    ["projectile", "explosion", "turretIdle", "turretDeath"].forEach((kind) => {
+    ["projectile", "explosion", "turretIdle", "turretDeath", ...extendedCardSpriteKinds].forEach((kind) => {
       const preview = document.getElementById(`${kind}SpritesheetPreview`);
       if (preview) {
         preview.removeAttribute("src");
@@ -4824,6 +4983,21 @@ document.addEventListener("DOMContentLoaded", function () {
       });
       setRenderFields("turret");
     }
+    extendedCardSpriteKinds.forEach((kind) => {
+      const modeInput = document.getElementById(`${kind}RenderType`);
+      const mode = carta[`${kind}RenderType`] || "classic";
+      const config = carta[`${kind}Spritesheet`] || {};
+      if (modeInput) modeInput.value = mode;
+      Object.entries(config).forEach(([key, value]) => {
+        const input = form.querySelector(`[data-sheet="${kind}"][data-key="${key}"]`);
+        if (!input) return;
+        if (input.type === "checkbox") input.checked = Boolean(value);
+        else input.value = Array.isArray(value) ? JSON.stringify(value) : (value ?? "");
+      });
+      const preview = document.getElementById(`${kind}SpritesheetPreview`);
+      if (preview && config.url) { preview.src = config.url; preview.style.display = "block"; }
+      setRenderFields(kind);
+    });
 
     form.querySelector('[name="imagenPortada"]').required = false;
 
@@ -4864,6 +5038,11 @@ document.addEventListener("DOMContentLoaded", function () {
         formData.set("turretIdleSpritesheetConfig", JSON.stringify(spritesheetConfig("turretIdle")));
         formData.set("turretDeathSpritesheetConfig", JSON.stringify(spritesheetConfig("turretDeath")));
       }
+      extendedCardSpriteKinds.forEach((kind) => {
+        if (document.getElementById(`${kind}RenderType`)?.value === "flame_spritesheet") {
+          formData.set(`${kind}SpritesheetConfig`, JSON.stringify(simpleSpriteConfig(form, kind)));
+        }
+      });
     } catch (configError) {
       alert(`❌ ${configError.message}`);
       return;

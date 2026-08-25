@@ -11,6 +11,7 @@ const cardsRouter = require('../api/routes/cards');
 const skinsRouter = require('../api/routes/skins');
 const ufoRouter = require('../api/routes/ufo');
 const challengesRouter = require('../api/routes/challenges');
+const paymentsRouter = require('../api/routes/payments');
 
 test('critical economy, life, deck and admin routes enforce JWT ownership', async (t) => {
   const previousSecret = process.env.JWT_SECRET;
@@ -32,6 +33,7 @@ test('critical economy, life, deck and admin routes enforce JWT ownership', asyn
   app.use('/api/skins', skinsRouter);
   app.use('/api/ufo', ufoRouter);
   app.use('/api/retos', challengesRouter);
+  app.use('/api/payments', paymentsRouter);
   const server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -85,4 +87,12 @@ test('critical economy, life, deck and admin routes enforce JWT ownership', asyn
   assert.equal((await call('/api/retos', {
     method: 'POST', body: {}, authenticated: false,
   })).status, 401);
+  assert.equal((await call('/api/payments', {
+    method: 'POST', body: { userId: ownId, cantidad: 10 }, authenticated: false,
+  })).status, 401);
+  assert.equal((await call('/api/payments', {
+    method: 'POST', body: { userId: ownId, cantidad: 10 },
+  })).status, 403);
+  assert.equal((await call('/api/payments')).status, 403);
+  assert.equal((await call('/api/payments/' + otherId)).status, 403);
 });

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const spritesheetSchema = require('./spritesheetSchema');
 
 const airstrikeSchema = new mongoose.Schema({
   ownerUserId: {
@@ -24,6 +25,12 @@ const airstrikeSchema = new mongoose.Schema({
   imagenesAvion: [String],
   imagenesBomba: [String],
   imagenesExplosion: [String],
+  planeRenderType: { type: String, enum: ['classic', 'flame_spritesheet'], default: 'classic' },
+  planeSpritesheet: spritesheetSchema,
+  bombRenderType: { type: String, enum: ['classic', 'flame_spritesheet'], default: 'classic' },
+  bombSpritesheet: spritesheetSchema,
+  explosionRenderType: { type: String, enum: ['classic', 'flame_spritesheet'], default: 'classic' },
+  explosionSpritesheet: spritesheetSchema,
 }, { timestamps: true });
 
 module.exports = mongoose.model('Airstrike', airstrikeSchema);

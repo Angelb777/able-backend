@@ -160,6 +160,10 @@ module.exports = function(io, dependencies = {}) {
     imagenMapa: mine.imagenesActivacion?.[0] || '',
     imagenesActivacion: mine.imagenesActivacion || [],
     imagenesExplosion: mine.imagenesExplosion || [],
+    renderType: mine.renderType || 'classic',
+    spritesheet: mine.spritesheet || null,
+    explosionRenderType: mine.explosionRenderType || 'classic',
+    explosionSpritesheet: mine.explosionSpritesheet || null,
     seq: Number(mine.seq) || 1,
     serverTimestamp: Date.now(),
   });
@@ -191,6 +195,12 @@ module.exports = function(io, dependencies = {}) {
       imagenesAvion: airstrike.imagenesAvion || [],
       imagenesBomba: airstrike.imagenesBomba || [],
       imagenesExplosion: airstrike.imagenesExplosion || [],
+      planeRenderType: airstrike.planeRenderType || 'classic',
+      planeSpritesheet: airstrike.planeSpritesheet || null,
+      bombRenderType: airstrike.bombRenderType || 'classic',
+      bombSpritesheet: airstrike.bombSpritesheet || null,
+      explosionRenderType: airstrike.explosionRenderType || 'classic',
+      explosionSpritesheet: airstrike.explosionSpritesheet || null,
       seq: Number(airstrike.seq) || 1,
       serverTimestamp: Date.now(),
     };
@@ -492,6 +502,8 @@ module.exports = function(io, dependencies = {}) {
       speed: projectile.speed,
       dano: projectile.dano,
       spriteUrl: projectile.spriteUrl,
+      renderType: projectile.renderType || 'classic',
+      spritesheet: projectile.spritesheet || null,
       rotationOffset: projectile.rotationOffset || 0,
       createdAt: new Date(projectile.createdAt).toISOString(),
       impactAt: new Date(projectile.impactAt).toISOString(),
@@ -864,6 +876,8 @@ module.exports = function(io, dependencies = {}) {
         speed,
         dano: Math.max(0, Number(state.ufo.danoBala) || 0),
         spriteUrl: state.ufo.imagenBala || '',
+        renderType: state.ufo.bulletRenderType || 'classic',
+        spritesheet: state.ufo.bulletSpritesheet || null,
         rotationOffset: Number(state.ufo.rotationOffset) || 0,
         createdAt: now,
         impactAt: now + Math.max(1, distance / speed * 1000),
@@ -1861,6 +1875,10 @@ module.exports = function(io, dependencies = {}) {
           imagenPortada: '',
           imagenesActivacion: card.imagenesActivacion || [],
           imagenesExplosion: card.imagenesExplosionTrampa || [],
+          renderType: card.mineRenderType || 'classic',
+          spritesheet: card.mineSpritesheet || null,
+          explosionRenderType: card.mineExplosionRenderType || 'classic',
+          explosionSpritesheet: card.mineExplosionSpritesheet || null,
         });
         const mine = mineDoc.toObject();
         mine.seq = 1;
@@ -1960,6 +1978,12 @@ module.exports = function(io, dependencies = {}) {
             ? card.imagenesBomba
             : (card.imagenPortada ? [card.imagenPortada] : []),
           imagenesExplosion: card.imagenesExplosionInvocacion || [],
+          planeRenderType: card.airstrikePlaneRenderType || 'classic',
+          planeSpritesheet: card.airstrikePlaneSpritesheet || null,
+          bombRenderType: card.airstrikeBombRenderType || 'classic',
+          bombSpritesheet: card.airstrikeBombSpritesheet || null,
+          explosionRenderType: card.airstrikeExplosionRenderType || 'classic',
+          explosionSpritesheet: card.airstrikeExplosionSpritesheet || null,
         });
         const airstrike = airstrikeDoc.toObject();
         airstrike.seq = 1;

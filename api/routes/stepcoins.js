@@ -6,6 +6,7 @@ const Card = require("../models/Card");
 const { publicNickname } = require('../utils/publicIdentity');
 const { randomInt } = require('crypto');
 const { verifyToken, requireSelfOrAdmin } = require('../middlewares/authMiddleware');
+const { findRandomUnownedCard, publicCard } = require('../services/randomCardService');
 
 const ROULETTE_OPTIONS = [
   ['Tirar otra vez', 3000], ['Nada', 2500], ['Juego de Cultura', 2200],
@@ -232,11 +233,8 @@ router.post("/ruleta", verifyToken, async (req, res) => {
 
     // Caso especial: si es Carta y NO hay cartas disponibles, no cobramos y devolvemos yaTienesTodas
     if (applied === "Carta aleatoria") {
-      const todas = await Card.find().select("_id titulo imagenPortada");
-      const tiene = new Set((user.cartas || []).map((id) => String(id)));
-      const candidatas = todas.filter((c) => !tiene.has(String(c._id)));
-
-      if (candidatas.length === 0) {
+      const randomCard = await findRandomUnownedCard(Card, user.cartas);
+      if (!randomCard) {
         await StepcoinTransaction.create({
           userId: targetUserId,
           cantidad: 0,
@@ -273,11 +271,8 @@ router.post("/ruleta", verifyToken, async (req, res) => {
         break;
 
       case "Carta aleatoria": {
-        const todas = await Card.find().select("_id titulo imagenPortada");
-        const tiene = new Set((user.cartas || []).map((id) => String(id)));
-        const candidatas = todas.filter((c) => !tiene.has(String(c._id)));
-
-        if (candidatas.length === 0) {
+        const randomCarta = await findRandomUnownedCard(Card, user.cartas);
+        if (!randomCarta) {
           // Si entre medias se quedó sin cartas, revertimos el cobro para ser amables
           user.stepcoins = saldoInicial;
           await user.save();
@@ -294,15 +289,9 @@ router.post("/ruleta", verifyToken, async (req, res) => {
           });
         }
 
-        const randomCarta = candidatas[Math.floor(Math.random() * candidatas.length)];
         user.cartas = user.cartas || [];
         user.cartas.push(randomCarta._id);
-
-        nuevaCarta = {
-          _id: String(randomCarta._id),
-          titulo: randomCarta.titulo,
-          imagenPortada: randomCarta.imagenPortada || null,
-        };
+        nuevaCarta = publicCard(randomCarta);
         break;
       }
 

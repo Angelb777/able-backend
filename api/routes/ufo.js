@@ -8,11 +8,40 @@ const adminOnly = [verifyToken, checkRole(['admin'])];
 // Estado aislado del minijuego web legacy. Nunca modifica la configuración
 // usada por el runtime multijugador de sockets.
 const legacyUfoState = new Map();
+const SPRITESHEET_FIELDS = new Set(['ufoSpritesheetPng', 'bulletSpritesheetPng']);
+
+function renderType(value) {
+  return value === 'flame_spritesheet' ? 'flame_spritesheet' : 'classic';
+}
+
+function parseSheet(raw, label, url, file, previous, loop = true) {
+  let value;
+  try { value = raw ? JSON.parse(raw) : (previous?.toObject?.() || previous); }
+  catch (_) { throw new Error(`ConfiguraciÃ³n JSON no vÃ¡lida para ${label}`); }
+  if (!value || !url) throw new Error(`Falta el PNG o la configuraciÃ³n de ${label}`);
+  const columns = Number(value.columns), rows = Number(value.rows);
+  const frames = Number(value.frames), fps = Number(value.fps);
+  if (![columns, rows, frames].every(Number.isInteger) || columns < 1 || rows < 1 ||
+      frames < 1 || frames > columns * rows || !(fps > 0)) {
+    throw new Error(`Columnas, filas, frames y FPS son obligatorios para ${label}`);
+  }
+  let sourceWidth = previous?.sourceWidth, sourceHeight = previous?.sourceHeight;
+  if (file?.buffer?.subarray(0, 8).toString('hex') === '89504e470d0a1a0a') {
+    sourceWidth = file.buffer.readUInt32BE(16); sourceHeight = file.buffer.readUInt32BE(20);
+  }
+  return { ...value, url, columns, rows, frames, fps, frameTime: 1 / fps,
+    sourceWidth, sourceHeight, frameWidth: sourceWidth ? sourceWidth / columns : undefined,
+    frameHeight: sourceHeight ? sourceHeight / rows : undefined,
+    loop: value.loop === undefined ? loop : Boolean(value.loop) };
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
+    if (SPRITESHEET_FIELDS.has(file.fieldname) && file.mimetype !== 'image/png') {
+      return cb(new Error('Los spritesheets del OVNI deben ser PNG'));
+    }
     if (!file.mimetype?.startsWith('image/')) {
       return cb(new Error('El archivo del OVNI debe ser una imagen'));
     }
@@ -23,11 +52,15 @@ const upload = multer({
 // ✅ Crear OVNI
 router.post('/', ...adminOnly, upload.fields([
   { name: 'imagenOvni', maxCount: 1 },
-  { name: 'imagenBala', maxCount: 1 }
+  { name: 'imagenBala', maxCount: 1 },
+  { name: 'ufoSpritesheetPng', maxCount: 1 },
+  { name: 'bulletSpritesheetPng', maxCount: 1 }
 ]), async (req, res) => {
   try {
     const imagenOvniFile = req.files?.imagenOvni?.[0];
     const imagenBalaFile = req.files?.imagenBala?.[0];
+    const ufoSheetFile = req.files?.ufoSpritesheetPng?.[0];
+    const bulletSheetFile = req.files?.bulletSpritesheetPng?.[0];
 
     const {
       nombre,
@@ -45,20 +78,38 @@ router.post('/', ...adminOnly, upload.fields([
         duracionPantalla === undefined) {
       return res.status(400).json({ error: "Faltan datos requeridos" });
     }
-    if (!imagenOvniFile) {
+    const ufoRenderType = renderType(req.body.ufoRenderType);
+    const bulletRenderType = renderType(req.body.bulletRenderType);
+    if (ufoRenderType === 'classic' && !imagenOvniFile) {
       return res.status(400).json({ error: "La imagen del OVNI es requerida" });
     }
+    if (ufoRenderType === 'flame_spritesheet' && !ufoSheetFile) {
+      return res.status(400).json({ error: 'El spritesheet PNG del OVNI es requerido' });
+    }
+    if (bulletRenderType === 'flame_spritesheet' && !bulletSheetFile) {
+      return res.status(400).json({ error: 'El spritesheet PNG de la bala es requerido' });
+    }
 
-    const [imagenOvni, imagenBala] = await Promise.all([
-      saveImage(imagenOvniFile, 'ufo'),
-      imagenBalaFile ? saveImage(imagenBalaFile, 'ufo') : Promise.resolve('')
+    const [imagenOvni, imagenBala, ufoSheetUrl, bulletSheetUrl] = await Promise.all([
+      imagenOvniFile ? saveImage(imagenOvniFile, 'ufo') : Promise.resolve(''),
+      imagenBalaFile ? saveImage(imagenBalaFile, 'ufo') : Promise.resolve(''),
+      ufoSheetFile ? saveImage(ufoSheetFile, 'ufo') : Promise.resolve(''),
+      bulletSheetFile ? saveImage(bulletSheetFile, 'ufo') : Promise.resolve('')
     ]);
+    const ufoSpritesheet = ufoRenderType === 'flame_spritesheet'
+      ? parseSheet(req.body.ufoSpritesheetConfig, 'OVNI', ufoSheetUrl, ufoSheetFile, null, true) : undefined;
+    const bulletSpritesheet = bulletRenderType === 'flame_spritesheet'
+      ? parseSheet(req.body.bulletSpritesheetConfig, 'bala de OVNI', bulletSheetUrl, bulletSheetFile, null, true) : undefined;
 
     const nuevoUfo = new Ufo({
       nombre,
       imagenOvni,
+      ufoRenderType,
+      ufoSpritesheet,
       vida,
       imagenBala,
+      bulletRenderType,
+      bulletSpritesheet,
       velocidadBala,
       velocidadMovimiento,
       tiempoAparicion,
@@ -83,7 +134,9 @@ router.post('/', ...adminOnly, upload.fields([
 // ✏️ Editar OVNI. Si no se suben imágenes nuevas, conserva las actuales.
 router.put('/:id', ...adminOnly, upload.fields([
   { name: 'imagenOvni', maxCount: 1 },
-  { name: 'imagenBala', maxCount: 1 }
+  { name: 'imagenBala', maxCount: 1 },
+  { name: 'ufoSpritesheetPng', maxCount: 1 },
+  { name: 'bulletSpritesheetPng', maxCount: 1 }
 ]), async (req, res) => {
   try {
     const ovni = await Ufo.findById(req.params.id);
@@ -122,11 +175,29 @@ router.put('/:id', ...adminOnly, upload.fields([
 
     const nuevaImagenOvni = req.files?.imagenOvni?.[0];
     const nuevaImagenBala = req.files?.imagenBala?.[0];
+    const nuevoUfoSheet = req.files?.ufoSpritesheetPng?.[0];
+    const nuevaBalaSheet = req.files?.bulletSpritesheetPng?.[0];
     if (nuevaImagenOvni) {
       ovni.imagenOvni = await saveImage(nuevaImagenOvni, 'ufo');
     }
     if (nuevaImagenBala) {
       ovni.imagenBala = await saveImage(nuevaImagenBala, 'ufo');
+    }
+    ovni.ufoRenderType = renderType(req.body.ufoRenderType || ovni.ufoRenderType);
+    ovni.bulletRenderType = renderType(req.body.bulletRenderType || ovni.bulletRenderType);
+    if (nuevoUfoSheet) {
+      ovni.ufoSpritesheet = parseSheet(req.body.ufoSpritesheetConfig, 'OVNI',
+        await saveImage(nuevoUfoSheet, 'ufo'), nuevoUfoSheet, ovni.ufoSpritesheet, true);
+    } else if (ovni.ufoRenderType === 'flame_spritesheet') {
+      ovni.ufoSpritesheet = parseSheet(req.body.ufoSpritesheetConfig, 'OVNI',
+        ovni.ufoSpritesheet?.url, null, ovni.ufoSpritesheet, true);
+    }
+    if (nuevaBalaSheet) {
+      ovni.bulletSpritesheet = parseSheet(req.body.bulletSpritesheetConfig, 'bala de OVNI',
+        await saveImage(nuevaBalaSheet, 'ufo'), nuevaBalaSheet, ovni.bulletSpritesheet, true);
+    } else if (ovni.bulletRenderType === 'flame_spritesheet') {
+      ovni.bulletSpritesheet = parseSheet(req.body.bulletSpritesheetConfig, 'bala de OVNI',
+        ovni.bulletSpritesheet?.url, null, ovni.bulletSpritesheet, true);
     }
 
     await ovni.save();

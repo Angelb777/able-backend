@@ -138,6 +138,41 @@ table th {
   background-color: #f2f2f2;
 }
 
+.metrics-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin: 12px 0 24px;
+}
+
+.metrics-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 8px;
+  background: white;
+  color: #111;
+}
+
+.metrics-summary-card span {
+  color: #555;
+  font-size: 14px;
+}
+
+.metrics-summary-card strong {
+  font-size: 24px;
+}
+
+.metrics-table-wrap {
+  overflow-x: auto;
+}
+
+.metrics-note {
+  color: #ddd;
+  font-size: 13px;
+}
+
 /* === ETIQUETAS === */
 .stepcoins {
   font-size: 24px;

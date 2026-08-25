@@ -3,8 +3,15 @@ const mongoose = require("mongoose");
 const paymentSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   nombre: { type: String, required: true },
-  cantidad: { type: Number, required: true },
+  // Importe monetario del pago. El ticket medio se calcula por transaccion.
+  cantidad: { type: Number, required: true, min: 0.01 },
   fecha: { type: Date, default: Date.now }, // ⬅️ esto genera una fecha válida
+  verified: { type: Boolean, default: false },
+  verifiedAt: { type: Date },
+  source: {
+    type: String,
+    enum: ['admin_manual', 'payment_provider'],
+  },
 });
 
 module.exports = mongoose.model("Payment", paymentSchema);

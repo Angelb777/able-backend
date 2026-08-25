@@ -98,3 +98,31 @@ test('animated turret keeps Idle and Death Flame metadata with safe loop default
   assert.equal(card.turretIdleSpritesheet.frames, 8);
   assert.equal(card.turretDeathSpritesheet.readOrder, 'row-major-reverse');
 });
+
+test('mine and airstrike cards preserve every spritesheet independently', () => {
+  const sheet = (url, loop = true) => ({
+    url, columns: 4, rows: 1, frames: 4, frameTime: 0.1, fps: 10, loop,
+  });
+  const mine = new Card({
+    titulo: 'Flame mine', tipoArma: 'Trampa',
+    mineRenderType: 'flame_spritesheet',
+    mineSpritesheet: sheet('/uploads/cards/mine.png'),
+    mineExplosionRenderType: 'flame_spritesheet',
+    mineExplosionSpritesheet: sheet('/uploads/cards/mine-boom.png', false),
+  });
+  const airstrike = new Card({
+    titulo: 'Flame airstrike', tipoArma: 'Invocacion',
+    airstrikePlaneRenderType: 'flame_spritesheet',
+    airstrikePlaneSpritesheet: sheet('/uploads/cards/plane.png'),
+    airstrikeBombRenderType: 'flame_spritesheet',
+    airstrikeBombSpritesheet: sheet('/uploads/cards/bomb.png'),
+    airstrikeExplosionRenderType: 'flame_spritesheet',
+    airstrikeExplosionSpritesheet: sheet('/uploads/cards/airstrike-boom.png', false),
+  });
+
+  assert.equal(mine.validateSync(), undefined);
+  assert.equal(airstrike.validateSync(), undefined);
+  assert.equal(mine.mineExplosionSpritesheet.loop, false);
+  assert.equal(airstrike.airstrikePlaneSpritesheet.url, '/uploads/cards/plane.png');
+  assert.equal(airstrike.airstrikeExplosionSpritesheet.loop, false);
+});

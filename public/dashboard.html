@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <title>Dashboard Able 73</title>
-  <link rel="stylesheet" href="css/dashboard.css?v=reward-catalog-order-1" />
+  <link rel="stylesheet" href="css/dashboard.css?v=metrics-recurrence-1" />
     <link rel="icon" href="img/favicon.png" type="image/png">
 </head>
 <body>
@@ -633,11 +633,15 @@
   <!-- 💣 Trampa -->
   <div id="seccionTrampa" style="display:none;">
     <label>Imágenes de activación (máx 4):</label>
+    <select id="mineRenderType" name="mineRenderType"><option value="classic">ClÃ¡sico</option><option value="flame_spritesheet">Spritesheet Flame</option></select>
     <input type="file" id="imagenesActivacion" name="imagenesActivacion" accept="image/*" multiple><br>
+    <div id="mineFlameFields" style="display:none;"></div>
     <div id="previewImagenesActivacion"></div><br>
 
     <label>Imágenes de explosión (máx 4):</label>
+    <select id="mineExplosionRenderType" name="mineExplosionRenderType"><option value="classic">ClÃ¡sico</option><option value="flame_spritesheet">Spritesheet Flame</option></select>
     <input type="file" id="imagenesExplosionTrampa" name="imagenesExplosionTrampa" accept="image/*" multiple><br>
+    <div id="mineExplosionFlameFields" style="display:none;"></div>
     <div id="previewImagenesExplosionTrampa"></div><br>
 
     <label>Radio de activación (metros):</label>
@@ -663,15 +667,21 @@
     <div id="previewImagenesInvocacion"></div><br>
 
     <label>Imágenes del avión (máx 4):</label>
+    <select id="airstrikePlaneRenderType" name="airstrikePlaneRenderType"><option value="classic">ClÃ¡sico</option><option value="flame_spritesheet">Spritesheet Flame</option></select>
     <input type="file" id="imagenesAvion" name="imagenesAvion" accept="image/*" multiple><br>
+    <div id="airstrikePlaneFlameFields" style="display:none;"></div>
     <div id="previewImagenesAvion"></div><br>
 
     <label>Imágenes de la bomba (máx 4):</label>
+    <select id="airstrikeBombRenderType" name="airstrikeBombRenderType"><option value="classic">ClÃ¡sico</option><option value="flame_spritesheet">Spritesheet Flame</option></select>
     <input type="file" id="imagenesBomba" name="imagenesBomba" accept="image/*" multiple><br>
+    <div id="airstrikeBombFlameFields" style="display:none;"></div>
     <div id="previewImagenesBomba"></div><br>
 
     <label>Imágenes de la explosión (máx 4):</label>
+    <select id="airstrikeExplosionRenderType" name="airstrikeExplosionRenderType"><option value="classic">ClÃ¡sico</option><option value="flame_spritesheet">Spritesheet Flame</option></select>
     <input type="file" id="imagenesExplosionInvocacion" name="imagenesExplosionInvocacion" accept="image/*" multiple><br>
+    <div id="airstrikeExplosionFlameFields" style="display:none;"></div>
     <div id="previewImagenesExplosionInvocacion"></div><br>
 
     <label>Radio de explosión (metros):</label>
@@ -729,12 +739,16 @@
   <input type="text" name="nombre" placeholder="Nombre del OVNI" required>
 
   <label for="imagenOvni">Imagen OVNI</label>
+  <select id="ufoRenderType" name="ufoRenderType"><option value="classic">ClÃ¡sico</option><option value="flame_spritesheet">Spritesheet Flame</option></select>
   <input type="file" name="imagenOvni" id="imagenOvni" accept="image/*" required>
+  <div id="ufoFlameFields" style="display:none;"></div>
 
   <input type="number" name="vida" placeholder="Vida" required>
 
   <label for="imagenBala">Imagen Bala</label>
+  <select id="bulletRenderType" name="bulletRenderType"><option value="classic">ClÃ¡sico</option><option value="flame_spritesheet">Spritesheet Flame</option></select>
   <input type="file" name="imagenBala" id="imagenBala" accept="image/*" required>
+  <div id="bulletFlameFields" style="display:none;"></div>
 
   <input type="number" name="velocidadBala" placeholder="Velocidad bala" required>
   <input type="number" name="velocidadMovimiento" placeholder="Velocidad OVNI" required>

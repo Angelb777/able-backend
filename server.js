@@ -165,6 +165,7 @@ app.use('/api/users', require('./api/routes/users'));
 app.use('/api/user', require('./api/routes/users'));
 app.use('/api/profile', require('./api/routes/profile'));
 app.use('/api/payments', require('./api/routes/payments'));
+app.use('/api/activity', require('./api/routes/activity'));
 app.use('/api/metrics', require('./api/routes/metrics'));
 app.use('/api/rewards', require('./api/routes/rewards'));
 app.use('/api/stepcoins', require('./api/routes/stepcoins'));

@@ -7,6 +7,9 @@ const metricSchema = new mongoose.Schema({
   values: {
     totalUsers: Number,
     newUsers: Number,
+    activeUsers: Number,
+    recurrentUsers: Number,
+    calculationVersion: Number,
     payingUsers: Number,
     payingUsersPercent: Number,
     totalRevenue: Number,
@@ -14,5 +17,10 @@ const metricSchema = new mongoose.Schema({
   },
   createdAt: { type: Date, default: Date.now }
 });
+
+metricSchema.index(
+  { type: 1, period: 1 },
+  { unique: true, name: 'metric_type_period_unique' }
+);
 
 module.exports = mongoose.model("Metric", metricSchema);
