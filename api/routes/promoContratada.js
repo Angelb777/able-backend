@@ -8,6 +8,7 @@ const Establishment = require('../models/Establishment');
 const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
 const { saveImage } = require('../utils/mediaStorage');
 const { pendingStatus } = require('../services/commercialWorkflow');
+const { renewExpiredMapSubscriptions } = require('../services/mapSubscriptions');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -90,6 +91,7 @@ router.post('/', verifyToken, checkRole(['comercio']), upload.single('logo'), as
 // se conservan activos; los nuevos solo aparecen después de publicación.
 router.get('/activas', async (_req, res) => {
   try {
+    await renewExpiredMapSubscriptions();
     const now = new Date();
     const active = await PromocionComprada.find({
       activo: true,
@@ -103,6 +105,12 @@ router.get('/activas', async (_req, res) => {
       ...item, id: String(item._id), _id: item._id,
       logoComercio: item.logoComercio,
       imagenBase: item.imagenBase || '',
+      publicName: item.publicName || item.titulo || '',
+      address: item.address || '',
+      description: item.description || '',
+      proximityMessage: item.proximityMessage || '',
+      proximityRadiusMeters: item.proximityRadiusMeters || 250,
+      establishmentId: item.establishmentId ? String(item.establishmentId) : null,
     })));
   } catch (error) {
     res.status(500).json({ error: 'Error al obtener posicionamientos activos' });

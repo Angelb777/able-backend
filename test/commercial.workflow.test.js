@@ -14,6 +14,8 @@ const CommercialRequest = require('../api/models/CommercialRequest');
 const Establishment = require('../api/models/Establishment');
 const PromocionComprada = require('../api/models/PromocionComprada');
 const Payment = require('../api/models/Payment');
+const MapPlan = require('../api/models/MapPlan');
+const MapPromoCode = require('../api/models/MapPromoCode');
 const {
   fixedPrice, pendingStatus, assertCanApprove, addOneYear, recordTransition,
 } = require('../api/services/commercialWorkflow');
@@ -229,4 +231,149 @@ test('internal platform payment publishes an approved establishment for the Flut
   assert.equal(retry.status, 200);
   assert.equal(positioningWrites, 1);
   assert.equal(paymentWrites, 1);
+});
+
+test('a commerce can subscribe a location directly and the payment enters the platform ledger', async (t) => {
+  const previousSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = 'direct-map-subscription-secret';
+  const originals = {
+    userFindById: User.findById,
+    establishmentFindOne: Establishment.findOne,
+    planUpdateOne: MapPlan.updateOne,
+    planFind: MapPlan.find,
+    planFindOne: MapPlan.findOne,
+    promoFindOne: MapPromoCode.findOne,
+    subscriptionFindOne: PromocionComprada.findOne,
+    subscriptionUpsert: PromocionComprada.findOneAndUpdate,
+    paymentFindOne: Payment.findOne,
+    paymentCreate: Payment.create,
+  };
+  t.after(() => {
+    if (previousSecret == null) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousSecret;
+    User.findById = originals.userFindById;
+    Establishment.findOne = originals.establishmentFindOne;
+    MapPlan.updateOne = originals.planUpdateOne;
+    MapPlan.find = originals.planFind;
+    MapPlan.findOne = originals.planFindOne;
+    MapPromoCode.findOne = originals.promoFindOne;
+    PromocionComprada.findOne = originals.subscriptionFindOne;
+    PromocionComprada.findOneAndUpdate = originals.subscriptionUpsert;
+    Payment.findOne = originals.paymentFindOne;
+    Payment.create = originals.paymentCreate;
+  });
+
+  const ownerId = new mongoose.Types.ObjectId();
+  const locationId = new mongoose.Types.ObjectId();
+  const planId = new mongoose.Types.ObjectId();
+  const subscriptionId = new mongoose.Types.ObjectId();
+  const location = {
+    _id: locationId, ownerId, publicName: 'CoffeeMax', description: 'Café',
+    address: 'Calle Uno', logoUrl: '/api/media/coffee', lat: 41.65, lng: -0.88,
+    proximityMessage: '¿Te apetece tomar un café en CoffeeMax?', proximityRadiusMeters: 200,
+  };
+  const plan = {
+    _id: planId, code: 'MAP_MONTHLY', title: '1 mes', durationMonths: 1, priceEuros: 20,
+  };
+  let published;
+  let ledger;
+  User.findById = () => ({
+    select() { return this; },
+    lean: async () => ({
+      _id: ownerId, id: String(ownerId), role: 'comercio', firebaseUid: null,
+      email: 'coffee@example.test', nombre: 'CoffeeMax',
+    }),
+  });
+  Establishment.findOne = async () => location;
+  MapPlan.updateOne = async () => ({});
+  MapPlan.find = () => ({ sort() { return this; }, lean: async () => [plan] });
+  MapPlan.findOne = async () => plan;
+  MapPromoCode.findOne = async () => null;
+  let subscriptionLookup = 0;
+  PromocionComprada.findOne = () => {
+    subscriptionLookup += 1;
+    const result = subscriptionLookup === 1 ? null : null;
+    return { lean: async () => result, then: (resolve) => resolve(result) };
+  };
+  Payment.findOne = () => ({ lean: async () => null });
+  PromocionComprada.findOneAndUpdate = async (_filter, update) => {
+    published = update.$set;
+    return { _id: subscriptionId, ...published, async save() {} };
+  };
+  Payment.create = async (value) => {
+    ledger = value;
+    return { _id: new mongoose.Types.ObjectId(), ...value };
+  };
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/commercial', commercialRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const token = jwt.sign({ id: String(ownerId), legacy: true }, process.env.JWT_SECRET);
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/commercial/locations/${locationId}/subscribe`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        planId: String(planId), requestId: 'checkout_test_123', autoRenew: true,
+      }),
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 201, body.error);
+  assert.equal(published.status, 'published');
+  assert.equal(published.activo, true);
+  assert.equal(published.establishmentId, locationId);
+  assert.equal(published.publicName, 'CoffeeMax');
+  assert.equal(published.proximityRadiusMeters, 200);
+  assert.equal(published.autoRenew, true);
+  assert.equal(published.precioEuros, 20);
+  assert.equal(ledger.cantidad, 20);
+  assert.equal(ledger.source, 'platform_checkout');
+  assert.equal(ledger.verified, true);
+  assert.equal(ledger.establishmentId, locationId);
+  assert.equal(String(ledger.mapSubscriptionId), String(subscriptionId));
+});
+
+test('the public Flutter map endpoint exposes active location and proximity data', async (t) => {
+  const originalFind = PromocionComprada.find;
+  let calls = 0;
+  PromocionComprada.find = () => {
+    calls += 1;
+    if (calls === 1) return { lean: async () => [] };
+    return {
+      select() { return this; },
+      lean: async () => [{
+        _id: new mongoose.Types.ObjectId(), establishmentId: new mongoose.Types.ObjectId(),
+        titulo: 'CoffeeMax', publicName: 'CoffeeMax', address: 'Calle Uno',
+        description: 'Café', logoComercio: '/api/media/coffee', imagenBase: '',
+        lat: 41.65, lng: -0.88, activo: true, status: 'published',
+        proximityMessage: '¿Te apetece tomar un café en CoffeeMax?',
+        proximityRadiusMeters: 200, fechaFin: new Date(Date.now() + 86400000),
+      }],
+    };
+  };
+  t.after(() => { PromocionComprada.find = originalFind; });
+
+  const app = express();
+  app.use('/api/promo-contratada', legacyPositioningRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/promo-contratada/activas`,
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.length, 1);
+  assert.equal(body[0].publicName, 'CoffeeMax');
+  assert.equal(body[0].proximityRadiusMeters, 200);
+  assert.match(body[0].proximityMessage, /CoffeeMax/);
+  assert.equal(body[0].lat, 41.65);
+  assert.equal(body[0].lng, -0.88);
 });

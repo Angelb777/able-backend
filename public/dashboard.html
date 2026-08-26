@@ -193,49 +193,43 @@
       <div id="listaValidarRewards" class="lista-rewards"></div>
     </section>
 
-    <!-- Flujo centralizado del rol Comercio (solo Superadmin) -->
-    <section id="gestionComercial" class="seccion" style="display:none;">
-      <h2>Gestión comercial</h2>
-      <p>Revisión de establecimientos, posicionamientos, skins, armas, descuentos y premios.</p>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
-        <button type="button" data-commercial-action="refresh-admin">Actualizar</button>
-        <label>Estado
-          <select id="commercialStatusFilter">
-            <option value="">Todos</option>
-            <option value="pending_payment">Pendiente de pago</option>
-            <option value="pending_material">Pendiente de material</option>
-            <option value="pending_review">Pendiente de revisión</option>
-            <option value="changes_requested">Cambios solicitados</option>
-            <option value="approved">Aprobado</option>
-            <option value="published">Publicado</option>
-            <option value="disabled">Desactivado</option>
-            <option value="renewal_due">Revisión anual</option>
-            <option value="rejected">Rechazado</option>
-            <option value="retired">Retirado</option>
-            <option value="expired">Caducado</option>
-          </select>
-        </label>
-        <label>Tipo
-          <select id="commercialTypeFilter">
-            <option value="">Todos</option>
-            <option value="positioning">Posicionamiento</option>
-            <option value="commercial_skin">Skin</option>
-            <option value="commercial_weapon">Arma</option>
-            <option value="reward">Descuento/premio</option>
-          </select>
-        </label>
-      </div>
-      <h3>Establecimientos</h3>
-      <div id="commercialEstablishments">Cargando...</div>
-      <h3 style="margin-top:24px;">Solicitudes</h3>
-      <div id="commercialRequests">Cargando...</div>
+    <section id="mapPromoCodesAdmin" class="seccion" style="display:none;">
+      <h2>Códigos para locales</h2>
+      <p>Crea códigos para regalar meses o aplicar un descuento a la promoción de un local en el mapa.</p>
+      <form id="mapPromoCodeForm" class="commerce-form">
+        <div class="commerce-form-grid">
+          <label>Código *
+            <input type="text" name="code" maxlength="40" placeholder="BIENVENIDA3" required>
+          </label>
+          <label>Meses gratis
+            <input type="number" name="freeMonths" min="0" max="120" value="0">
+          </label>
+          <label>Descuento (%)
+            <input type="number" name="discountPercent" min="0" max="100" value="0">
+          </label>
+          <label>Usos máximos
+            <input type="number" name="maxRedemptions" min="1" placeholder="Sin límite">
+          </label>
+          <label>Válido hasta
+            <input type="date" name="validUntil">
+          </label>
+          <label class="commerce-wide">Descripción
+            <input type="text" name="description" maxlength="300">
+          </label>
+        </div>
+        <button type="submit">Crear código</button>
+      </form>
+      <div id="mapPromoCodesList" style="margin-top:20px;">Cargando...</div>
     </section>
 
-    <!-- Flujo centralizado del rol Comercio -->
+    <!-- Locales físicos del comercio: alta, contratación y publicación directa -->
     <section id="commerceEstablishment" class="seccion commerce-section" style="display:none;">
-      <h2>Mi establecimiento</h2>
-      <p>Completa los datos y la ubicación que Able73 utilizará cuando apruebe tu presencia en el mapa.</p>
-      <div id="commerceEstablishmentStatus" class="commerce-notice">Cargando...</div>
+      <h2>Promociona tu local físico en el mapa</h2>
+      <p>Llega a más clientes de verdad. Añade uno o varios locales, elige cuánto tiempo quieres mostrarlos y publícalos directamente en el mapa de Able73.</p>
+      <div id="commerceLocationsStatus" class="commerce-notice">Cargando locales...</div>
+      <div id="commerceLocationsList" class="commerce-card-grid"></div>
+
+      <h3 id="commerceLocationFormTitle">Añadir otro local</h3>
       <form id="commerceEstablishmentForm" enctype="multipart/form-data" class="commerce-form">
         <div class="commerce-form-grid">
           <label>Nombre público *
@@ -268,20 +262,22 @@
           <label>Longitud *
             <input type="number" name="lng" min="-180" max="180" step="any" required>
           </label>
+          <label class="commerce-wide">Mensaje de proximidad
+            <input type="text" name="proximityMessage" maxlength="180" placeholder="¿Te apetece tomar un café en CoffeeMax?">
+          </label>
+          <label>Radio del aviso (metros)
+            <input type="number" name="proximityRadiusMeters" min="25" max="5000" step="25" value="250">
+          </label>
           <label class="commerce-wide">Logo (PNG, JPG o WebP)
             <input type="file" name="logo" accept="image/png,image/jpeg,image/webp">
           </label>
         </div>
         <div id="commerceEstablishmentLogo"></div>
-        <button type="submit">Guardar y enviar a revisión</button>
+        <div class="commerce-card-actions">
+          <button type="submit">Guardar local</button>
+          <button type="button" class="commerce-secondary" data-commercial-action="cancel-location-edit" hidden>Cancelar edición</button>
+        </div>
       </form>
-    </section>
-
-    <section id="commercePositioning" class="seccion commerce-section" style="display:none;">
-      <h2>Posicionamiento</h2>
-      <p>Cuando Able73 apruebe tu establecimiento podrás contratar un paquete. Al completar el pago interno, el local y su logo se publicarán automáticamente en el mapa.</p>
-      <div id="commercePositioningStatus" class="commerce-notice"></div>
-      <div id="commercePackages" class="commerce-card-grid">Cargando paquetes...</div>
     </section>
 
     <section id="commerceSkins" class="seccion commerce-section" style="display:none;">
@@ -360,17 +356,6 @@
         </div>
         <button type="submit">Enviar propuesta a revisión</button>
       </form>
-    </section>
-
-    <section id="commerceRequests" class="seccion commerce-section" style="display:none;">
-      <div class="commerce-heading-row">
-        <div>
-          <h2>Mis solicitudes</h2>
-          <p>Consulta el pago, el material, la revisión y la publicación de cada solicitud.</p>
-        </div>
-        <button type="button" data-commercial-action="refresh-requests">Actualizar</button>
-      </div>
-      <div id="commerceRequestsList">Cargando...</div>
     </section>
 
     <!-- Sección Mis Pagos (solo clientes) -->
@@ -940,7 +925,7 @@
 
 </main>
 
-<script src="js/dashboard.js?v=commerce-csp-actions-1"></script>
+<script src="js/dashboard.js?v=commerce-locations-1"></script>
 <script type="module">
 import { logoutWebSession } from './js/firebase-client.js';
 document.getElementById('able73-logout').addEventListener('click', async () => {

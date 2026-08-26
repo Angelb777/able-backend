@@ -232,11 +232,12 @@ if (!uri || (!uri.startsWith('mongodb://') && !uri.startsWith('mongodb+srv://'))
 
 // Conectar usando la URI
 mongoose.connect(uri)
-  .then(() => {
+  .then(async () => {
     const conn = mongoose.connection;
     console.log('🟢 Conectado a MongoDB');
     console.log(`   Host: ${conn.host}`);
     console.log(`   DB:   ${conn.name}`);
+    await require('./api/services/mapSubscriptions').ensureEstablishmentLocationIndexes();
     require('./api/services/bountyService').startExpiryWorker();
 
     // ⬇️⬇️⬇️  USAR server.listen (no app.listen)  ⬇️⬇️⬇️

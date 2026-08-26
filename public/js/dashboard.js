@@ -87,6 +87,20 @@ function bindCommercialActions() {
       else if (action === "withdraw-request") await withdrawCommerceRequest(id);
       else if (action === "pay-positioning") {
         await payCommercePositioning(id, Number(button.dataset.amount));
+      } else if (action === "edit-location") {
+        editCommerceLocation(id);
+      } else if (action === "archive-location") {
+        await archiveCommerceLocation(id);
+      } else if (action === "subscribe-location") {
+        await subscribeCommerceLocation(id, button.dataset.planId || "");
+      } else if (action === "stop-location") {
+        await stopCommerceLocation(id);
+      } else if (action === "toggle-location-renew") {
+        await toggleCommerceLocationRenew(id, button.dataset.autoRenew === "true");
+      } else if (action === "cancel-location-edit") {
+        resetCommerceLocationForm();
+      } else if (action === "toggle-map-promo-code") {
+        await toggleMapPromoCode(id, button.dataset.active === "true");
       }
     } finally {
       if (button.isConnected) button.disabled = false;
@@ -297,6 +311,8 @@ async function commercialRequestAction(id, action) {
 
 let commerceEstablishmentCache = null;
 let commercePackagesCache = [];
+let commerceLocationsCache = [];
+let commerceMapPlansCache = [];
 let commerceSpecificationsCache = null;
 
 const commerceStatusLabels = {
@@ -461,6 +477,236 @@ async function renderCommercePositioning() {
   }
 }
 
+function commerceSubscriptionState(subscription) {
+  if (!subscription) return "Sin promoción contratada";
+  if (subscription.status === "published" && subscription.activo) {
+    const ending = commerceDate(subscription.fechaFin);
+    return subscription.cancelAtPeriodEnd
+      ? `Visible hasta ${ending} · No se renovará`
+      : `Visible en el mapa hasta ${ending}${subscription.autoRenew ? " · Renovación automática" : ""}`;
+  }
+  if (subscription.status === "expired") return "Promoción finalizada";
+  return "Promoción detenida";
+}
+
+function commerceLocationCard(location) {
+  const id = commercialId(location);
+  const subscription = location.subscription;
+  const active = subscription?.status === "published" && subscription?.activo;
+  const plans = commerceMapPlansCache.map((plan) => `
+    <button type="button" data-commercial-action="subscribe-location"
+      data-entity-id="${commercialEscape(id)}" data-plan-id="${commercialEscape(commercialId(plan))}">
+      ${active ? "Ampliar" : "Contratar"} ${commercialEscape(plan.title)} · ${commercialEscape(plan.priceEuros)} €
+    </button>`).join("");
+  return `<article class="commerce-card commerce-location-card">
+    ${location.logoUrl ? `<img class="commerce-logo-preview" src="${commercialEscape(location.logoUrl)}" alt="Logo de ${commercialEscape(location.publicName)}">` : ""}
+    <h3>${commercialEscape(location.publicName)}</h3>
+    <p>${commercialEscape(location.address)}</p>
+    <p><strong>${commercialEscape(commerceSubscriptionState(subscription))}</strong></p>
+    <p><small>${commercialEscape(location.lat)}, ${commercialEscape(location.lng)} · Aviso a ${commercialEscape(location.proximityRadiusMeters || 250)} m</small></p>
+    <label>Código promocional
+      <input id="commerce-promo-${commercialEscape(id)}" type="text" maxlength="40" placeholder="Opcional">
+    </label>
+    <label class="commerce-inline-check">
+      <input id="commerce-renew-${commercialEscape(id)}" type="checkbox" ${subscription?.autoRenew ? "checked" : ""}> Renovación automática
+    </label>
+    <div class="commerce-card-actions">${plans}</div>
+    <div class="commerce-card-actions">
+      <button type="button" class="commerce-secondary" data-commercial-action="edit-location" data-entity-id="${commercialEscape(id)}">Editar local</button>
+      ${active ? `<button type="button" class="commerce-secondary" data-commercial-action="toggle-location-renew" data-entity-id="${commercialEscape(id)}" data-auto-renew="${subscription.autoRenew ? "false" : "true"}">${subscription.autoRenew ? "Quitar autorrenovación" : "Activar autorrenovación"}</button>
+      <button type="button" class="commerce-secondary" data-commercial-action="stop-location" data-entity-id="${commercialEscape(id)}">Detener promoción</button>` : ""}
+      <button type="button" class="commerce-secondary" data-commercial-action="archive-location" data-entity-id="${commercialEscape(id)}">Eliminar local</button>
+    </div>
+  </article>`;
+}
+
+function resetCommerceLocationForm() {
+  const form = document.getElementById("commerceEstablishmentForm");
+  if (!form) return;
+  form.reset();
+  form.dataset.editingId = "";
+  const radius = form.elements.namedItem("proximityRadiusMeters");
+  if (radius) radius.value = "250";
+  document.getElementById("commerceLocationFormTitle").textContent = "Añadir otro local";
+  document.getElementById("commerceEstablishmentLogo").innerHTML = "<small>El logo es obligatorio al crear un local.</small>";
+  const cancel = form.querySelector('[data-commercial-action="cancel-location-edit"]');
+  if (cancel) cancel.hidden = true;
+}
+
+function editCommerceLocation(id) {
+  const location = commerceLocationsCache.find((item) => commercialId(item) === String(id));
+  const form = document.getElementById("commerceEstablishmentForm");
+  if (!location || !form) return;
+  ["publicName", "legalName", "description", "address", "city", "country", "phone", "website", "lat", "lng", "proximityMessage", "proximityRadiusMeters"].forEach((name) => {
+    const input = form.elements.namedItem(name);
+    if (input) input.value = location[name] ?? (name === "proximityRadiusMeters" ? 250 : "");
+  });
+  form.dataset.editingId = id;
+  document.getElementById("commerceLocationFormTitle").textContent = `Editar ${location.publicName}`;
+  document.getElementById("commerceEstablishmentLogo").innerHTML = location.logoUrl
+    ? `<p>Logo actual:</p><img class="commerce-logo-preview" src="${commercialEscape(location.logoUrl)}" alt="Logo actual">`
+    : "";
+  const cancel = form.querySelector('[data-commercial-action="cancel-location-edit"]');
+  if (cancel) cancel.hidden = false;
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function bindCommerceLocationsForm() {
+  const form = document.getElementById("commerceEstablishmentForm");
+  if (!form || form.dataset.locationsBound === "true") return;
+  form.dataset.locationsBound = "true";
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('button[type="submit"]');
+    const id = form.dataset.editingId || "";
+    button.disabled = true;
+    try {
+      await commerceResponse(await fetch(id ? `/api/commercial/locations/${id}` : "/api/commercial/locations", {
+        method: id ? "PUT" : "POST", body: new FormData(form),
+      }));
+      resetCommerceLocationForm();
+      await renderCommerceLocations();
+      alert(id ? "Local actualizado." : "Local añadido. Ya puedes contratar su aparición en el mapa.");
+    } catch (error) { alert(error.message); }
+    finally { button.disabled = false; }
+  });
+}
+
+async function renderCommerceLocations() {
+  if (!commerceShowSection("commerceEstablishment")) return;
+  bindCommerceLocationsForm();
+  const status = document.getElementById("commerceLocationsStatus");
+  const list = document.getElementById("commerceLocationsList");
+  status.textContent = "Cargando locales...";
+  list.innerHTML = "";
+  try {
+    [commerceLocationsCache, commerceMapPlansCache] = await Promise.all([
+      commerceResponse(await fetch("/api/commercial/locations")),
+      commerceResponse(await fetch("/api/commercial/map-plans")),
+    ]);
+    status.className = "commerce-notice";
+    status.textContent = commerceLocationsCache.length
+      ? `${commerceLocationsCache.length} local${commerceLocationsCache.length === 1 ? "" : "es"}. Cada uno se contrata y se renueva por separado.`
+      : "Añade tu primer local. No necesita aprobación del Superadmin.";
+    list.innerHTML = commerceLocationsCache.length
+      ? commerceLocationsCache.map(commerceLocationCard).join("")
+      : "<p>Todavía no tienes locales guardados.</p>";
+    if (!document.getElementById("commerceEstablishmentForm").dataset.editingId) resetCommerceLocationForm();
+  } catch (error) {
+    status.className = "commerce-notice commerce-error";
+    status.textContent = error.message;
+  }
+}
+
+async function subscribeCommerceLocation(id, planId) {
+  const location = commerceLocationsCache.find((item) => commercialId(item) === String(id));
+  const plan = commerceMapPlansCache.find((item) => commercialId(item) === String(planId));
+  if (!location || !plan) return alert("El local o el plan ya no están disponibles.");
+  const code = document.getElementById(`commerce-promo-${id}`)?.value?.trim() || "";
+  const autoRenew = Boolean(document.getElementById(`commerce-renew-${id}`)?.checked);
+  if (!confirm(`Publicar ${location.publicName} durante ${plan.durationMonths} mes(es) por ${plan.priceEuros} €${code ? ` usando el código ${code}` : ""}?`)) return;
+  const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  try {
+    const result = await commerceResponse(await fetch(`/api/commercial/locations/${id}/subscribe`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ planId, promotionCode: code, autoRenew, requestId }),
+    }));
+    await renderCommerceLocations();
+    alert(result.payment
+      ? "Pago registrado. El local ya está publicado en el mapa."
+      : "Código aplicado. El local ya está publicado gratis en el mapa.");
+  } catch (error) { alert(error.message); }
+}
+
+async function stopCommerceLocation(id) {
+  const answer = prompt("Escribe FINAL para mantener el local visible hasta que termine el periodo pagado, o AHORA para retirarlo inmediatamente.", "FINAL");
+  if (answer == null) return;
+  const normalized = answer.trim().toUpperCase();
+  if (!["FINAL", "AHORA"].includes(normalized)) return alert("Escribe FINAL o AHORA.");
+  try {
+    await commerceResponse(await fetch(`/api/commercial/locations/${id}/subscription`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "stop", mode: normalized === "AHORA" ? "now" : "period_end" }),
+    }));
+    await renderCommerceLocations();
+  } catch (error) { alert(error.message); }
+}
+
+async function toggleCommerceLocationRenew(id, autoRenew) {
+  try {
+    await commerceResponse(await fetch(`/api/commercial/locations/${id}/subscription`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set_auto_renew", autoRenew }),
+    }));
+    await renderCommerceLocations();
+  } catch (error) { alert(error.message); }
+}
+
+async function archiveCommerceLocation(id) {
+  const location = commerceLocationsCache.find((item) => commercialId(item) === String(id));
+  if (!location || !confirm(`Eliminar ${location.publicName}? También se retirará del mapa inmediatamente.`)) return;
+  try {
+    await commerceResponse(await fetch(`/api/commercial/locations/${id}`, { method: "DELETE" }));
+    resetCommerceLocationForm();
+    await renderCommerceLocations();
+  } catch (error) { alert(error.message); }
+}
+
+function bindMapPromoCodeForm() {
+  const form = document.getElementById("mapPromoCodeForm");
+  if (!form || form.dataset.bound === "true") return;
+  form.dataset.bound = "true";
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('button[type="submit"]');
+    const values = Object.fromEntries(new FormData(form));
+    const payload = {
+      ...values,
+      freeMonths: Number(values.freeMonths || 0),
+      discountPercent: Number(values.discountPercent || 0),
+      maxRedemptions: values.maxRedemptions ? Number(values.maxRedemptions) : undefined,
+      validUntil: values.validUntil ? `${values.validUntil}T23:59:59.999Z` : undefined,
+    };
+    button.disabled = true;
+    try {
+      await commerceResponse(await fetch("/api/commercial/admin/map-promo-codes", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }));
+      form.reset();
+      await renderMapPromoCodesAdmin();
+    } catch (error) { alert(error.message); }
+    finally { button.disabled = false; }
+  });
+}
+
+async function renderMapPromoCodesAdmin() {
+  document.querySelectorAll(".seccion").forEach((section) => (section.style.display = "none"));
+  const section = document.getElementById("mapPromoCodesAdmin");
+  if (!section || role !== "admin") return;
+  section.style.display = "block";
+  bindMapPromoCodeForm();
+  const list = document.getElementById("mapPromoCodesList");
+  try {
+    const items = await commerceResponse(await fetch("/api/commercial/admin/map-promo-codes"));
+    list.innerHTML = items.length ? items.map((item) => `<article class="commerce-request-card">
+      <h3>${commercialEscape(item.code)} · ${item.active ? "Activo" : "Desactivado"}</h3>
+      <p>${commercialEscape(item.freeMonths || 0)} meses gratis · ${commercialEscape(item.discountPercent || 0)} % de descuento · ${commercialEscape(item.redemptionCount || 0)} usos${item.maxRedemptions ? ` de ${commercialEscape(item.maxRedemptions)}` : ""}</p>
+      <button type="button" class="commerce-secondary" data-commercial-action="toggle-map-promo-code" data-entity-id="${commercialEscape(commercialId(item))}" data-active="${item.active ? "false" : "true"}">${item.active ? "Desactivar" : "Activar"}</button>
+    </article>`).join("") : "<p>No hay códigos creados.</p>";
+  } catch (error) { list.innerHTML = `<p class="commerce-error">${commercialEscape(error.message)}</p>`; }
+}
+
+async function toggleMapPromoCode(id, active) {
+  try {
+    await commerceResponse(await fetch(`/api/commercial/admin/map-promo-codes/${id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active }),
+    }));
+    await renderMapPromoCodesAdmin();
+  } catch (error) { alert(error.message); }
+}
+
 async function createCommercePositioningRequest(packageId, durationMonths) {
   const packageItem = commercePackagesCache.find((item) => commercialId(item) === String(packageId));
   const option = packageItem?.opcionesDuracion?.find((item) => Number(item.duracionMeses) === Number(durationMonths));
@@ -517,8 +763,9 @@ function bindCommerceRequestForm(formId, type, buildFormData) {
     try {
       await submitCommerceRequest(form, type, buildFormData(form));
       form.reset();
-      alert("Solicitud creada correctamente. Puedes seguir su pago y revisión en Mis solicitudes.");
-      await renderCommerceRequests();
+      alert(type === "reward"
+        ? "Propuesta enviada a revisión del Superadmin."
+        : "Solicitud enviada correctamente.");
     } catch (error) {
       alert(error.message);
     } finally {
@@ -797,19 +1044,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     ],
     comercio: [
       "Mi establecimiento",
-      "Posicionamiento",
       "Skins",
       "Armas",
       "Descuentos y premios",
-      "Mis solicitudes",
       "Historial de pagos",
       "Lista de compradores",
     ],
     admin: [
-      "Gestión comercial",
       "Validar",
       "Lista de usuarios",
       "Pagos",
+      "Códigos de locales",
       "Gestion de juego",
       "Trayectos",
       "Incidencias",
@@ -853,23 +1098,14 @@ function renderSection(section) {
   document.querySelectorAll(".seccion").forEach((s) => (s.style.display = "none"));
 
   switch (section) {
-    case "Gestión comercial":
-      if (role === "admin") renderGestionComercial();
-      break;
     case "Mi establecimiento":
-      if (role === "comercio") renderCommerceEstablishment();
-      break;
-    case "Posicionamiento":
-      if (role === "comercio") renderCommercePositioning();
+      if (role === "comercio") renderCommerceLocations();
       break;
     case "Skins":
       if (role === "comercio") renderCommerceSkins();
       break;
     case "Armas":
       if (role === "comercio") renderCommerceWeapons();
-      break;
-    case "Mis solicitudes":
-      if (role === "comercio") renderCommerceRequests();
       break;
     case "Historial de pagos":
       if (role === "comercio") renderPagosComercio();
@@ -879,6 +1115,9 @@ function renderSection(section) {
       break;
     case "Pagos":
       if (role === "admin") renderPagos();
+      break;
+    case "Códigos de locales":
+      if (role === "admin") renderMapPromoCodesAdmin();
       break;
     case "Lista de usuarios":
       renderUsuarios();

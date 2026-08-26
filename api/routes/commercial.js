@@ -11,7 +11,12 @@ const Skin = require('../models/Skin');
 const Card = require('../models/Card');
 const Payment = require('../models/Payment');
 const User = require('../models/User');
+const MapPlan = require('../models/MapPlan');
+const MapPromoCode = require('../models/MapPromoCode');
 const { saveImage } = require('../utils/mediaStorage');
+const {
+  addMonths, ensureDefaultMapPlans, renewExpiredMapSubscriptions,
+} = require('../services/mapSubscriptions');
 const {
   FIXED_PRICES, fixedPrice, pendingStatus, assertCanApprove,
   addOneYear, recordTransition,
@@ -139,6 +144,302 @@ function specifications() {
 
 router.get('/specifications', ...commerceOrAdmin, (_req, res) => {
   res.json(specifications());
+});
+
+function locationPayload(body) {
+  return {
+    legalName: String(body.legalName || '').trim(),
+    publicName: String(body.publicName || '').trim(),
+    description: String(body.description || '').trim(),
+    address: String(body.address || '').trim(),
+    city: String(body.city || '').trim(),
+    country: String(body.country || '').trim(),
+    phone: String(body.phone || '').trim(),
+    website: String(body.website || '').trim(),
+    lat: finiteCoordinate(body.lat, -90, 90, 'Latitud'),
+    lng: finiteCoordinate(body.lng, -180, 180, 'Longitud'),
+    proximityMessage: String(body.proximityMessage || '').trim(),
+    proximityRadiusMeters: Number(body.proximityRadiusMeters || 250),
+    status: 'approved', archived: false, reviewNotes: '',
+  };
+}
+
+function assertLocationPayload(payload) {
+  if (!payload.publicName || !payload.address) {
+    throw new Error('Nombre público y dirección son obligatorios');
+  }
+  if (!Number.isFinite(payload.proximityRadiusMeters)
+    || payload.proximityRadiusMeters < 25 || payload.proximityRadiusMeters > 5000) {
+    throw new Error('El radio de aviso debe estar entre 25 y 5000 metros');
+  }
+}
+
+async function locationsWithSubscriptions(ownerId) {
+  await renewExpiredMapSubscriptions();
+  const locations = await Establishment.find({ ownerId, archived: { $ne: true } })
+    .sort({ createdAt: 1 }).lean();
+  if (locations.length === 1) {
+    const legacy = await PromocionComprada.findOne({
+      comercioId: ownerId, establishmentId: null,
+    }).sort({ updatedAt: -1 });
+    if (legacy) {
+      legacy.establishmentId = locations[0]._id;
+      legacy.publicName = legacy.publicName || locations[0].publicName;
+      legacy.address = legacy.address || locations[0].address;
+      legacy.description = legacy.description || locations[0].description;
+      legacy.proximityMessage = legacy.proximityMessage || locations[0].proximityMessage;
+      legacy.proximityRadiusMeters = legacy.proximityRadiusMeters || locations[0].proximityRadiusMeters || 250;
+      await legacy.save();
+    }
+  }
+  const subscriptions = await PromocionComprada.find({
+    comercioId: ownerId, establishmentId: { $in: locations.map((item) => item._id) },
+  }).sort({ updatedAt: -1 }).lean();
+  const byLocation = new Map();
+  subscriptions.forEach((item) => {
+    const key = String(item.establishmentId || '');
+    if (!byLocation.has(key)) byLocation.set(key, item);
+  });
+  return locations.map((item) => ({
+    ...item, id: String(item._id), subscription: byLocation.get(String(item._id)) || null,
+  }));
+}
+
+router.get('/locations', ...commerceOnly, async (req, res, next) => {
+  try { res.json(await locationsWithSubscriptions(req.user.id)); } catch (error) { next(error); }
+});
+
+router.post('/locations', ...commerceOnly, uploadFields, async (req, res) => {
+  try {
+    const payload = locationPayload(req.body);
+    assertLocationPayload(payload);
+    const logoFile = req.files?.logo?.[0];
+    if (!logoFile) return res.status(400).json({ error: 'El logo del local es obligatorio' });
+    payload.logoUrl = await saveImage(logoFile, 'commercial/establishments');
+    const location = await Establishment.create({ ...payload, ownerId: req.user.id });
+    res.status(201).json({ ...location.toJSON(), subscription: null });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+
+router.put('/locations/:id', ...commerceOnly, uploadFields, async (req, res) => {
+  try {
+    const location = await Establishment.findOne({
+      _id: req.params.id, ownerId: req.user.id, archived: { $ne: true },
+    });
+    if (!location) return res.status(404).json({ error: 'Local no encontrado' });
+    const payload = locationPayload(req.body);
+    assertLocationPayload(payload);
+    const logoFile = req.files?.logo?.[0];
+    if (logoFile) payload.logoUrl = await saveImage(logoFile, 'commercial/establishments');
+    Object.assign(location, payload);
+    await location.save();
+    await PromocionComprada.updateMany(
+      { establishmentId: location._id, comercioId: req.user.id },
+      { $set: {
+        titulo: location.publicName, publicName: location.publicName,
+        description: location.description, address: location.address,
+        logoComercio: location.logoUrl, lat: location.lat, lng: location.lng,
+        proximityMessage: location.proximityMessage,
+        proximityRadiusMeters: location.proximityRadiusMeters,
+      } },
+    );
+    res.json(location);
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+
+router.delete('/locations/:id', ...commerceOnly, async (req, res) => {
+  try {
+    const location = await Establishment.findOneAndUpdate(
+      { _id: req.params.id, ownerId: req.user.id, archived: { $ne: true } },
+      { $set: { archived: true } }, { new: true },
+    );
+    if (!location) return res.status(404).json({ error: 'Local no encontrado' });
+    await PromocionComprada.updateMany(
+      { establishmentId: location._id, comercioId: req.user.id },
+      { $set: { activo: false, status: 'retired', autoRenew: false, retiredAt: new Date() } },
+    );
+    res.json({ ok: true });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+
+router.get('/map-plans', ...commerceOnly, async (_req, res, next) => {
+  try {
+    const plans = await ensureDefaultMapPlans();
+    res.json(plans.map((item) => ({ ...item, id: String(item._id) })));
+  } catch (error) { next(error); }
+});
+
+router.post('/locations/:id/subscribe', ...commerceOnly, async (req, res) => {
+  try {
+    const location = await Establishment.findOne({
+      _id: req.params.id, ownerId: req.user.id, archived: { $ne: true },
+    });
+    if (!location) return res.status(404).json({ error: 'Local no encontrado' });
+    await ensureDefaultMapPlans();
+    const plan = await MapPlan.findOne({ _id: req.body.planId, active: true });
+    if (!plan) return res.status(404).json({ error: 'Plan no disponible' });
+
+    const requestId = String(req.body.requestId || '').trim();
+    if (!/^[a-zA-Z0-9_-]{8,100}$/.test(requestId)) {
+      return res.status(400).json({ error: 'Identificador de operación no válido' });
+    }
+    const reference = `MAP-${req.user.id}-${location._id}-${requestId}`;
+    const repeatedSubscription = await PromocionComprada.findOne({
+      comercioId: req.user.id, establishmentId: location._id, checkoutReference: reference,
+    }).lean();
+    if (repeatedSubscription) {
+      const previous = await Payment.findOne({ providerReference: reference }).lean();
+      return res.json({ subscription: repeatedSubscription, payment: previous, repeated: true });
+    }
+    const previousPayment = await Payment.findOne({ providerReference: reference }).lean();
+    if (previousPayment) {
+      const existing = await PromocionComprada.findOne({
+        _id: previousPayment.mapSubscriptionId, comercioId: req.user.id,
+      }).lean();
+      return res.json({ subscription: existing, payment: previousPayment, repeated: true });
+    }
+
+    let durationMonths = Number(plan.durationMonths);
+    let price = Number(plan.priceEuros);
+    let promotion = null;
+    const promotionCode = String(req.body.promotionCode || '').trim().toUpperCase();
+    if (promotionCode) {
+      const now = new Date();
+      promotion = await MapPromoCode.findOne({ code: promotionCode, active: true });
+      const unavailable = !promotion
+        || (promotion.validFrom && promotion.validFrom > now)
+        || (promotion.validUntil && promotion.validUntil < now)
+        || (promotion.maxRedemptions && promotion.redemptions.length >= promotion.maxRedemptions)
+        || promotion.redemptions.some((item) => String(item.establishmentId) === String(location._id));
+      if (unavailable) return res.status(409).json({ error: 'El código promocional no es válido para este local' });
+      if (Number(promotion.freeMonths) > 0) {
+        durationMonths = Number(promotion.freeMonths);
+        price = 0;
+      } else {
+        price = Math.max(0, price * (1 - Number(promotion.discountPercent || 0) / 100));
+      }
+      price = Math.round(price * 100) / 100;
+    }
+
+    const now = new Date();
+    const current = await PromocionComprada.findOne({ establishmentId: location._id });
+    const baseDate = current?.activo && current.fechaFin > now ? current.fechaFin : now;
+    const end = addMonths(baseDate, durationMonths);
+    const subscription = await PromocionComprada.findOneAndUpdate(
+      { establishmentId: location._id },
+      { $set: {
+        comercioId: req.user.id, establishmentId: location._id,
+        mapPlanId: plan._id, planCode: plan.code,
+        titulo: location.publicName, publicName: location.publicName,
+        description: location.description, address: location.address,
+        logoComercio: location.logoUrl, imagenBase: '', lat: location.lat, lng: location.lng,
+        proximityMessage: location.proximityMessage || `¿Te apetece visitar ${location.publicName}?`,
+        proximityRadiusMeters: location.proximityRadiusMeters,
+        duracionMeses: plan.durationMonths, precioEuros: price,
+        originalPriceEuros: plan.priceEuros, fechaInicio: now, fechaFin: end,
+        activo: true, status: 'published',
+        paymentStatus: price === 0 ? 'waived' : 'confirmed',
+        autoRenew: Boolean(req.body.autoRenew), cancelAtPeriodEnd: false,
+        stoppedAt: null, retiredAt: null, publishedAt: now,
+        promotionCode,
+        checkoutReference: reference,
+      } },
+      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
+    );
+
+    let payment = null;
+    if (price > 0) {
+      const owner = await User.findById(req.user.id).select('nombre nickname email').lean();
+      payment = await Payment.create({
+        userId: req.user.id,
+        nombre: owner?.nombre || owner?.nickname || owner?.email || 'Comercio',
+        cantidad: price, motivo: `Promoción en el mapa: ${location.publicName}`,
+        currency: 'EUR', fecha: now, verified: true, verifiedAt: now,
+        source: 'platform_checkout', providerReference: reference,
+        establishmentId: location._id, mapSubscriptionId: subscription._id,
+      });
+      subscription.paymentId = payment._id;
+      await subscription.save();
+    }
+    if (promotion) {
+      promotion.redemptions.push({ userId: req.user.id, establishmentId: location._id, redeemedAt: now });
+      await promotion.save();
+    }
+    res.status(201).json({ subscription, payment });
+  } catch (error) {
+    const status = error?.code === 11000 ? 409 : 400;
+    res.status(status).json({ error: error.message });
+  }
+});
+
+router.patch('/locations/:id/subscription', ...commerceOnly, async (req, res) => {
+  try {
+    const location = await Establishment.findOne({ _id: req.params.id, ownerId: req.user.id });
+    if (!location) return res.status(404).json({ error: 'Local no encontrado' });
+    const subscription = await PromocionComprada.findOne({
+      establishmentId: location._id, comercioId: req.user.id,
+    });
+    if (!subscription) return res.status(404).json({ error: 'Este local no tiene promoción' });
+    if (req.body.action === 'set_auto_renew') {
+      subscription.autoRenew = Boolean(req.body.autoRenew);
+      if (subscription.autoRenew) subscription.cancelAtPeriodEnd = false;
+    } else if (req.body.action === 'stop') {
+      const mode = String(req.body.mode || 'period_end');
+      subscription.autoRenew = false;
+      if (mode === 'now') {
+        subscription.activo = false;
+        subscription.status = 'retired';
+        subscription.cancelAtPeriodEnd = false;
+        subscription.stoppedAt = new Date();
+        subscription.retiredAt = subscription.stoppedAt;
+      } else if (mode === 'period_end') {
+        subscription.cancelAtPeriodEnd = true;
+      } else return res.status(400).json({ error: 'Modo de parada no válido' });
+    } else return res.status(400).json({ error: 'Acción no válida' });
+    await subscription.save();
+    res.json(subscription);
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+
+router.post('/admin/map-promo-codes', ...adminOnly, async (req, res) => {
+  try {
+    const code = String(req.body.code || '').trim().toUpperCase();
+    if (!/^[A-Z0-9_-]{3,40}$/.test(code)) {
+      return res.status(400).json({ error: 'Código promocional no válido' });
+    }
+    const discountPercent = Number(req.body.discountPercent || 0);
+    const freeMonths = Number(req.body.freeMonths || 0);
+    if (!(discountPercent > 0) && !(freeMonths > 0)) {
+      return res.status(400).json({ error: 'Indica meses gratis o un porcentaje de descuento' });
+    }
+    const item = await MapPromoCode.create({
+      code, description: String(req.body.description || '').trim(),
+      discountPercent, freeMonths, active: req.body.active !== false,
+      validFrom: req.body.validFrom || undefined, validUntil: req.body.validUntil || undefined,
+      maxRedemptions: req.body.maxRedemptions || undefined,
+    });
+    res.status(201).json(item);
+  } catch (error) { res.status(error?.code === 11000 ? 409 : 400).json({ error: error.message }); }
+});
+
+router.get('/admin/map-promo-codes', ...adminOnly, async (_req, res, next) => {
+  try {
+    const items = await MapPromoCode.find().sort({ createdAt: -1 }).lean();
+    res.json(items.map((item) => ({
+      ...item, id: String(item._id), redemptionCount: item.redemptions?.length || 0,
+    })));
+  } catch (error) { next(error); }
+});
+
+router.patch('/admin/map-promo-codes/:id', ...adminOnly, async (req, res) => {
+  try {
+    const item = await MapPromoCode.findByIdAndUpdate(
+      req.params.id, { $set: { active: Boolean(req.body.active) } },
+      { new: true, runValidators: true },
+    );
+    if (!item) return res.status(404).json({ error: 'Código no encontrado' });
+    res.json(item);
+  } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
 router.get('/establishment', ...commerceOnly, async (req, res, next) => {

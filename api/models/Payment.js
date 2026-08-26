@@ -16,6 +16,8 @@ const paymentSchema = new mongoose.Schema({
   },
   providerReference: { type: String, trim: true, unique: true, sparse: true },
   commercialRequestId: { type: mongoose.Schema.Types.ObjectId, ref: 'CommercialRequest', index: true },
+  establishmentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Establishment', index: true },
+  mapSubscriptionId: { type: mongoose.Schema.Types.ObjectId, ref: 'PromocionComprada', index: true },
 });
 
 module.exports = mongoose.model("Payment", paymentSchema);

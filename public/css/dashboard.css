@@ -911,6 +911,29 @@ section {
   border-radius: 8px;
 }
 
+.commerce-location-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+  font-weight: 600;
+}
+
+.commerce-location-card input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px;
+}
+
+.commerce-location-card .commerce-inline-check {
+  flex-direction: row;
+  align-items: center;
+}
+
+.commerce-location-card .commerce-inline-check input {
+  width: auto;
+}
+
 .commerce-card-actions,
 .commerce-request-actions,
 .commerce-heading-row {
