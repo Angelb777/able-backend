@@ -198,9 +198,9 @@
       <h2>Gestión comercial</h2>
       <p>Revisión de establecimientos, posicionamientos, skins, armas, descuentos y premios.</p>
       <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
-        <button type="button" onclick="renderGestionComercial()">Actualizar</button>
+        <button type="button" data-commercial-action="refresh-admin">Actualizar</button>
         <label>Estado
-          <select id="commercialStatusFilter" onchange="renderGestionComercial()">
+          <select id="commercialStatusFilter">
             <option value="">Todos</option>
             <option value="pending_payment">Pendiente de pago</option>
             <option value="pending_material">Pendiente de material</option>
@@ -216,7 +216,7 @@
           </select>
         </label>
         <label>Tipo
-          <select id="commercialTypeFilter" onchange="renderGestionComercial()">
+          <select id="commercialTypeFilter">
             <option value="">Todos</option>
             <option value="positioning">Posicionamiento</option>
             <option value="commercial_skin">Skin</option>
@@ -368,7 +368,7 @@
           <h2>Mis solicitudes</h2>
           <p>Consulta el pago, el material, la revisión y la publicación de cada solicitud.</p>
         </div>
-        <button type="button" onclick="renderCommerceRequests()">Actualizar</button>
+        <button type="button" data-commercial-action="refresh-requests">Actualizar</button>
       </div>
       <div id="commerceRequestsList">Cargando...</div>
     </section>
@@ -940,7 +940,7 @@
 
 </main>
 
-<script src="js/dashboard.js?v=commerce-positioning-payment-1"></script>
+<script src="js/dashboard.js?v=commerce-csp-actions-1"></script>
 <script type="module">
 import { logoutWebSession } from './js/firebase-client.js';
 document.getElementById('able73-logout').addEventListener('click', async () => {

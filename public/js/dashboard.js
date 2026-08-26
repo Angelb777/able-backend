@@ -62,6 +62,44 @@ function bindGameManagementActions() {
   document.documentElement.dataset.gameManagementActionsBound = "true";
 }
 
+function bindCommercialActions() {
+  if (document.documentElement.dataset.commercialActionsBound === "true") return;
+  document.addEventListener("click", async (event) => {
+    const button = event.target?.closest?.("button[data-commercial-action]");
+    if (!button) return;
+    event.preventDefault();
+    const action = button.dataset.commercialAction;
+    const id = button.dataset.entityId || "";
+    button.disabled = true;
+    try {
+      if (action === "refresh-admin") await renderGestionComercial();
+      else if (action === "refresh-requests") await renderCommerceRequests();
+      else if (action === "manage-establishment") {
+        await commercialEstablishmentAction(id, button.dataset.workflowAction || "");
+      } else if (action === "manage-request") {
+        await commercialRequestAction(id, button.dataset.workflowAction || "");
+      } else if (action === "create-positioning") {
+        await createCommercePositioningRequest(
+          button.dataset.packageId || "",
+          Number(button.dataset.durationMonths),
+        );
+      } else if (action === "upload-material") await uploadCommerceRequestMaterial(id);
+      else if (action === "withdraw-request") await withdrawCommerceRequest(id);
+      else if (action === "pay-positioning") {
+        await payCommercePositioning(id, Number(button.dataset.amount));
+      }
+    } finally {
+      if (button.isConnected) button.disabled = false;
+    }
+  });
+  document.addEventListener("change", (event) => {
+    if (["commercialStatusFilter", "commercialTypeFilter"].includes(event.target?.id)) {
+      void renderGestionComercial();
+    }
+  });
+  document.documentElement.dataset.commercialActionsBound = "true";
+}
+
 function commercialEscape(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -78,7 +116,7 @@ function commercialId(value) {
 function commercialButtons(request) {
   const id = commercialId(request);
   const action = (key, label) =>
-    `<button type="button" onclick="commercialRequestAction('${commercialEscape(id)}','${key}')">${label}</button>`;
+    `<button type="button" data-commercial-action="manage-request" data-entity-id="${commercialEscape(id)}" data-workflow-action="${commercialEscape(key)}">${label}</button>`;
   const buttons = [];
   if (request.paymentStatus === "pending") {
     buttons.push(action("confirm_payment", "Confirmar pago manual"));
@@ -180,11 +218,11 @@ async function renderGestionComercial() {
         <div>${commercialEscape(item.address)} · ${commercialEscape(item.lat)}, ${commercialEscape(item.lng)}</div>
         ${item.reviewNotes ? `<p>Notas: ${commercialEscape(item.reviewNotes)}</p>` : ""}
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
-          <button onclick="commercialEstablishmentAction('${commercialEscape(id)}','approve')">Aprobar</button>
-          <button onclick="commercialEstablishmentAction('${commercialEscape(id)}','request_changes')">Solicitar cambios</button>
-          <button onclick="commercialEstablishmentAction('${commercialEscape(id)}','reject')">Rechazar</button>
-          <button onclick="commercialEstablishmentAction('${commercialEscape(id)}','disable')">Desactivar</button>
-          <button onclick="commercialEstablishmentAction('${commercialEscape(id)}','reopen')">Reabrir revisión</button>
+          <button type="button" data-commercial-action="manage-establishment" data-entity-id="${commercialEscape(id)}" data-workflow-action="approve">Aprobar</button>
+          <button type="button" data-commercial-action="manage-establishment" data-entity-id="${commercialEscape(id)}" data-workflow-action="request_changes">Solicitar cambios</button>
+          <button type="button" data-commercial-action="manage-establishment" data-entity-id="${commercialEscape(id)}" data-workflow-action="reject">Rechazar</button>
+          <button type="button" data-commercial-action="manage-establishment" data-entity-id="${commercialEscape(id)}" data-workflow-action="disable">Desactivar</button>
+          <button type="button" data-commercial-action="manage-establishment" data-entity-id="${commercialEscape(id)}" data-workflow-action="reopen">Reabrir revisión</button>
         </div>
       </article>`;
     }).join("") : "<p>No hay establecimientos.</p>";
@@ -409,7 +447,7 @@ async function renderCommercePositioning() {
     packagesNode.innerHTML = packages.length ? packages.map((item) => {
       const id = commercialId(item);
       const options = (item.opcionesDuracion || []).map((option) =>
-        `<button type="button" ${establishment?.status === "approved" ? "" : "disabled"} onclick="createCommercePositioningRequest('${commercialEscape(id)}', ${Number(option.duracionMeses)})">${commercialEscape(option.duracionMeses)} meses · ${commercialEscape(option.precioEuros)} €</button>`
+        `<button type="button" ${establishment?.status === "approved" ? "" : "disabled"} data-commercial-action="create-positioning" data-package-id="${commercialEscape(id)}" data-duration-months="${Number(option.duracionMeses)}">${commercialEscape(option.duracionMeses)} meses · ${commercialEscape(option.precioEuros)} €</button>`
       ).join("");
       return `<article class="commerce-card">
         ${item.imagen ? `<img src="${commercialEscape(item.imagen)}" alt="${commercialEscape(item.titulo)}">` : ""}
@@ -534,8 +572,8 @@ function commerceRequestActions(request) {
   if (!open) return "";
   return `<div class="commerce-request-actions">
     <label>Añadir material <input id="commerce-material-${commercialEscape(id)}" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,application/zip"></label>
-    <button type="button" onclick="uploadCommerceRequestMaterial('${commercialEscape(id)}')">Subir material</button>
-    <button type="button" class="commerce-secondary" onclick="withdrawCommerceRequest('${commercialEscape(id)}')">Retirar solicitud</button>
+    <button type="button" data-commercial-action="upload-material" data-entity-id="${commercialEscape(id)}">Subir material</button>
+    <button type="button" class="commerce-secondary" data-commercial-action="withdraw-request" data-entity-id="${commercialEscape(id)}">Retirar solicitud</button>
   </div>`;
 }
 
@@ -547,7 +585,7 @@ function commercePositioningPayment(request) {
   }
   const id = commercialId(request);
   return `<div class="commerce-request-actions">
-    <button type="button" onclick="payCommercePositioning('${commercialEscape(id)}', ${Number(request.price)})">Pagar y publicar · ${commercialEscape(request.price)} ${commercialEscape(request.currency)}</button>
+    <button type="button" data-commercial-action="pay-positioning" data-entity-id="${commercialEscape(id)}" data-amount="${Number(request.price)}">Pagar y publicar · ${commercialEscape(request.price)} ${commercialEscape(request.currency)}</button>
   </div>`;
 }
 
@@ -709,6 +747,7 @@ function simpleSpriteConfig(root, kind) {
 document.addEventListener("DOMContentLoaded", async () => {
   ["ufo", "bullet"].forEach(installSimpleSpriteEditor);
   bindGameManagementActions();
+  bindCommercialActions();
   try {
     const sessionResponse = await fetch('/api/auth/me');
     if (!sessionResponse.ok) throw new Error('invalid-session');
