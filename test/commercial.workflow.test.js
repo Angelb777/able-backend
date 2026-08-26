@@ -377,3 +377,68 @@ test('the public Flutter map endpoint exposes active location and proximity data
   assert.equal(body[0].lat, 41.65);
   assert.equal(body[0].lng, -0.88);
 });
+
+test('location loading survives renewal maintenance errors and reads legacy subscriptions without writing', async (t) => {
+  const previousSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = 'location-loading-secret';
+  const originals = {
+    userFindById: User.findById,
+    establishmentFind: Establishment.find,
+    subscriptionFind: PromocionComprada.find,
+  };
+  const originalConsoleError = console.error;
+  t.after(() => {
+    if (previousSecret == null) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousSecret;
+    User.findById = originals.userFindById;
+    Establishment.find = originals.establishmentFind;
+    PromocionComprada.find = originals.subscriptionFind;
+    console.error = originalConsoleError;
+  });
+
+  const ownerId = new mongoose.Types.ObjectId();
+  const locationId = new mongoose.Types.ObjectId();
+  User.findById = () => ({
+    select() { return this; },
+    lean: async () => ({ _id: ownerId, id: String(ownerId), role: 'comercio', firebaseUid: null }),
+  });
+  Establishment.find = () => ({
+    sort() { return this; },
+    lean: async () => [{
+      _id: locationId, ownerId, publicName: 'Local legacy', address: 'Calle Uno',
+      lat: 41.65, lng: -0.88, archived: false,
+    }],
+  });
+  let findCalls = 0;
+  PromocionComprada.find = () => {
+    findCalls += 1;
+    if (findCalls === 1) return { lean: async () => { throw new Error('maintenance failed'); } };
+    return {
+      sort() { return this; },
+      lean: async () => [{
+        _id: new mongoose.Types.ObjectId(), comercioId: ownerId,
+        titulo: 'Promoción antigua', activo: true, status: 'published',
+        fechaFin: new Date(Date.now() + 86400000),
+      }],
+    };
+  };
+  console.error = () => {};
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/commercial', commercialRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const token = jwt.sign({ id: String(ownerId), legacy: true }, process.env.JWT_SECRET);
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/commercial/locations`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.length, 1);
+  assert.equal(body[0].publicName, 'Local legacy');
+  assert.equal(body[0].subscription.titulo, 'Promoción antigua');
+});

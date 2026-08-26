@@ -360,7 +360,7 @@ async function commerceResponse(response) {
   const contentType = response.headers.get("content-type") || "";
   const body = contentType.includes("application/json")
     ? await response.json()
-    : { error: await response.text() };
+    : { error: response.ok ? await response.text() : `Error interno del servidor (${response.status})` };
   if (!response.ok) throw new Error(body?.error || `Error ${response.status}`);
   return body;
 }

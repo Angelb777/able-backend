@@ -175,29 +175,26 @@ function assertLocationPayload(payload) {
 }
 
 async function locationsWithSubscriptions(ownerId) {
-  await renewExpiredMapSubscriptions();
+  try {
+    await renewExpiredMapSubscriptions();
+  } catch (error) {
+    console.error('[MAP SUBSCRIPTIONS] No se pudieron actualizar las caducidades:', error.message);
+  }
   const locations = await Establishment.find({ ownerId, archived: { $ne: true } })
     .sort({ createdAt: 1 }).lean();
-  if (locations.length === 1) {
-    const legacy = await PromocionComprada.findOne({
-      comercioId: ownerId, establishmentId: null,
-    }).sort({ updatedAt: -1 });
-    if (legacy) {
-      legacy.establishmentId = locations[0]._id;
-      legacy.publicName = legacy.publicName || locations[0].publicName;
-      legacy.address = legacy.address || locations[0].address;
-      legacy.description = legacy.description || locations[0].description;
-      legacy.proximityMessage = legacy.proximityMessage || locations[0].proximityMessage;
-      legacy.proximityRadiusMeters = legacy.proximityRadiusMeters || locations[0].proximityRadiusMeters || 250;
-      await legacy.save();
-    }
-  }
+  if (!locations.length) return [];
+  const locationIds = locations.map((item) => item._id);
+  const subscriptionScope = [{ establishmentId: { $in: locationIds } }];
+  // Los posicionamientos anteriores al modelo multilocal no tenían
+  // establishmentId. Se muestran junto al único local existente sin modificar
+  // el documento legacy ni arriesgar conflictos con índices únicos.
+  if (locations.length === 1) subscriptionScope.push({ establishmentId: null });
   const subscriptions = await PromocionComprada.find({
-    comercioId: ownerId, establishmentId: { $in: locations.map((item) => item._id) },
+    comercioId: ownerId, $or: subscriptionScope,
   }).sort({ updatedAt: -1 }).lean();
   const byLocation = new Map();
   subscriptions.forEach((item) => {
-    const key = String(item.establishmentId || '');
+    const key = String(item.establishmentId || (locations.length === 1 ? locations[0]._id : ''));
     if (!byLocation.has(key)) byLocation.set(key, item);
   });
   return locations.map((item) => ({
@@ -205,8 +202,13 @@ async function locationsWithSubscriptions(ownerId) {
   }));
 }
 
-router.get('/locations', ...commerceOnly, async (req, res, next) => {
-  try { res.json(await locationsWithSubscriptions(req.user.id)); } catch (error) { next(error); }
+router.get('/locations', ...commerceOnly, async (req, res) => {
+  try {
+    res.json(await locationsWithSubscriptions(req.user.id));
+  } catch (error) {
+    console.error('[COMMERCIAL LOCATIONS] Error al cargar locales:', error);
+    res.status(500).json({ error: 'No se pudieron cargar los locales' });
+  }
 });
 
 router.post('/locations', ...commerceOnly, uploadFields, async (req, res) => {
