@@ -5,9 +5,16 @@ const bcrypt = require('bcryptjs');
 const { createAuthRouter } = require('../api/routes/auth');
 const {
   AuthenticationError,
+  normalizeRole,
   userFromFirebaseToken,
   userFromLegacyToken,
 } = require('../api/services/authIdentity');
+
+test('authentication roles are canonicalized without accepting unknown values', () => {
+  assert.equal(normalizeRole(' Comercio '), 'comercio');
+  assert.equal(normalizeRole('ADMIN'), 'admin');
+  assert.equal(normalizeRole('superadmin'), '');
+});
 
 function query(value) {
   return {
@@ -162,6 +169,25 @@ test('Firebase token requires verified password email and role comes from MongoD
     }),
   });
   assert.equal(identity.role, 'admin');
+});
+
+test('historical mixed-case Mongo roles authorize with their canonical value', async () => {
+  const UserModel = {
+    findOne() {
+      return query({
+        _id: 'commerce-id', role: ' Comercio ', firebaseUid: 'commerce-uid',
+        email: 'commerce@example.test',
+      });
+    },
+  };
+  const identity = await userFromFirebaseToken('token', {
+    UserModel,
+    firebaseAuth: firebaseAuth({
+      uid: 'commerce-uid', email_verified: true,
+      firebase: { sign_in_provider: 'password' },
+    }),
+  });
+  assert.equal(identity.role, 'comercio');
 });
 
 test('legacy token is rejected as soon as the Mongo profile has firebaseUid', async (t) => {

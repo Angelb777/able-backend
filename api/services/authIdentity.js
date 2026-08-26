@@ -2,6 +2,13 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { getFirebaseAuth } = require('./firebaseAdmin');
 
+const AUTHORIZED_ROLES = new Set(['cliente', 'comercio', 'admin']);
+
+function normalizeRole(value) {
+  const role = String(value || '').trim().toLowerCase();
+  return AUTHORIZED_ROLES.has(role) ? role : '';
+}
+
 class AuthenticationError extends Error {
   constructor(code, message = 'No se pudo validar la sesion') {
     super(message);
@@ -71,7 +78,7 @@ async function userFromFirebaseToken(token, dependencies = {}) {
   if (!user) throw new AuthenticationError('FIREBASE_PROFILE_NOT_LINKED');
   return {
     id: String(user._id),
-    role: user.role,
+    role: normalizeRole(user.role),
     firebaseUid: decoded.uid,
     email: user.email,
     nickname: user.nickname || '',
@@ -96,7 +103,7 @@ async function userFromSessionCookie(cookie, dependencies = {}) {
   if (!user) throw new AuthenticationError('FIREBASE_PROFILE_NOT_LINKED');
   return {
     id: String(user._id),
-    role: user.role,
+    role: normalizeRole(user.role),
     firebaseUid: decoded.uid,
     email: user.email,
     nickname: user.nickname || '',
@@ -124,7 +131,7 @@ async function userFromLegacyToken(token, dependencies = {}) {
   }
   return {
     id: String(user._id),
-    role: user.role,
+    role: normalizeRole(user.role),
     email: user.email,
     nickname: user.nickname || '',
     authType: 'legacy',
@@ -143,6 +150,7 @@ module.exports = {
   assertVerifiedEmail,
   decodeFirebaseIdToken,
   firebaseLike,
+  normalizeRole,
   providerIds,
   resolveBearerToken,
   userFromFirebaseToken,

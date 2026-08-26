@@ -1,5 +1,6 @@
 const {
   AuthenticationError,
+  normalizeRole,
   resolveBearerToken,
   userFromSessionCookie,
 } = require('../services/authIdentity');
@@ -58,9 +59,11 @@ async function verifyToken(req, res, next) {
 function checkRole(allowedRoles) {
   return (req, res, next) => {
     // El rol procede siempre del documento MongoDB cargado por verifyToken.
-    if (!req.user || !allowedRoles.includes(req.user.role)) {
+    const role = normalizeRole(req.user?.role);
+    if (!role || !allowedRoles.includes(role)) {
       return res.status(403).json({ error: 'Acceso denegado' });
     }
+    req.user.role = role;
     return next();
   };
 }

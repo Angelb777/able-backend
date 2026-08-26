@@ -7,6 +7,7 @@ const { getFirebaseAuth } = require('../services/firebaseAdmin');
 const {
   AuthenticationError,
   decodeFirebaseIdToken,
+  normalizeRole,
   providerIds,
   userFromFirebaseToken,
 } = require('../services/authIdentity');
@@ -45,7 +46,7 @@ function serializeUser(user, authType) {
     nickname: user.nickname || '',
     needsNickname: !user.nickname,
     email: user.email,
-    role: user.role,
+    role: normalizeRole(user.role),
     authType,
   };
 }
