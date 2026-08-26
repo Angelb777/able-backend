@@ -9,6 +9,8 @@ const PromocionComprada = require('../models/PromocionComprada');
 const Reward = require('../models/Reward');
 const Skin = require('../models/Skin');
 const Card = require('../models/Card');
+const Payment = require('../models/Payment');
+const User = require('../models/User');
 const { saveImage } = require('../utils/mediaStorage');
 const {
   FIXED_PRICES, fixedPrice, pendingStatus, assertCanApprove,
@@ -225,6 +227,11 @@ router.post('/requests', ...commerceOnly, uploadFields, async (req, res) => {
     let price = type === 'positioning' ? 0 : fixedPrice(type, subtype);
     let paymentStatus = price === 0 ? 'not_required' : 'pending';
     if (type === 'positioning') {
+      if (establishment.status !== 'approved') {
+        return res.status(409).json({
+          error: 'Able73 debe aprobar Mi establecimiento antes de contratar posicionamiento',
+        });
+      }
       const packageId = String(formData.packageId || req.body.packageId || '');
       const durationMonths = Number(formData.durationMonths || req.body.durationMonths);
       const packageDoc = await PromocionNegocio.findById(packageId);
@@ -333,6 +340,84 @@ router.patch('/requests/:id/withdraw', ...commerceOnly, async (req, res) => {
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
+async function payablePositioningRequest(requestId, ownerId) {
+  const request = await CommercialRequest.findOne({ _id: requestId, ownerId });
+  if (!request) throw Object.assign(new Error('Solicitud no encontrada'), { status: 404 });
+  if (request.type !== 'positioning') {
+    throw Object.assign(new Error('Este pago no corresponde a un posicionamiento'), { status: 409 });
+  }
+  const establishment = await Establishment.findOne({
+    _id: request.establishmentId, ownerId, status: 'approved',
+  });
+  if (!establishment) {
+    throw Object.assign(new Error('Able73 debe aprobar el establecimiento antes del pago'), { status: 409 });
+  }
+  if (!(Number(request.price) > 0) || request.currency !== 'EUR') {
+    throw Object.assign(new Error('El importe de la solicitud no es válido'), { status: 409 });
+  }
+  return request;
+}
+
+// Checkout interno provisional. Cuando exista TPV, esta ruta será el único
+// punto que habrá que sustituir por la confirmación firmada del proveedor.
+router.post('/requests/:id/pay', ...commerceOnly, async (req, res) => {
+  try {
+    const request = await payablePositioningRequest(req.params.id, req.user.id);
+    if (request.status === 'published') {
+      return res.json({ status: 'published', request: requestJson(request) });
+    }
+    const retryConfirmedPayment = request.paymentProvider === 'platform'
+      && request.paymentStatus === 'confirmed' && request.status === 'approved';
+    if (!retryConfirmedPayment
+      && (request.paymentStatus !== 'pending' || request.status !== 'pending_payment')) {
+      return res.status(409).json({ error: 'Esta solicitud ya no está pendiente de pago' });
+    }
+
+    const now = request.paymentConfirmedAt || new Date();
+    const paymentReference = request.paymentReference
+      || `ABLE73-${request._id}-${now.getTime()}`;
+    if (!retryConfirmedPayment) {
+      request.paymentProvider = 'platform';
+      request.paymentStatus = 'confirmed';
+      request.paymentReference = paymentReference;
+      request.paymentConfirmedAt = now;
+      request.approvedAt = now;
+      recordTransition(request, {
+        action: 'platform_payment_confirmed', status: 'approved', actorId: req.user.id,
+        actorRole: 'payment_provider', notes: paymentReference, now,
+      });
+      await request.save();
+    }
+
+    const target = await publishRequest(request, {}, req.user.id, 'payment_provider');
+    try {
+      const owner = await User.findById(req.user.id).select('nombre nickname email').lean();
+      await Payment.findOneAndUpdate(
+        { providerReference: paymentReference },
+        { $setOnInsert: {
+          userId: req.user.id,
+          nombre: owner?.nombre || owner?.nickname || owner?.email || 'Comercio',
+          cantidad: request.price,
+          motivo: request.title,
+          currency: request.currency,
+          fecha: now,
+          verified: true,
+          verifiedAt: now,
+          source: 'platform_checkout',
+          providerReference: paymentReference,
+          commercialRequestId: request._id,
+        } },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      );
+    } catch (paymentLogError) {
+      console.error('[COMMERCIAL] No se pudo registrar el pago interno:', paymentLogError.message);
+    }
+    return res.json({ status: 'published', request: requestJson(request), target });
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
 router.get('/admin/establishments', ...adminOnly, async (req, res, next) => {
   try {
     const filter = req.query.status ? { status: req.query.status } : {};
@@ -377,7 +462,7 @@ router.get('/admin/requests', ...adminOnly, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-async function publishRequest(request, publicationData, adminId) {
+async function publishRequest(request, publicationData, actorId, actorRole = 'admin') {
   const now = new Date();
   let target;
   if (request.type === 'positioning') {
@@ -482,8 +567,8 @@ async function publishRequest(request, publicationData, adminId) {
   request.targetId = target._id;
   request.publishedAt = now;
   recordTransition(request, {
-    action: 'publish', status: 'published', actorId: adminId,
-    actorRole: 'admin', notes: String(publicationData.notes || ''), now,
+    action: 'publish', status: 'published', actorId,
+    actorRole, notes: String(publicationData.notes || ''), now,
   });
   await request.save();
   return target;

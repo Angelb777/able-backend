@@ -40,6 +40,11 @@ router.post('/', verifyToken, checkRole(['comercio']), upload.single('logo'), as
     if (!establishment) {
       return res.status(409).json({ error: 'Completa primero Mi establecimiento en la app' });
     }
+    if (establishment.status !== 'approved') {
+      return res.status(409).json({
+        error: 'Able73 debe aprobar Mi establecimiento antes de contratar posicionamiento',
+      });
+    }
     let logoUrl = establishment.logoUrl;
     const materials = [];
     if (req.file) {

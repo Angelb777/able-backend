@@ -54,6 +54,7 @@ const commercialRequestSchema = new mongoose.Schema({
     index: true,
   },
   paymentReference: { type: String, maxlength: 240, default: '' },
+  paymentProvider: { type: String, enum: ['', 'platform', 'manual'], default: '' },
   paymentConfirmedAt: Date,
   formData: { type: mongoose.Schema.Types.Mixed, default: () => ({}) },
   materials: { type: [materialSchema], default: [] },

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const User = require('../api/models/User');
 
 const commercialRouter = require('../api/routes/commercial');
@@ -10,6 +11,9 @@ const legacyPositioningRouter = require('../api/routes/promoContratada');
 const positioningPackagesRouter = require('../api/routes/promocionesNegocio');
 const rewardsRouter = require('../api/routes/rewards');
 const CommercialRequest = require('../api/models/CommercialRequest');
+const Establishment = require('../api/models/Establishment');
+const PromocionComprada = require('../api/models/PromocionComprada');
+const Payment = require('../api/models/Payment');
 const {
   fixedPrice, pendingStatus, assertCanApprove, addOneYear, recordTransition,
 } = require('../api/services/commercialWorkflow');
@@ -116,4 +120,113 @@ test('commercial and legacy positioning endpoints enforce role boundaries', asyn
   assert.equal((await call('/api/rewards', 'cliente', 'POST')).status, 403);
   assert.equal((await call('/api/rewards/orden-catalogo', 'comercio', 'PATCH')).status, 403);
   assert.equal((await call('/api/rewards/orden-catalogo', 'admin', 'PATCH')).status, 400);
+});
+
+test('internal platform payment publishes an approved establishment for the Flutter map', async (t) => {
+  const previousSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = 'commercial-platform-payment-secret';
+  const originals = {
+    userFindById: User.findById,
+    requestFindOne: CommercialRequest.findOne,
+    establishmentFindOne: Establishment.findOne,
+    positioningUpsert: PromocionComprada.findOneAndUpdate,
+    paymentUpsert: Payment.findOneAndUpdate,
+  };
+  t.after(() => {
+    if (previousSecret == null) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousSecret;
+    User.findById = originals.userFindById;
+    CommercialRequest.findOne = originals.requestFindOne;
+    Establishment.findOne = originals.establishmentFindOne;
+    PromocionComprada.findOneAndUpdate = originals.positioningUpsert;
+    Payment.findOneAndUpdate = originals.paymentUpsert;
+  });
+
+  const ownerId = new mongoose.Types.ObjectId();
+  const requestId = new mongoose.Types.ObjectId();
+  const establishmentId = new mongoose.Types.ObjectId();
+  const packageId = new mongoose.Types.ObjectId();
+  const publishedId = new mongoose.Types.ObjectId();
+  const request = {
+    _id: requestId,
+    ownerId,
+    establishmentId,
+    type: 'positioning',
+    title: 'Mapa local · 3 meses',
+    price: 30,
+    currency: 'EUR',
+    status: 'pending_payment',
+    paymentStatus: 'pending',
+    paymentProvider: '',
+    paymentReference: '',
+    formData: {
+      packageId, packageTitle: 'Mapa local', baseImageUrl: '/api/media/base',
+      durationMonths: 3,
+    },
+    history: [],
+    revision: 1,
+    async save() {},
+    toJSON() { return { ...this, id: String(this._id) }; },
+  };
+  const establishment = {
+    _id: establishmentId, ownerId, status: 'approved', publicName: 'Local Able',
+    logoUrl: '/api/media/logo', lat: 41.65, lng: -0.88,
+  };
+  let positioningUpdate;
+  let paymentUpdate;
+  let positioningWrites = 0;
+  let paymentWrites = 0;
+  User.findById = () => ({
+    select() { return this; },
+    lean: async () => ({
+      _id: ownerId, role: 'comercio', firebaseUid: null,
+      email: 'commerce@example.test', nickname: 'Commerce',
+    }),
+  });
+  CommercialRequest.findOne = async () => request;
+  Establishment.findOne = async () => establishment;
+  PromocionComprada.findOneAndUpdate = async (_filter, update) => {
+    positioningWrites += 1;
+    positioningUpdate = update.$set;
+    return { _id: publishedId, ...update.$set };
+  };
+  Payment.findOneAndUpdate = async (_filter, update) => {
+    paymentWrites += 1;
+    paymentUpdate = update.$setOnInsert;
+    return paymentUpdate;
+  };
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/commercial', commercialRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const token = jwt.sign({ id: String(ownerId), legacy: true }, process.env.JWT_SECRET);
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/commercial/requests/${requestId}/pay`,
+    { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'published');
+  assert.equal(request.status, 'published');
+  assert.equal(request.paymentStatus, 'confirmed');
+  assert.equal(request.paymentProvider, 'platform');
+  assert.equal(positioningUpdate.status, 'published');
+  assert.equal(positioningUpdate.activo, true);
+  assert.equal(positioningUpdate.logoComercio, establishment.logoUrl);
+  assert.equal(positioningUpdate.lat, establishment.lat);
+  assert.equal(positioningUpdate.lng, establishment.lng);
+  assert.equal(paymentUpdate.commercialRequestId, requestId);
+  assert.equal(paymentUpdate.source, 'platform_checkout');
+
+  const retry = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/commercial/requests/${requestId}/pay`,
+    { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+  );
+  assert.equal(retry.status, 200);
+  assert.equal(positioningWrites, 1);
+  assert.equal(paymentWrites, 1);
 });

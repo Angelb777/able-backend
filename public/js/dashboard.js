@@ -399,14 +399,17 @@ async function renderCommercePositioning() {
     if (!establishment) {
       statusNode.className = "commerce-notice commerce-warning";
       statusNode.textContent = "Primero debes completar Mi establecimiento.";
+    } else if (establishment.status !== "approved") {
+      statusNode.className = "commerce-notice commerce-warning";
+      statusNode.innerHTML = `Establecimiento: <strong>${commercialEscape(establishment.publicName)}</strong> · Estado: <strong>${commercialEscape(commerceStatusLabels[establishment.status] || establishment.status)}</strong>. Podrás contratar cuando Able73 lo apruebe.`;
     } else {
       statusNode.className = "commerce-notice";
-      statusNode.innerHTML = `Establecimiento: <strong>${commercialEscape(establishment.publicName)}</strong> · Estado: <strong>${commercialEscape(commerceStatusLabels[establishment.status] || establishment.status)}</strong>`;
+      statusNode.innerHTML = `Establecimiento: <strong>${commercialEscape(establishment.publicName)}</strong> · Estado: <strong>Aprobado</strong>. Ya puedes contratar su aparición en el mapa.`;
     }
     packagesNode.innerHTML = packages.length ? packages.map((item) => {
       const id = commercialId(item);
       const options = (item.opcionesDuracion || []).map((option) =>
-        `<button type="button" ${establishment ? "" : "disabled"} onclick="createCommercePositioningRequest('${commercialEscape(id)}', ${Number(option.duracionMeses)})">${commercialEscape(option.duracionMeses)} meses · ${commercialEscape(option.precioEuros)} €</button>`
+        `<button type="button" ${establishment?.status === "approved" ? "" : "disabled"} onclick="createCommercePositioningRequest('${commercialEscape(id)}', ${Number(option.duracionMeses)})">${commercialEscape(option.duracionMeses)} meses · ${commercialEscape(option.precioEuros)} €</button>`
       ).join("");
       return `<article class="commerce-card">
         ${item.imagen ? `<img src="${commercialEscape(item.imagen)}" alt="${commercialEscape(item.titulo)}">` : ""}
@@ -431,7 +434,7 @@ async function createCommercePositioningRequest(packageId, durationMonths) {
   data.set("formData", JSON.stringify({ packageId, durationMonths }));
   try {
     await commerceResponse(await fetch("/api/commercial/requests", { method: "POST", body: data }));
-    alert("Solicitud creada. El pago queda pendiente de confirmación por Able73.");
+    alert("Solicitud creada. Completa el pago interno en Mis solicitudes para publicarla en el mapa.");
     await renderCommerceRequests();
   } catch (error) {
     alert(error.message);
@@ -536,6 +539,31 @@ function commerceRequestActions(request) {
   </div>`;
 }
 
+function commercePositioningPayment(request) {
+  if (request.type !== "positioning" || request.status !== "pending_payment"
+      || request.paymentStatus !== "pending") return "";
+  if (request.establishmentId?.status !== "approved") {
+    return '<p class="commerce-notice commerce-warning">El pago se habilitará cuando Able73 apruebe el establecimiento.</p>';
+  }
+  const id = commercialId(request);
+  return `<div class="commerce-request-actions">
+    <button type="button" onclick="payCommercePositioning('${commercialEscape(id)}', ${Number(request.price)})">Pagar y publicar · ${commercialEscape(request.price)} ${commercialEscape(request.currency)}</button>
+  </div>`;
+}
+
+async function payCommercePositioning(id, amount) {
+  if (!confirm(`Confirmar el pago interno de ${amount} EUR y publicar el establecimiento en el mapa?`)) return;
+  try {
+    await commerceResponse(await fetch(`/api/commercial/requests/${encodeURIComponent(id)}/pay`, {
+      method: "POST",
+    }));
+    alert("Pago registrado. Tu establecimiento ya está publicado en el mapa de Able73.");
+    await renderCommerceRequests();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 async function renderCommerceRequests() {
   if (!commerceShowSection("commerceRequests")) return;
   const node = document.getElementById("commerceRequestsList");
@@ -560,7 +588,8 @@ async function renderCommerceRequests() {
         </dl>
         <p><strong>Material:</strong> ${materials}</p>
         ${request.reviewNotes ? `<p class="commerce-notice"><strong>Notas de Able73:</strong> ${commercialEscape(request.reviewNotes)}</p>` : ""}
-        ${request.paymentStatus === "pending" ? "<p class=\"commerce-notice commerce-warning\">Pago pendiente de verificación. La pasarela comercial aún no está conectada; Able73 debe confirmar el cobro.</p>" : ""}
+        ${commercePositioningPayment(request)}
+        ${request.paymentStatus === "pending" && request.type !== "positioning" ? "<p class=\"commerce-notice commerce-warning\">Pago pendiente de verificación por Able73.</p>" : ""}
         ${commerceRequestActions(request)}
       </article>`;
     }).join("") : "<p>Todavía no tienes solicitudes.</p>";

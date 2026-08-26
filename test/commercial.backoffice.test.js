@@ -13,7 +13,7 @@ test('the served web dashboard exposes the centralized commerce workflow', () =>
 
   assert.match(server, /express\.static\(path\.join\(__dirname,\s*['"]public['"]\)\)/);
   assert.match(server, /app\.use\(['"]\/api\/commercial['"]/);
-  assert.match(html, /<script src="js\/dashboard\.js\?v=reward-catalog-order-1"><\/script>/);
+  assert.match(html, /<script src="js\/dashboard\.js\?v=commerce-positioning-payment-1"><\/script>/);
 
   for (const id of [
     'commerceEstablishment',
@@ -49,4 +49,7 @@ test('the served web dashboard exposes the centralized commerce workflow', () =>
     assert.ok(script.includes(endpoint), `${endpoint} must be connected from the dashboard`);
   }
   assert.match(script, /role = String\(user\.role \|\| ""\)\.toLowerCase\(\)/);
+  assert.match(script, /establishment\?\.status === "approved"/);
+  assert.match(script, /\/api\/commercial\/requests\/\$\{encodeURIComponent\(id\)\}\/pay/);
+  assert.match(script, /Pagar y publicar/);
 });
