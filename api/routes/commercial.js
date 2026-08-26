@@ -334,10 +334,9 @@ router.post('/locations/:id/subscribe', ...commerceOnly, async (req, res) => {
         mapPlanId: plan._id, planCode: plan.code,
         titulo: location.publicName, publicName: location.publicName,
         description: location.description, address: location.address,
-        // Flutter compone el marcador descargando logoComercio e imagenBase.
-        // Si no existe una plantilla distinta, reutilizamos el logo para que
-        // nunca intente decodificar la portada HTML como una imagen.
-        logoComercio: location.logoUrl, imagenBase: location.logoUrl,
+        // Plantilla fija del local. Flutter coloca el logo del comercio en su
+        // letrero y genera un único marcador compacto.
+        logoComercio: location.logoUrl, imagenBase: '/img/local.png',
         lat: location.lat, lng: location.lng,
         proximityMessage: location.proximityMessage || `¿Te apetece visitar ${location.publicName}?`,
         proximityRadiusMeters: location.proximityRadiusMeters,
