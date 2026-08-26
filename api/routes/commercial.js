@@ -334,7 +334,11 @@ router.post('/locations/:id/subscribe', ...commerceOnly, async (req, res) => {
         mapPlanId: plan._id, planCode: plan.code,
         titulo: location.publicName, publicName: location.publicName,
         description: location.description, address: location.address,
-        logoComercio: location.logoUrl, imagenBase: '', lat: location.lat, lng: location.lng,
+        // Flutter compone el marcador descargando logoComercio e imagenBase.
+        // Si no existe una plantilla distinta, reutilizamos el logo para que
+        // nunca intente decodificar la portada HTML como una imagen.
+        logoComercio: location.logoUrl, imagenBase: location.logoUrl,
+        lat: location.lat, lng: location.lng,
         proximityMessage: location.proximityMessage || `¿Te apetece visitar ${location.publicName}?`,
         proximityRadiusMeters: location.proximityRadiusMeters,
         duracionMeses: plan.durationMonths, precioEuros: price,

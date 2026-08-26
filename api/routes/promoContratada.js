@@ -104,7 +104,9 @@ router.get('/activas', async (_req, res) => {
     res.json(active.map((item) => ({
       ...item, id: String(item._id), _id: item._id,
       logoComercio: item.logoComercio,
-      imagenBase: item.imagenBase || '',
+      // Compatibilidad inmediata con las APK existentes: su generador de
+      // marcadores requiere dos URLs de imagen válidas.
+      imagenBase: item.imagenBase || item.logoComercio,
       publicName: item.publicName || item.titulo || '',
       address: item.address || '',
       description: item.description || '',
