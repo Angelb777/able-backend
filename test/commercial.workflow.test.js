@@ -353,7 +353,7 @@ test('the public Flutter map endpoint exposes active location and proximity data
         titulo: 'CoffeeMax', publicName: 'CoffeeMax', address: 'Calle Uno',
         description: 'Café', logoComercio: '/api/media/coffee', imagenBase: '',
         lat: 41.65, lng: -0.88, activo: true, status: 'published',
-        proximityMessage: '¿Te apetece tomar un café en CoffeeMax?',
+        proximityMessage: '¿Te apetece tomar un café en CoffeeMax? Hoy tenemos una promoción especial.',
         proximityRadiusMeters: 200, fechaFin: new Date(Date.now() + 86400000),
       }],
     };
@@ -375,6 +375,7 @@ test('the public Flutter map endpoint exposes active location and proximity data
   assert.equal(body[0].publicName, 'CoffeeMax');
   assert.equal(body[0].imagenBase, '/img/local.png');
   assert.equal(body[0].proximityRadiusMeters, 250);
+  assert.equal(body[0].proximityMessage.length, 50);
   assert.match(body[0].proximityMessage, /CoffeeMax/);
   assert.equal(body[0].lat, 41.65);
   assert.equal(body[0].lng, -0.88);

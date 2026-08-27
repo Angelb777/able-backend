@@ -110,7 +110,8 @@ router.get('/activas', async (_req, res) => {
       publicName: item.publicName || item.titulo || '',
       address: item.address || '',
       description: item.description || '',
-      proximityMessage: item.proximityMessage || '',
+      // Acota también contratos antiguos para mantener el aviso de Flutter breve.
+      proximityMessage: String(item.proximityMessage || '').trim().slice(0, 50),
       proximityRadiusMeters: 250,
       establishmentId: item.establishmentId ? String(item.establishmentId) : null,
     })));

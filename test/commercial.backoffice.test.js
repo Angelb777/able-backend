@@ -61,6 +61,7 @@ test('the dashboard exposes direct multi-location map subscriptions', () => {
   assert.match(script, /function bindCommercialActions\(\)/);
   assert.match(script, /data-commercial-action="subscribe-location"/);
   assert.match(html, /a menos de 250 metros/i);
+  assert.match(html, /name="proximityMessage" maxlength="50"/);
   assert.doesNotMatch(html, /id="commerceLocationRadius"/);
   assert.equal((html.match(/mailto:info@able73\.com/g) || []).length >= 2, true);
 

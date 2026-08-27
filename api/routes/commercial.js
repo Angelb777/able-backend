@@ -169,6 +169,9 @@ function assertLocationPayload(payload) {
   if (!payload.publicName || !payload.address) {
     throw new Error('Nombre público y dirección son obligatorios');
   }
+  if (payload.proximityMessage.length > 50) {
+    throw new Error('El mensaje de proximidad no puede superar los 50 caracteres');
+  }
 }
 
 async function locationsWithSubscriptions(ownerId) {
@@ -335,7 +338,9 @@ router.post('/locations/:id/subscribe', ...commerceOnly, async (req, res) => {
         // letrero y genera un único marcador compacto.
         logoComercio: location.logoUrl, imagenBase: '/img/local.png',
         lat: location.lat, lng: location.lng,
-        proximityMessage: location.proximityMessage || `¿Te apetece visitar ${location.publicName}?`,
+        proximityMessage: String(
+          location.proximityMessage || `¿Te apetece visitar ${location.publicName}?`,
+        ).trim().slice(0, 50),
         proximityRadiusMeters: 250,
         duracionMeses: plan.durationMonths, precioEuros: price,
         originalPriceEuros: plan.priceEuros, fechaInicio: now, fechaFin: end,

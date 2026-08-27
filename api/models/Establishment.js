@@ -18,7 +18,7 @@ const establishmentSchema = new mongoose.Schema({
   logoUrl: { type: String, default: '' },
   lat: { type: Number, min: -90, max: 90, required: true },
   lng: { type: Number, min: -180, max: 180, required: true },
-  proximityMessage: { type: String, trim: true, maxlength: 180, default: '' },
+  proximityMessage: { type: String, trim: true, maxlength: 50, default: '' },
   proximityRadiusMeters: { type: Number, min: 25, max: 5000, default: 250 },
   archived: { type: Boolean, default: false, index: true },
   status: {
