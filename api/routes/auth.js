@@ -212,6 +212,13 @@ function createAuthRouter(dependencies = {}) {
         nickname: checked.nickname,
         normalizedNickname: checked.normalizedNickname,
         role,
+        ...(role === 'cliente' ? {
+          onboarding: {
+            version: 1,
+            status: 'active',
+            step: 'mapBasics',
+          },
+        } : {}),
       });
       try {
         await user.save();

@@ -20,6 +20,21 @@ const cardUpgradeSchema = new mongoose.Schema({
   upgradeLevel: { type: Number, min: 0, max: 3, default: 0 },
 }, { _id: false });
 
+const onboardingSchema = new mongoose.Schema({
+  version: { type: Number, required: true },
+  status: {
+    type: String,
+    enum: ['active', 'completed', 'skipped'],
+    default: 'active',
+  },
+  step: { type: String, default: 'mapBasics' },
+  projectileCard: { type: mongoose.Schema.Types.ObjectId, ref: 'Card' },
+  placementCard: { type: mongoose.Schema.Types.ObjectId, ref: 'Card' },
+  spinRequestIds: { type: [String], default: [] },
+  completedAt: { type: Date },
+  skippedAt: { type: Date },
+}, { _id: false });
+
 const userSchema = new mongoose.Schema({
   nickname: { type: String, trim: true, maxlength: 20 },
   normalizedNickname: { type: String, trim: true, maxlength: 20 },
@@ -50,6 +65,9 @@ const userSchema = new mongoose.Schema({
   cardUpgrades: { type: [cardUpgradeSchema], default: [] },
   cardUpgradeRequestIds: { type: [String], default: [], select: false },
   rouletteRequestIds: { type: [String], default: [], select: false },
+  // No tiene default a propósito: las cuentas existentes quedan fuera. Las
+  // nuevas cuentas cliente lo inicializan expresamente durante el registro.
+  onboarding: { type: onboardingSchema, default: undefined },
   // Claves autoritativas de recompensas de racha ya aplicadas. Permiten que
   // el abono y su proteccion contra duplicados ocurran en una sola escritura.
   streakRewardKeys: { type: [String], default: [], select: false },
