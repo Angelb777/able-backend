@@ -101,6 +101,8 @@ function bindCommercialActions() {
         resetCommerceLocationForm();
       } else if (action === "toggle-map-promo-code") {
         await toggleMapPromoCode(id, button.dataset.active === "true");
+      } else if (action === "navigate-commerce") {
+        renderSection(button.dataset.section || "Inicio");
       }
     } finally {
       if (button.isConnected) button.disabled = false;
@@ -356,6 +358,10 @@ function commerceShowSection(id) {
   return section;
 }
 
+function renderCommerceHome() {
+  commerceShowSection("commerceHome");
+}
+
 async function commerceResponse(response) {
   const contentType = response.headers.get("content-type") || "";
   const body = contentType.includes("application/json")
@@ -503,7 +509,7 @@ function commerceLocationCard(location) {
     <h3>${commercialEscape(location.publicName)}</h3>
     <p>${commercialEscape(location.address)}</p>
     <p><strong>${commercialEscape(commerceSubscriptionState(subscription))}</strong></p>
-    <p><small>${commercialEscape(location.lat)}, ${commercialEscape(location.lng)} · Aviso a ${commercialEscape(location.proximityRadiusMeters || 250)} m</small></p>
+    <p><small>${commercialEscape(location.lat)}, ${commercialEscape(location.lng)} · Aviso de proximidad fijo a 250 m</small></p>
     <label>Código promocional
       <input id="commerce-promo-${commercialEscape(id)}" type="text" maxlength="40" placeholder="Opcional">
     </label>
@@ -525,8 +531,6 @@ function resetCommerceLocationForm() {
   if (!form) return;
   form.reset();
   form.dataset.editingId = "";
-  const radius = form.elements.namedItem("proximityRadiusMeters");
-  if (radius) radius.value = "250";
   document.getElementById("commerceLocationFormTitle").textContent = "Añadir otro local";
   document.getElementById("commerceEstablishmentLogo").innerHTML = "<small>El logo es obligatorio al crear un local.</small>";
   const cancel = form.querySelector('[data-commercial-action="cancel-location-edit"]');
@@ -537,9 +541,9 @@ function editCommerceLocation(id) {
   const location = commerceLocationsCache.find((item) => commercialId(item) === String(id));
   const form = document.getElementById("commerceEstablishmentForm");
   if (!location || !form) return;
-  ["publicName", "legalName", "description", "address", "city", "country", "phone", "website", "lat", "lng", "proximityMessage", "proximityRadiusMeters"].forEach((name) => {
+  ["publicName", "legalName", "description", "address", "city", "country", "phone", "website", "lat", "lng", "proximityMessage"].forEach((name) => {
     const input = form.elements.namedItem(name);
-    if (input) input.value = location[name] ?? (name === "proximityRadiusMeters" ? 250 : "");
+    if (input) input.value = location[name] ?? "";
   });
   form.dataset.editingId = id;
   document.getElementById("commerceLocationFormTitle").textContent = `Editar ${location.publicName}`;
@@ -1043,6 +1047,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       "Mis vehículos"
     ],
     comercio: [
+      "Inicio",
       "Mi establecimiento",
       "Skins",
       "Armas",
@@ -1111,7 +1116,8 @@ function renderSection(section) {
       if (role === "comercio") renderPagosComercio();
       break;
     case "Inicio":
-      renderInicio();
+      if (role === "comercio") renderCommerceHome();
+      else renderInicio();
       break;
     case "Pagos":
       if (role === "admin") renderPagos();

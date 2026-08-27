@@ -111,7 +111,7 @@ router.get('/activas', async (_req, res) => {
       address: item.address || '',
       description: item.description || '',
       proximityMessage: item.proximityMessage || '',
-      proximityRadiusMeters: item.proximityRadiusMeters || 250,
+      proximityRadiusMeters: 250,
       establishmentId: item.establishmentId ? String(item.establishmentId) : null,
     })));
   } catch (error) {

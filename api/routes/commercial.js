@@ -159,7 +159,8 @@ function locationPayload(body) {
     lat: finiteCoordinate(body.lat, -90, 90, 'Latitud'),
     lng: finiteCoordinate(body.lng, -180, 180, 'Longitud'),
     proximityMessage: String(body.proximityMessage || '').trim(),
-    proximityRadiusMeters: Number(body.proximityRadiusMeters || 250),
+    // El alcance es una regla de Able73, no una decisión del comercio.
+    proximityRadiusMeters: 250,
     status: 'approved', archived: false, reviewNotes: '',
   };
 }
@@ -167,10 +168,6 @@ function locationPayload(body) {
 function assertLocationPayload(payload) {
   if (!payload.publicName || !payload.address) {
     throw new Error('Nombre público y dirección son obligatorios');
-  }
-  if (!Number.isFinite(payload.proximityRadiusMeters)
-    || payload.proximityRadiusMeters < 25 || payload.proximityRadiusMeters > 5000) {
-    throw new Error('El radio de aviso debe estar entre 25 y 5000 metros');
   }
 }
 
@@ -242,7 +239,7 @@ router.put('/locations/:id', ...commerceOnly, uploadFields, async (req, res) => 
         description: location.description, address: location.address,
         logoComercio: location.logoUrl, lat: location.lat, lng: location.lng,
         proximityMessage: location.proximityMessage,
-        proximityRadiusMeters: location.proximityRadiusMeters,
+        proximityRadiusMeters: 250,
       } },
     );
     res.json(location);
@@ -339,7 +336,7 @@ router.post('/locations/:id/subscribe', ...commerceOnly, async (req, res) => {
         logoComercio: location.logoUrl, imagenBase: '/img/local.png',
         lat: location.lat, lng: location.lng,
         proximityMessage: location.proximityMessage || `¿Te apetece visitar ${location.publicName}?`,
-        proximityRadiusMeters: location.proximityRadiusMeters,
+        proximityRadiusMeters: 250,
         duracionMeses: plan.durationMonths, precioEuros: price,
         originalPriceEuros: plan.priceEuros, fechaInicio: now, fechaFin: end,
         activo: true, status: 'published',

@@ -15,9 +15,11 @@ test('the dashboard exposes direct multi-location map subscriptions', () => {
 
   assert.match(server, /express\.static\(path\.join\(__dirname,\s*['"]public['"]\)\)/);
   assert.match(server, /app\.use\(['"]\/api\/commercial['"]/);
-  assert.match(html, /<script src="js\/dashboard\.js\?v=commerce-locations-1"><\/script>/);
+  assert.match(html, /<link rel="stylesheet" href="css\/dashboard\.css\?v=commerce-proximity-home-1" \/>/);
+  assert.match(html, /<script src="js\/dashboard\.js\?v=commerce-proximity-home-1"><\/script>/);
 
   for (const id of [
+    'commerceHome',
     'commerceEstablishment',
     'commerceLocationsList',
     'commerceSkins',
@@ -31,6 +33,7 @@ test('the dashboard exposes direct multi-location map subscriptions', () => {
   assert.ok(commerceMenu, 'commerce menu must exist');
   const labels = Array.from(commerceMenu[1].matchAll(/"([^"]+)"/g), (match) => match[1]);
   assert.deepEqual(labels, [
+    'Inicio',
     'Mi establecimiento',
     'Skins',
     'Armas',
@@ -57,6 +60,8 @@ test('the dashboard exposes direct multi-location map subscriptions', () => {
   assert.doesNotMatch(commerceMenu[1], /Posicionamiento|Mis solicitudes/);
   assert.match(script, /function bindCommercialActions\(\)/);
   assert.match(script, /data-commercial-action="subscribe-location"/);
+  assert.match(html, /a menos de 250 metros/i);
+  assert.doesNotMatch(html, /id="commerceLocationRadius"/);
 
   const commercialHtml = html.slice(
     html.indexOf('id="commerceEstablishment"'),

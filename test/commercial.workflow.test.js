@@ -330,7 +330,7 @@ test('a commerce can subscribe a location directly and the payment enters the pl
   assert.equal(published.establishmentId, locationId);
   assert.equal(published.publicName, 'CoffeeMax');
   assert.equal(published.imagenBase, '/img/local.png');
-  assert.equal(published.proximityRadiusMeters, 200);
+  assert.equal(published.proximityRadiusMeters, 250);
   assert.equal(published.autoRenew, true);
   assert.equal(published.precioEuros, 20);
   assert.equal(ledger.cantidad, 20);
@@ -374,7 +374,7 @@ test('the public Flutter map endpoint exposes active location and proximity data
   assert.equal(body.length, 1);
   assert.equal(body[0].publicName, 'CoffeeMax');
   assert.equal(body[0].imagenBase, '/img/local.png');
-  assert.equal(body[0].proximityRadiusMeters, 200);
+  assert.equal(body[0].proximityRadiusMeters, 250);
   assert.match(body[0].proximityMessage, /CoffeeMax/);
   assert.equal(body[0].lat, 41.65);
   assert.equal(body[0].lng, -0.88);
