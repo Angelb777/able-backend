@@ -291,6 +291,10 @@ function createPoliceRuntime({
     const incident = incidents.get(wanted.incidentId);
     return Boolean(incident?.units.has(String(unitId)));
   };
+  const hasActivePursuitInZone = (zoneId) => [...wantedUsers.values()]
+    .some((wanted) => wanted.stars > 0 &&
+      playersForUser(wanted.userId).some((player) =>
+        player.zoneId === zoneId && player.gameModeEnabled !== false));
   const selectTarget = (incident, unit, timestamp) => {
     const current = validTarget(incident, unit.targetUserId);
     if (current && timestamp < unit.targetLockedUntil) return current;
@@ -527,6 +531,7 @@ function createPoliceRuntime({
     handleDisconnect: () => false, refreshConfig: () => loadConfig(true),
     getUnitsInZone: (zoneId) => [...incidents.values()].filter((item) => item.zoneId === zoneId)
       .flatMap((item) => [...item.units.values()]),
+    hasActivePursuitInZone,
     isUnitHostileToUser,
     applyBulletDamage,
     getSnapshot: (zoneId) => ({

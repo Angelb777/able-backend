@@ -511,6 +511,20 @@ module.exports = function(io, dependencies = {}) {
     };
   };
 
+  const emitBulletImpact = (bulletId, bullet, hit = {}) => {
+    nsp.to(bullet.zoneId).emit('bullet:impact', {
+      bulletId,
+      clientShotId: bullet.clientShotId,
+      byUserId: bullet.byUserId,
+      hitUserId: hit.userId || null,
+      hitTurretId: hit.turretId || null,
+      hitUfoId: hit.ufoId || null,
+      policeUnitId: hit.policeUnitId || null,
+      lat: bullet.lat,
+      lng: bullet.lng,
+    });
+  };
+
   const bumpUfo = (state, nextState) => {
     state.seq = (state.seq || 0) + 1;
     if (nextState) state.state = nextState;
@@ -607,7 +621,7 @@ module.exports = function(io, dependencies = {}) {
       return distance || String(a.userId).localeCompare(String(b.userId));
     })[0] || null;
 
-  const scheduleUfosAfterFirstShot = async (zoneId, origin) => {
+  const scheduleUfosAfterClientHome = async (zoneId, origin) => {
     if (scheduledUfoZones.has(zoneId)) return;
     scheduledUfoZones.add(zoneId);
     const configuredUfos = await UfoModel.find().lean().catch((error) => {
@@ -621,9 +635,15 @@ module.exports = function(io, dependencies = {}) {
       const delayMs = Math.max(0, Number(configured.tiempoAparicion) || 0) * 1000;
       const durationMs =
         Math.max(1, Number(configured.duracionPantalla) || 600) * 1000;
-      const timer = setTimeout(() => {
+      const spawnWhenPolicePursuitEnds = () => {
         pendingUfoTimers.get(zoneId)?.delete(timer);
         if ((roomIndex.get(zoneId)?.size || 0) === 0) return;
+        if (policeRuntime.hasActivePursuitInZone(zoneId)) {
+          timer = setTimeout(spawnWhenPolicePursuitEnds, 1000);
+          pendingUfoTimers.get(zoneId)?.add(timer);
+          timer.unref?.();
+          return;
+        }
         const ufoId = String(configured._id);
         const key = `${zoneId}:${ufoId}`;
         const position = geo.computeOffset(
@@ -651,14 +671,15 @@ module.exports = function(io, dependencies = {}) {
         };
         activeUfos.set(key, state);
         nsp.to(zoneId).emit('ufo:spawn', ufoPayload(state));
-      }, delayMs);
+      };
+      let timer = setTimeout(spawnWhenPolicePursuitEnds, delayMs);
       if (!pendingUfoTimers.has(zoneId)) {
         pendingUfoTimers.set(zoneId, new Set());
       }
       pendingUfoTimers.get(zoneId).add(timer);
       timer.unref?.();
     }
-    log('ufos scheduled after first shot', {
+    log('ufos scheduled after client home opened', {
       zoneId,
       count: configuredUfos.length,
       scheduledAt,
@@ -734,6 +755,12 @@ module.exports = function(io, dependencies = {}) {
         b.lat = impact.lat;
         b.lng = impact.lng;
         b.recorrido = (b.recorrido || 0) + stepM * impact.t;
+        emitBulletImpact(id, b, {
+          userId: collision.type === 'player' ? target.userId : null,
+          turretId: collision.type === 'turret' ? collision.turretId : null,
+          ufoId: collision.type === 'ufo' ? target.ufoId : null,
+          policeUnitId: collision.type === 'police' ? target.unitId : null,
+        });
 
         if (collision.type === 'player') {
           b.processing = true;
@@ -1460,6 +1487,9 @@ module.exports = function(io, dependencies = {}) {
           sameUser.vida = vida;
         }
         socialRealtime.register(userId, socket);
+        scheduleUfosAfterClientHome(zoneId, { lat, lng }).catch((error) => {
+          console.error(`[PVP][${instanceId}] ufo schedule error`, error);
+        });
 
         // Enviar al que entra el estado de la sala (jugadores ya presentes)
         const othersByUserId = new Map();
@@ -2153,9 +2183,6 @@ module.exports = function(io, dependencies = {}) {
           explosionSpritesheet: validated.explosionSpritesheet,
           createdAt: Date.now(),
           startsAt: Date.now() + BULLET_START_DELAY_MS,
-        });
-        scheduleUfosAfterFirstShot(p.zoneId, authoritativeFrom).catch((error) => {
-          console.error(`[PVP][${instanceId}] ufo schedule error`, error);
         });
         policeRuntime.onPlayerShot(p, authoritativeFrom).catch((error) => {
           console.error(`[PVP][${instanceId}] police trigger error`, error);

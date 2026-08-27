@@ -75,7 +75,7 @@ function fixtures({ ufoLife = 200, ufoDamage = 80 } = {}) {
           _id: 'shared-ufo', nombre: 'Shared UFO', vida: ufoLife,
           imagenOvni: '/ufo.webp', imagenBala: '/ufo-bullet.webp',
           velocidadBala: 1000, velocidadMovimiento: 0.5,
-          tiempoAparicion: 0, duracionPantalla: 30,
+          tiempoAparicion: 0.1, duracionPantalla: 30,
           segundosEntreDisparos: 1, danoBala: ufoDamage,
           stepcoinsPremio: 10,
         }] }),
@@ -121,11 +121,6 @@ async function connect(url) {
 const hello = (socket, userId, position) => ack(socket, 'presence:hello', {
   userId, ...position, heading: 0,
 });
-const triggerUfo = (socket, position, id = 'trigger') => ack(socket, 'bullet:spawn', {
-  clientShotId: id, cardId: 'projectile-card', from: position,
-  heading: 90, speed: 0, alcance: 350, dano: 250,
-});
-
 test('UFO target, projectile, impact, snapshot and death are server authoritative', async (t) => {
   const fx = fixtures();
   const server = await start(fx.dependencies);
@@ -133,12 +128,11 @@ test('UFO target, projectile, impact, snapshot and death are server authoritativ
   const origin = { lat: 41.65671, lng: -0.8785 };
   const a = await connect(server.url);
   const b = await connect(server.url);
+  const spawnA = once(a, 'ufo:spawn');
+  const spawnB = once(b, 'ufo:spawn');
   await hello(a, 'a', origin);
   await hello(b, 'b', geo.computeOffset(origin, 20, 180));
 
-  const spawnA = once(a, 'ufo:spawn');
-  const spawnB = once(b, 'ufo:spawn');
-  await triggerUfo(a, origin);
   const [ufoA, ufoB] = await Promise.all([spawnA, spawnB]);
   assert.deepEqual(ufoA, ufoB);
   assert.equal(ufoA.ufoId, ufoB.ufoId);
@@ -213,10 +207,9 @@ test('one server turret hit damages an UFO once with two clients', async (t) => 
   const origin = { lat: 41.65671, lng: -0.8785 };
   const owner = await connect(server.url);
   const observer = await connect(server.url);
+  const spawned = once(owner, 'ufo:spawn');
   await hello(owner, 'owner', origin);
   await hello(observer, 'observer', origin);
-  const spawned = once(owner, 'ufo:spawn');
-  await triggerUfo(owner, origin, 'turret-ufo-trigger');
   const ufo = await spawned;
   const shotOwner = matching(owner, 'turret:shot', (event) =>
     event.targetUfoId === ufo.ufoId, 5000);

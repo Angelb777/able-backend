@@ -947,7 +947,7 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.equal(leaveEventsOnA, 1);
 });
 
-test('ufo starts after first shot, is shared and awards its killer', async (t) => {
+test('ufo starts after client home opens, is shared and awards its killer', async (t) => {
   const awarded = new Map();
   const fakeLifeModel = {
     findOne() {
@@ -1014,7 +1014,7 @@ test('ufo starts after first shot, is shared and awards its killer', async (t) =
           vida: 50,
           velocidadBala: 100,
           velocidadMovimiento: 1,
-          tiempoAparicion: 0,
+          tiempoAparicion: 0.1,
           duracionPantalla: 10,
           stepcoinsPremio: 77,
           segundosEntreDisparos: 3,
@@ -1051,6 +1051,8 @@ test('ufo starts after first shot, is shared and awards its killer', async (t) =
   const shooter = await connectClient(url);
   const observer = await connectClient(url);
   sockets.push(shooter, observer);
+  const ufoOnShooter = waitForEvent(shooter, 'ufo:spawn');
+  const ufoOnObserver = waitForEvent(observer, 'ufo:spawn');
   await emitWithAck(shooter, 'presence:hello', {
     userId: '507f1f77bcf86cd799439011',
     ...origin,
@@ -1060,24 +1062,10 @@ test('ufo starts after first shot, is shared and awards its killer', async (t) =
     ...observerPosition,
   });
 
-  const ufoOnShooter = waitForEvent(shooter, 'ufo:spawn');
-  const ufoOnObserver = waitForEvent(observer, 'ufo:spawn');
-  const triggerAck = await emitWithAck(shooter, 'bullet:spawn', {
-    clientShotId: 'ufo-trigger-shot',
-    cardId: 'card-ufo',
-    from: origin,
-    heading: 0,
-    speed: 0,
-    alcance: 350,
-    dano: 60,
-    spriteUrl: '/uploads/cards/bullet.webp',
-    explosionFrames: ['/uploads/cards/explosion.webp'],
-  });
   const [spawnedForShooter, spawnedForObserver] = await Promise.all([
     ufoOnShooter,
     ufoOnObserver,
   ]);
-  assert.equal(triggerAck.ok, true);
   assert.deepEqual(spawnedForShooter, spawnedForObserver);
   assert.equal(spawnedForShooter.ufoId, 'ufo-shared');
 

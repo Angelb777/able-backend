@@ -79,9 +79,11 @@ test('ambient patrol is shared and shooting alone never starts a pursuit', async
   await fx.runtime.onPlayerShot(b, b);
   fx.tick();
   assert.equal(fx.runtime._debug.wantedUsers.size, 0);
+  assert.equal(fx.runtime.hasActivePursuitInZone(a.zoneId), false);
   const unit = [...incident.units.values()][0];
   fx.runtime.applyBulletDamage(unit.unitId, 1, 'a', 'attack-a');
   assert.equal(fx.runtime._debug.wantedUsers.get('a').stars, 1);
+  assert.equal(fx.runtime.hasActivePursuitInZone(a.zoneId), true);
   assert.equal(incident.state, 'active');
   fx.runtime.applyBulletDamage(unit.unitId, 1, 'b', 'attack-b');
   assert.equal([...fx.runtime._debug.incidents.values()][0].wanted.size, 2);
