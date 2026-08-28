@@ -48,4 +48,6 @@ test('onboarding state order includes game mode and both special spins', () => {
   assert.ok(steps.indexOf('gameMode') > steps.indexOf('openCards'));
   assert.ok(steps.indexOf('projectileSpin') > steps.indexOf('openRoulette'));
   assert.equal(steps.indexOf('placementSpin'), steps.indexOf('projectileSpin') + 1);
+  assert.equal(steps.indexOf('finalMessage'), steps.indexOf('selectPlacement') + 1);
+  assert.equal(steps.indexOf('completed'), steps.indexOf('finalMessage') + 1);
 });

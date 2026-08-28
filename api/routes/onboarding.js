@@ -12,7 +12,7 @@ const STEPS = [
   'replacementCooldown', 'cardCooldown', 'upgrades', 'openRoulette',
   'projectileSpin', 'placementSpin', 'returnHome', 'openProjectileCards',
   'selectProjectile', 'aimProjectile', 'openPlacementCards',
-  'selectPlacement', 'completed',
+  'selectPlacement', 'finalMessage', 'completed',
 ];
 
 router.use(verifyToken, checkRole(['cliente']));
@@ -119,7 +119,7 @@ router.post('/complete', async (req, res, next) => {
         _id: req.user.id,
         'onboarding.version': VERSION,
         'onboarding.status': 'active',
-        'onboarding.step': 'selectPlacement',
+        'onboarding.step': 'finalMessage',
       },
       {
         $set: {
