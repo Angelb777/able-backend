@@ -125,8 +125,10 @@ async function userFromLegacyToken(token, dependencies = {}) {
   const user = await UserModel.findById(id)
     .select('_id role firebaseUid email nickname')
     .lean();
-  // TEMPORAL: un perfil vinculado a Firebase nunca puede volver al JWT legacy.
-  if (!user || user.firebaseUid) {
+  // Los administradores pueden conservar una sesion legacy de respaldo para
+  // que el backoffice no dependa de la disponibilidad/configuracion Firebase.
+  const linkedAdmin = user?.firebaseUid && normalizeRole(user.role) === 'admin';
+  if (!user || (user.firebaseUid && !linkedAdmin)) {
     throw new AuthenticationError('LEGACY_ACCOUNT_NOT_ELIGIBLE');
   }
   return {

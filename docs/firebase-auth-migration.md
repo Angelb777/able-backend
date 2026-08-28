@@ -17,7 +17,11 @@ Configurar `FIREBASE_PROJECT_ID=able-8a1b8` y una sola forma de credencial Admin
 2. En local, guardar el JSON fuera del repositorio y definir `FIREBASE_SERVICE_ACCOUNT_PATH` con su ruta absoluta.
 3. En un proveedor con gestor de secretos, inyectar el JSON completo mediante `FIREBASE_SERVICE_ACCOUNT_JSON`.
 
-No copiar ninguna clave privada al repositorio. Para web también hacen falta las variables públicas `FIREBASE_WEB_API_KEY`, `FIREBASE_WEB_AUTH_DOMAIN`, `FIREBASE_WEB_APP_ID` y `FIREBASE_MESSAGING_SENDER_ID` de la aplicación web de Firebase.
+No copiar ninguna clave privada al repositorio. La aplicación `Able73 Web` del
+proyecto `able-8a1b8` ya tiene su configuración pública incluida en el backend.
+Las variables `FIREBASE_WEB_API_KEY`, `FIREBASE_WEB_AUTH_DOMAIN`,
+`FIREBASE_WEB_APP_ID` y `FIREBASE_MESSAGING_SENDER_ID` permiten sobrescribirla
+si en el futuro se migra a otro proyecto Firebase.
 
 En producción se requiere HTTPS para las cookies `Secure`, `NODE_ENV=production` y `ALLOWED_ORIGINS` con los orígenes exactos permitidos. Las cookies de sesión son HttpOnly, SameSite=Lax y todas las mutaciones autenticadas por cookie requieren el token CSRF emitido por `/api/auth/csrf`.
 

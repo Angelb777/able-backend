@@ -27,6 +27,16 @@ const {
 const PUBLIC_ROLES = new Set(['cliente', 'comercio']);
 const SESSION_MAX_AGE_MS = 5 * 24 * 60 * 60 * 1000;
 const GENERIC_LOGIN_ERROR = 'El correo o la contrasena no son correctos';
+// La configuracion del SDK Web identifica la aplicacion, pero no concede
+// privilegios administrativos ni contiene credenciales privadas. Las variables
+// de entorno permiten sustituirla sin cambiar codigo si se migra de proyecto.
+const DEFAULT_FIREBASE_WEB_CONFIG = Object.freeze({
+  apiKey: 'AIzaSyDcXxMDzYCnCzVBIGSa3Z4sM4i_ZsUX6vI',
+  authDomain: 'able-8a1b8.firebaseapp.com',
+  projectId: 'able-8a1b8',
+  appId: '1:502569781663:web:4aff9c65c4a3e8fd1fd5aa',
+  messagingSenderId: '502569781663',
+});
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
@@ -102,18 +112,13 @@ function createAuthRouter(dependencies = {}) {
 
   router.get('/firebase-config', (_req, res) => {
     const config = {
-      apiKey: process.env.FIREBASE_WEB_API_KEY || '',
-      authDomain: process.env.FIREBASE_WEB_AUTH_DOMAIN || '',
-      projectId: process.env.FIREBASE_PROJECT_ID || '',
-      appId: process.env.FIREBASE_WEB_APP_ID || '',
-      messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || '',
+      apiKey: process.env.FIREBASE_WEB_API_KEY || DEFAULT_FIREBASE_WEB_CONFIG.apiKey,
+      authDomain: process.env.FIREBASE_WEB_AUTH_DOMAIN || DEFAULT_FIREBASE_WEB_CONFIG.authDomain,
+      projectId: process.env.FIREBASE_PROJECT_ID || DEFAULT_FIREBASE_WEB_CONFIG.projectId,
+      appId: process.env.FIREBASE_WEB_APP_ID || DEFAULT_FIREBASE_WEB_CONFIG.appId,
+      messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID ||
+        DEFAULT_FIREBASE_WEB_CONFIG.messagingSenderId,
     };
-    if (!config.apiKey || !config.authDomain || !config.projectId || !config.appId) {
-      return res.status(503).json({
-        error: 'El acceso web con Firebase todavia no esta configurado',
-        code: 'FIREBASE_WEB_NOT_CONFIGURED',
-      });
-    }
     return res.json(config);
   });
 
@@ -284,7 +289,11 @@ function createAuthRouter(dependencies = {}) {
         return res.status(401).json({ error: GENERIC_LOGIN_ERROR, code: 'INVALID_CREDENTIALS' });
       }
       const user = await findProfileByEmail(UserModel, email);
-      if (!user || user.firebaseUid || !user.password) {
+      // Los administradores conservan el acceso de respaldo por contrasena
+      // aunque su perfil tambien este vinculado a Firebase. Esto evita dejar
+      // el backoffice inaccesible si Firebase Web no esta configurado.
+      const linkedAdmin = user?.firebaseUid && normalizeRole(user.role) === 'admin';
+      if (!user || (user.firebaseUid && !linkedAdmin) || !user.password) {
         return res.status(401).json({ error: GENERIC_LOGIN_ERROR, code: 'INVALID_CREDENTIALS' });
       }
       const matches = await bcrypt.compare(password, user.password);

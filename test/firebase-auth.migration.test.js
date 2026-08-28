@@ -99,6 +99,33 @@ test('public Firebase registration rejects admin and legacy registration is disa
   });
 });
 
+test('Firebase Web config is available without deployment-specific environment variables', async (t) => {
+  const names = [
+    'FIREBASE_WEB_API_KEY',
+    'FIREBASE_WEB_AUTH_DOMAIN',
+    'FIREBASE_WEB_APP_ID',
+    'FIREBASE_MESSAGING_SENDER_ID',
+  ];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  for (const name of names) delete process.env[name];
+  t.after(() => {
+    for (const name of names) {
+      if (previous[name] === undefined) delete process.env[name];
+      else process.env[name] = previous[name];
+    }
+  });
+  const router = createAuthRouter({ disableRateLimit: true });
+  await withServer(router, async (base) => {
+    const response = await fetch(`${base}/api/auth/firebase-config`);
+    const config = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(config.projectId, 'able-8a1b8');
+    assert.match(config.appId, /^1:502569781663:web:/);
+    assert.ok(config.apiKey);
+    assert.equal(config.authDomain, 'able-8a1b8.firebaseapp.com');
+  });
+});
+
 test('an unverified Firebase email never auto-links an existing profile', async () => {
   const existing = { _id: 'legacy', email: 'same@example.test', password: 'hash', role: 'cliente' };
   class FakeUser {
@@ -189,6 +216,29 @@ test('legacy login accepts only existing profiles without firebaseUid and hides 
   });
 });
 
+test('linked admins retain password fallback when Firebase Web is unavailable', async (t) => {
+  const originalCompare = bcrypt.compare;
+  bcrypt.compare = async () => true;
+  t.after(() => { bcrypt.compare = originalCompare; });
+  const admin = {
+    _id: 'linked-admin', email: 'admin@example.test', password: 'hash',
+    role: 'admin', firebaseUid: 'google-admin',
+  };
+  class FakeUser { static findOne() { return query(admin); } }
+  const previousSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = 'admin-fallback-secret';
+  t.after(() => { process.env.JWT_SECRET = previousSecret; });
+  const router = createAuthRouter({ UserModel: FakeUser, disableRateLimit: true });
+  await withServer(router, async (base) => {
+    const response = await fetch(`${base}/api/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: admin.email, password: 'secret' }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).user.role, 'admin');
+  });
+});
+
 test('Firebase token requires verified password email and role comes from MongoDB', async () => {
   const UserModel = {
     findOne() { return query({ _id: 'mongo-id', role: 'admin', firebaseUid: 'uid', email: 'a@b.test' }); },
@@ -243,6 +293,25 @@ test('legacy token is rejected as soon as the Mongo profile has firebaseUid', as
     userFromLegacyToken(token, { UserModel }),
     (error) => error.code === 'LEGACY_ACCOUNT_NOT_ELIGIBLE',
   );
+});
+
+test('legacy admin token remains valid for a linked admin fallback session', async (t) => {
+  const jwt = require('jsonwebtoken');
+  const previousSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = 'linked-admin-secret';
+  t.after(() => { process.env.JWT_SECRET = previousSecret; });
+  const UserModel = {
+    findById() {
+      return query({
+        _id: 'linked-admin', role: 'admin', firebaseUid: 'google-admin',
+        email: 'admin@example.test',
+      });
+    },
+  };
+  const token = jwt.sign({ id: 'linked-admin', legacy: true }, process.env.JWT_SECRET);
+  const identity = await userFromLegacyToken(token, { UserModel });
+  assert.equal(identity.role, 'admin');
+  assert.equal(identity.authType, 'legacy');
 });
 
 test('authentication endpoint rate limits repeated attempts', async () => {
