@@ -6,6 +6,7 @@ const mongoose = require('mongoose');
 const fs = require('node:fs');
 const path = require('node:path');
 const User = require('../api/models/User');
+const Skin = require('../api/models/Skin');
 const Clan = require('../api/models/Clan');
 const Bounty = require('../api/models/Bounty');
 const Notification = require('../api/models/Notification');
@@ -96,6 +97,60 @@ test('social relations are keyed by ObjectId, never nickname', () => {
   assert.equal(Bounty.schema.path('createdByUserId').instance, 'ObjectId');
   assert.equal(Notification.schema.path('userId').instance, 'ObjectId');
   assert.equal(StepcoinTransaction.schema.path('userId').instance, 'ObjectId');
+});
+
+test('a user without an equipped skin receives Simple as the initial skin', async (t) => {
+  const userId = new mongoose.Types.ObjectId();
+  const simpleId = new mongoose.Types.ObjectId();
+  const originalFindById = User.findById;
+  const originalUpdateOne = User.updateOne;
+  const originalSkinFindOne = Skin.findOne;
+  let skinQuery;
+  let userUpdate;
+
+  User.findById = () => new FakeQuery({
+    _id: userId,
+    skinSeleccionada: null,
+  });
+  Skin.findOne = (query) => {
+    skinQuery = query;
+    return new FakeQuery({
+      _id: simpleId,
+      titulo: 'Simple',
+      portada: '/uploads/skins/simple.png',
+      scripts: { parado: ['/uploads/skins/simple-idle.png'] },
+    });
+  };
+  User.updateOne = async (filter, update) => {
+    userUpdate = { filter, update };
+    return { acknowledged: true, modifiedCount: 1 };
+  };
+  t.after(() => {
+    User.findById = originalFindById;
+    User.updateOne = originalUpdateOne;
+    Skin.findOne = originalSkinFindOne;
+  });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/users', require('../api/routes/users'));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  t.after(() => server.close());
+
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/users/${userId}/skin`,
+  );
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.skin.titulo, 'Simple');
+  assert.equal(body.isFallback, true);
+  assert.deepEqual(skinQuery, {
+    titulo: { $regex: '^simple$', $options: 'i' },
+  });
+  assert.equal(String(userUpdate.filter._id), String(userId));
+  assert.equal(String(userUpdate.update.$set.skinSeleccionada), String(simpleId));
+  assert.equal(String(userUpdate.update.$addToSet.skinsCompradas), String(simpleId));
 });
 
 test('public social serializers never reference the private nombre field', () => {

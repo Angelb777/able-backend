@@ -33,7 +33,7 @@
     .navbar-logo{width:180px;height:auto;cursor:pointer}
     .nav-links{display:flex;list-style:none;gap:30px;flex-wrap:wrap;justify-content:center;padding:0;margin:0}
     .nav-links a{color:#fff;text-decoration:none;font-weight:700;font-size:1.2rem;text-transform:uppercase}
-    .login-btn{background:#2c9c52;color:#fff;padding:12px 24px;font-size:1rem;font-weight:600;border:none;border-radius:10px;cursor:pointer;transition:background .3s;box-shadow:0 4px 10px rgba(0,0,0,.3)}
+    .login-btn{background:#2c9c52;color:#fff;padding:12px 24px;font-size:1rem;font-weight:600;border:none;border-radius:10px;cursor:pointer;display:inline-block;text-decoration:none;transition:background .3s;box-shadow:0 4px 10px rgba(0,0,0,.3)}
     .login-btn:hover{background:#248646}
 
     /* === layout producto estilo Amazon === */
@@ -219,7 +219,7 @@
         <li><a href="comercios.html" id="nav-comercios">Comercios</a></li>
         <li><a href="taxistas.html" id="nav-taxistas">Taxistas</a></li>
       </ul>
-      <button class="login-btn" onclick="window.location.href='login.html'" id="login-btn">Acceder</button>
+      <a class="login-btn" href="/login.html" id="login-btn">Acceder</a>
     </div>
   </nav>
 

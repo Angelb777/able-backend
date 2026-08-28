@@ -75,6 +75,21 @@ async function findProfileByEmail(UserModel, email) {
   return UserModel.findOne(emailQuery(email));
 }
 
+function canLinkVerifiedGoogleProfile(decoded) {
+  return decoded.email_verified === true &&
+    decoded.firebase?.sign_in_provider === 'google.com';
+}
+
+async function linkGoogleProfile(profile, decoded) {
+  profile.firebaseUid = decoded.uid;
+  profile.authProviders = Array.from(new Set([
+    ...(Array.isArray(profile.authProviders) ? profile.authProviders : []),
+    ...providerIds(decoded),
+  ]));
+  await profile.save();
+  return profile;
+}
+
 function createAuthRouter(dependencies = {}) {
   const router = express.Router();
   const UserModel = dependencies.UserModel || User;
@@ -142,6 +157,13 @@ function createAuthRouter(dependencies = {}) {
       if (!email) return res.status(400).json({ error: 'Firebase no ha proporcionado un email' });
       const collision = await findProfileByEmail(UserModel, email);
       if (collision) {
+        if (canLinkVerifiedGoogleProfile(decoded)) {
+          const migrated = await linkGoogleProfile(collision, decoded);
+          return res.json({
+            status: 'linked',
+            user: serializeUser(migrated, 'firebase'),
+          });
+        }
         return res.status(409).json({
           status: 'legacy_conflict',
           error: 'Ya existe un perfil Able73 con ese correo. Entra con el acceso legacy para conservarlo.',
@@ -189,9 +211,14 @@ function createAuthRouter(dependencies = {}) {
       const linked = await UserModel.findOne({ firebaseUid: decoded.uid });
       if (linked) return res.json({ user: serializeUser(linked, 'firebase') });
 
-      // Nunca se vincula por email: cualquier coincidencia exige acceso legacy.
+      // Google verificado puede recuperar el perfil del mismo correo sin
+      // duplicar ni perder sus datos. Otros proveedores siguen bloqueados.
       const emailCollision = await findProfileByEmail(UserModel, email);
       if (emailCollision) {
+        if (canLinkVerifiedGoogleProfile(decoded)) {
+          const migrated = await linkGoogleProfile(emailCollision, decoded);
+          return res.json({ user: serializeUser(migrated, 'firebase') });
+        }
         return res.status(409).json({
           error: 'Ya existe un perfil Able73 con ese correo. No se ha vinculado ni modificado.',
           code: 'EXISTING_PROFILE_REQUIRES_LEGACY',

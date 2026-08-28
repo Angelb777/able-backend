@@ -233,6 +233,80 @@ test('internal platform payment publishes an approved establishment for the Flut
   assert.equal(paymentWrites, 1);
 });
 
+test('a commerce can simulate payment for a product and it enters the ledger', async (t) => {
+  const previousSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = 'commercial-product-payment-secret';
+  const originals = {
+    userFindById: User.findById,
+    requestFindOne: CommercialRequest.findOne,
+    paymentUpsert: Payment.findOneAndUpdate,
+  };
+  t.after(() => {
+    if (previousSecret == null) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousSecret;
+    User.findById = originals.userFindById;
+    CommercialRequest.findOne = originals.requestFindOne;
+    Payment.findOneAndUpdate = originals.paymentUpsert;
+  });
+
+  const ownerId = new mongoose.Types.ObjectId();
+  const requestId = new mongoose.Types.ObjectId();
+  const request = {
+    _id: requestId,
+    ownerId,
+    establishmentId: new mongoose.Types.ObjectId(),
+    type: 'commercial_skin',
+    title: 'Skin de comercio',
+    price: 500,
+    currency: 'EUR',
+    status: 'pending_payment',
+    paymentStatus: 'pending',
+    paymentProvider: '',
+    paymentReference: '',
+    materials: [],
+    history: [],
+    revision: 1,
+    async save() {},
+    toJSON() { return { ...this, id: String(this._id) }; },
+  };
+  let ledger;
+  User.findById = () => ({
+    select() { return this; },
+    lean: async () => ({
+      _id: ownerId, role: 'comercio', firebaseUid: null,
+      email: 'commerce@example.test', nombre: 'Comercio',
+    }),
+  });
+  CommercialRequest.findOne = async () => request;
+  Payment.findOneAndUpdate = async (_filter, update) => {
+    ledger = update.$setOnInsert;
+    return { _id: new mongoose.Types.ObjectId(), ...ledger };
+  };
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/commercial', commercialRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const token = jwt.sign({ id: String(ownerId), legacy: true }, process.env.JWT_SECRET);
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/commercial/requests/${requestId}/pay`,
+    { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200, body.error);
+  assert.equal(body.status, 'pending_material');
+  assert.equal(request.paymentStatus, 'confirmed');
+  assert.equal(request.paymentProvider, 'platform');
+  assert.equal(request.status, 'pending_material');
+  assert.equal(ledger.cantidad, 500);
+  assert.equal(ledger.source, 'platform_checkout');
+  assert.equal(ledger.commercialRequestId, requestId);
+  assert.match(ledger.motivo, /Compra simulada/);
+});
+
 test('a commerce can subscribe a location directly and the payment enters the platform ledger', async (t) => {
   const previousSecret = process.env.JWT_SECRET;
   process.env.JWT_SECRET = 'direct-map-subscription-secret';

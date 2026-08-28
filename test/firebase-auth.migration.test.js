@@ -99,7 +99,7 @@ test('public Firebase registration rejects admin and legacy registration is disa
   });
 });
 
-test('an existing Mongo email is never auto-linked to Firebase', async () => {
+test('an unverified Firebase email never auto-links an existing profile', async () => {
   const existing = { _id: 'legacy', email: 'same@example.test', password: 'hash', role: 'cliente' };
   class FakeUser {
     static findOne(filter) { return query(filter.firebaseUid ? null : existing); }
@@ -120,6 +120,46 @@ test('an existing Mongo email is never auto-linked to Firebase', async () => {
     assert.equal(body.code, 'EXISTING_PROFILE_REQUIRES_LEGACY');
   });
   assert.equal(existing.firebaseUid, undefined);
+});
+
+test('verified Google login links an existing profile and preserves its identity', async () => {
+  const existing = {
+    _id: 'legacy-google',
+    email: 'same@example.test',
+    password: 'existing-hash',
+    nickname: 'ExistingPlayer',
+    role: 'comercio',
+    authProviders: [],
+    async save() {},
+  };
+  class FakeUser {
+    static findOne(filter) { return query(filter.firebaseUid ? null : existing); }
+  }
+  const router = createAuthRouter({
+    UserModel: FakeUser,
+    firebaseAuth: firebaseAuth({
+      uid: 'google-uid',
+      email: existing.email,
+      email_verified: true,
+      firebase: { sign_in_provider: 'google.com' },
+    }),
+    disableRateLimit: true,
+  });
+  await withServer(router, async (base) => {
+    const response = await fetch(`${base}/api/auth/firebase/status`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer firebase-token' },
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.status, 'linked');
+    assert.equal(body.user.id, existing._id);
+    assert.equal(body.user.nickname, existing.nickname);
+    assert.equal(body.user.role, existing.role);
+  });
+  assert.equal(existing.firebaseUid, 'google-uid');
+  assert.deepEqual(existing.authProviders, ['google.com']);
+  assert.equal(existing.password, 'existing-hash');
 });
 
 test('legacy login accepts only existing profiles without firebaseUid and hides enumeration', async (t) => {

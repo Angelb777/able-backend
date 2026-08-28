@@ -32,7 +32,7 @@ const baseConfig = () => ({
   })),
 });
 
-function fixture(customize = () => {}) {
+function fixture(customize = () => {}, options = {}) {
   let clock = 10000; const config = baseConfig(); customize(config);
   const events = []; const players = new Map(); const routeCalls = [];
   const nsp = { to: (zoneId) => ({ emit: (event, payload) => events.push({ zoneId, event, payload }) }) };
@@ -44,11 +44,11 @@ function fixture(customize = () => {}) {
     },
     playersForUser: (id) => players.has(String(id)) ? [players.get(String(id))] : [],
     primaryAlivePlayersInZone: () => [...players.values()],
-    routeProvider: { getRoute: async (from, to, mode) => {
+    routeProvider: options.routeProvider || { getRoute: async (from, to, mode) => {
       routeCalls.push({ from, to, mode });
       return [from, { lat: (from.lat + to.lat) / 2, lng: (from.lng + to.lng) / 2 }, to];
     }, clear() {} },
-    now: () => clock, random: () => 0.5,
+    now: () => clock, random: options.random || (() => 0.5),
   });
   const addPlayer = (userId, position) => {
     const player = { userId, zoneId: 'GLOBAL_TEST_ROOM', vida: 1000,
@@ -131,6 +131,44 @@ test('the initial foot patrol walks as a pair and both pursue its attacker', asy
   assert.deepEqual(units.map((unit) => unit.targetUserId), ['a', 'a']);
   assert.ok(units.every((unit, index) => geo.distanceMeters(unit, player) < before[index]),
     'both officers advance toward the attacker');
+});
+
+test('ambient patrol abandons an unreachable destination and resumes on a fresh route', async (t) => {
+  let routeAttempts = 0;
+  const randomValues = [0.1, 0.2, 0.3, 0.7, 0.8];
+  const fx = fixture(() => {}, {
+    random: () => randomValues.shift() ?? 0.5,
+    routeProvider: {
+      getRoute: async (from, to) => {
+        routeAttempts += 1;
+        return routeAttempts === 1 ? [] : [from, to];
+      },
+      clear() {},
+    },
+  });
+  t.after(() => fx.runtime.shutdown());
+  const origin = { lat: 41.6567, lng: -0.8785 };
+  const player = fx.addPlayer('a', origin);
+  await fx.runtime.ensureAmbientPatrol(player, origin);
+  const incident = [...fx.runtime._debug.incidents.values()][0];
+  const leader = [...incident.units.values()][0];
+
+  fx.tick(1);
+  await new Promise((resolve) => setImmediate(resolve));
+  const unreachableTarget = incident.ambientPatrolTarget;
+  assert.equal(unreachableTarget, null, 'the failed patrol target is discarded');
+
+  fx.advance(100); fx.tick(1);
+  assert.notDeepEqual(incident.ambientPatrolTarget, unreachableTarget);
+  assert.equal(routeAttempts, 1, 'the retry delay still protects Directions');
+
+  const before = { lat: leader.lat, lng: leader.lng };
+  fx.advance(10000); fx.tick(1);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(leader.route.length > 1, 'the valid route is installed before movement');
+  fx.advance(100); fx.tick(1);
+  assert.equal(routeAttempts, 2);
+  assert.ok(geo.distanceMeters(before, leader) > 0, 'the patrol resumes after a valid route');
 });
 
 test('destroying each wave escalates progressively and never exceeds five stars', async (t) => {

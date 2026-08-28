@@ -92,7 +92,11 @@ async function updateDailyStreak(StreakModel, userId, day, canShowPopup = true) 
   }
   await streak.save();
 
-  if (!canShowPopup) return { streak, showPopup: false };
+  // El primer dia se registra en silencio. La racha se presenta al usuario
+  // por primera vez cuando demuestra continuidad y alcanza el dia 2.
+  if (!canShowPopup || streak.currentStreak < 2) {
+    return { streak, showPopup: false };
+  }
 
   const popupWinner = await StreakModel.findOneAndUpdate(
     { _id: streak._id, lastPopupDay: { $ne: day } },

@@ -87,7 +87,7 @@ test('location subscription uses the CSP-safe delegated click handler', async ()
     createCommercePositioningRequest: async () => {},
     uploadCommerceRequestMaterial: async () => {},
     withdrawCommerceRequest: async () => {},
-    payCommercePositioning: async () => {},
+    payCommerceRequest: async () => {},
     renderGestionComercial: async () => {},
     renderCommerceRequests: async () => {},
     subscribeCommerceLocation: async (id, planId) => calls.push([id, planId]),

@@ -648,17 +648,16 @@ router.patch('/requests/:id/withdraw', ...commerceOnly, async (req, res) => {
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
-async function payablePositioningRequest(requestId, ownerId) {
+async function payableCommercialRequest(requestId, ownerId) {
   const request = await CommercialRequest.findOne({ _id: requestId, ownerId });
   if (!request) throw Object.assign(new Error('Solicitud no encontrada'), { status: 404 });
-  if (request.type !== 'positioning') {
-    throw Object.assign(new Error('Este pago no corresponde a un posicionamiento'), { status: 409 });
-  }
-  const establishment = await Establishment.findOne({
-    _id: request.establishmentId, ownerId, status: 'approved',
-  });
-  if (!establishment) {
-    throw Object.assign(new Error('Able73 debe aprobar el establecimiento antes del pago'), { status: 409 });
+  if (request.type === 'positioning') {
+    const establishment = await Establishment.findOne({
+      _id: request.establishmentId, ownerId, status: 'approved',
+    });
+    if (!establishment) {
+      throw Object.assign(new Error('Able73 debe aprobar el establecimiento antes del pago'), { status: 409 });
+    }
   }
   if (!(Number(request.price) > 0) || request.currency !== 'EUR') {
     throw Object.assign(new Error('El importe de la solicitud no es válido'), { status: 409 });
@@ -670,12 +669,12 @@ async function payablePositioningRequest(requestId, ownerId) {
 // punto que habrá que sustituir por la confirmación firmada del proveedor.
 router.post('/requests/:id/pay', ...commerceOnly, async (req, res) => {
   try {
-    const request = await payablePositioningRequest(req.params.id, req.user.id);
+    const request = await payableCommercialRequest(req.params.id, req.user.id);
     if (request.status === 'published') {
       return res.json({ status: 'published', request: requestJson(request) });
     }
     const retryConfirmedPayment = request.paymentProvider === 'platform'
-      && request.paymentStatus === 'confirmed' && request.status === 'approved';
+      && request.paymentStatus === 'confirmed';
     if (!retryConfirmedPayment
       && (request.paymentStatus !== 'pending' || request.status !== 'pending_payment')) {
       return res.status(409).json({ error: 'Esta solicitud ya no está pendiente de pago' });
@@ -689,38 +688,42 @@ router.post('/requests/:id/pay', ...commerceOnly, async (req, res) => {
       request.paymentStatus = 'confirmed';
       request.paymentReference = paymentReference;
       request.paymentConfirmedAt = now;
-      request.approvedAt = now;
+      const nextStatus = request.type === 'positioning'
+        ? 'approved'
+        : pendingStatus(request);
+      if (request.type === 'positioning') request.approvedAt = now;
       recordTransition(request, {
-        action: 'platform_payment_confirmed', status: 'approved', actorId: req.user.id,
+        action: 'platform_payment_confirmed', status: nextStatus, actorId: req.user.id,
         actorRole: 'payment_provider', notes: paymentReference, now,
       });
       await request.save();
     }
 
-    const target = await publishRequest(request, {}, req.user.id, 'payment_provider');
-    try {
-      const owner = await User.findById(req.user.id).select('nombre nickname email').lean();
-      await Payment.findOneAndUpdate(
-        { providerReference: paymentReference },
-        { $setOnInsert: {
-          userId: req.user.id,
-          nombre: owner?.nombre || owner?.nickname || owner?.email || 'Comercio',
-          cantidad: request.price,
-          motivo: request.title,
-          currency: request.currency,
-          fecha: now,
-          verified: true,
-          verifiedAt: now,
-          source: 'platform_checkout',
-          providerReference: paymentReference,
-          commercialRequestId: request._id,
-        } },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
-      );
-    } catch (paymentLogError) {
-      console.error('[COMMERCIAL] No se pudo registrar el pago interno:', paymentLogError.message);
+    const owner = await User.findById(req.user.id).select('nombre nickname email').lean();
+    const payment = await Payment.findOneAndUpdate(
+      { providerReference: paymentReference },
+      { $setOnInsert: {
+        userId: req.user.id,
+        nombre: owner?.nombre || owner?.nickname || owner?.email || 'Comercio',
+        cantidad: request.price,
+        motivo: `Compra simulada: ${request.title}`,
+        currency: request.currency,
+        fecha: now,
+        verified: true,
+        verifiedAt: now,
+        source: 'platform_checkout',
+        providerReference: paymentReference,
+        commercialRequestId: request._id,
+        establishmentId: request.establishmentId,
+      } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+
+    if (request.type === 'positioning') {
+      const target = await publishRequest(request, {}, req.user.id, 'payment_provider');
+      return res.json({ status: 'published', request: requestJson(request), target, payment });
     }
-    return res.json({ status: 'published', request: requestJson(request), target });
+    return res.json({ status: request.status, request: requestJson(request), payment });
   } catch (error) {
     return res.status(error.status || 500).json({ error: error.message });
   }

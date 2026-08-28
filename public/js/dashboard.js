@@ -62,6 +62,20 @@ function bindGameManagementActions() {
   document.documentElement.dataset.gameManagementActionsBound = "true";
 }
 
+function bindUserManagementActions() {
+  if (document.documentElement.dataset.userManagementActionsBound === "true") return;
+  document.addEventListener("click", (event) => {
+    const button = event.target?.closest?.("button[data-user-management-action]");
+    if (!button) return;
+    const id = button.dataset.userId || "";
+    if (!id) return;
+    event.preventDefault();
+    if (button.dataset.userManagementAction === "details") void verDetalles(id);
+    if (button.dataset.userManagementAction === "delete") void eliminarUsuario(id, button);
+  });
+  document.documentElement.dataset.userManagementActionsBound = "true";
+}
+
 function bindCommercialActions() {
   if (document.documentElement.dataset.commercialActionsBound === "true") return;
   document.addEventListener("click", async (event) => {
@@ -85,8 +99,8 @@ function bindCommercialActions() {
         );
       } else if (action === "upload-material") await uploadCommerceRequestMaterial(id);
       else if (action === "withdraw-request") await withdrawCommerceRequest(id);
-      else if (action === "pay-positioning") {
-        await payCommercePositioning(id, Number(button.dataset.amount));
+      else if (action === "pay-request") {
+        await payCommerceRequest(id, Number(button.dataset.amount), button.dataset.publish === "true");
       } else if (action === "edit-location") {
         editCommerceLocation(id);
       } else if (action === "archive-location") {
@@ -828,25 +842,30 @@ function commerceRequestActions(request) {
   </div>`;
 }
 
-function commercePositioningPayment(request) {
-  if (request.type !== "positioning" || request.status !== "pending_payment"
+function commerceRequestPayment(request) {
+  if (request.status !== "pending_payment"
       || request.paymentStatus !== "pending") return "";
-  if (request.establishmentId?.status !== "approved") {
+  if (request.type === "positioning" && request.establishmentId?.status !== "approved") {
     return '<p class="commerce-notice commerce-warning">El pago se habilitará cuando Able73 apruebe el establecimiento.</p>';
   }
   const id = commercialId(request);
+  const publishes = request.type === "positioning";
+  const label = publishes ? "Pagar y publicar" : "Pagar (simulación)";
   return `<div class="commerce-request-actions">
-    <button type="button" data-commercial-action="pay-positioning" data-entity-id="${commercialEscape(id)}" data-amount="${Number(request.price)}">Pagar y publicar · ${commercialEscape(request.price)} ${commercialEscape(request.currency)}</button>
+    <button type="button" data-commercial-action="pay-request" data-entity-id="${commercialEscape(id)}" data-amount="${Number(request.price)}" data-publish="${publishes}">${label} · ${commercialEscape(request.price)} ${commercialEscape(request.currency)}</button>
   </div>`;
 }
 
-async function payCommercePositioning(id, amount) {
-  if (!confirm(`Confirmar el pago interno de ${amount} EUR y publicar el establecimiento en el mapa?`)) return;
+async function payCommerceRequest(id, amount, publishes) {
+  const effect = publishes ? " y publicar el establecimiento en el mapa" : "";
+  if (!confirm(`Confirmar el pago simulado de ${amount} EUR${effect}? No se realizará ningún cargo real.`)) return;
   try {
     await commerceResponse(await fetch(`/api/commercial/requests/${encodeURIComponent(id)}/pay`, {
       method: "POST",
     }));
-    alert("Pago registrado. Tu establecimiento ya está publicado en el mapa de Able73.");
+    alert(publishes
+      ? "Pago registrado. Tu establecimiento ya está publicado en el mapa de Able73."
+      : "Pago simulado registrado. La solicitud continúa con su revisión.");
     await renderCommerceRequests();
   } catch (error) {
     alert(error.message);
@@ -877,8 +896,8 @@ async function renderCommerceRequests() {
         </dl>
         <p><strong>Material:</strong> ${materials}</p>
         ${request.reviewNotes ? `<p class="commerce-notice"><strong>Notas de Able73:</strong> ${commercialEscape(request.reviewNotes)}</p>` : ""}
-        ${commercePositioningPayment(request)}
-        ${request.paymentStatus === "pending" && request.type !== "positioning" ? "<p class=\"commerce-notice commerce-warning\">Pago pendiente de verificación por Able73.</p>" : ""}
+        ${commerceRequestPayment(request)}
+        ${request.paymentStatus === "pending" && request.type !== "positioning" ? "<p class=\"commerce-notice commerce-warning\">Confirma el pago simulado para que la solicitud continúe a revisión.</p>" : ""}
         ${commerceRequestActions(request)}
       </article>`;
     }).join("") : "<p>Todavía no tienes solicitudes.</p>";
@@ -998,6 +1017,7 @@ function simpleSpriteConfig(root, kind) {
 document.addEventListener("DOMContentLoaded", async () => {
   ["ufo", "bullet"].forEach(installSimpleSpriteEditor);
   bindGameManagementActions();
+  bindUserManagementActions();
   bindCommercialActions();
   try {
     const sessionResponse = await fetch('/api/auth/me');
@@ -1433,12 +1453,13 @@ function renderInicio() {
       const cantidad = parseInt(boton.dataset.cantidad);
 
       try {
-        const res = await fetch("/api/payments", {
+        const requestId = `${user._id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const res = await fetch("/api/payments/stepcoins/checkout", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            userId: user._id,
-            cantidad: cantidad
+            cantidad,
+            requestId,
           })
         });
 
@@ -1448,7 +1469,7 @@ function renderInicio() {
         alert("✅ ¡Compra realizada con éxito!");
 
         // ✅ Actualizar en localStorage
-        user.stepcoins += cantidad;
+        user.stepcoins = Number(data.user.stepcoins);
         localStorage.setItem("user", JSON.stringify(user));
 
         // 🔁 Volver a renderizar la sección con el nuevo saldo
@@ -1535,7 +1556,7 @@ async function renderMisPagos() {
       const fecha = new Date(pago.fecha).toLocaleDateString("es-ES");
       tr.innerHTML = `
         <td>${fecha}</td>
-        <td>${pago.cantidad} Stepcoins</td>
+        <td>${pago.cantidad} ${pago.currency || "EUR"} · ${commercialEscape(pago.motivo || "Pago")}</td>
       `;
       tbody.appendChild(tr);
     });
@@ -1596,9 +1617,9 @@ async function renderPagos() {
 
   seccion.innerHTML = `
     <h2>Lista de Pagos</h2>
-    <input type="text" id="searchInput" placeholder="Buscar por nombre o cantidad" />
+    <input type="text" id="searchInput" placeholder="Buscar por usuario, concepto o cantidad" />
     <table>
-      <thead><tr><th>Usuario</th><th>Cantidad (€)</th><th>Fecha</th></tr></thead>
+      <thead><tr><th>Usuario</th><th>Importe</th><th>Concepto</th><th>Origen</th><th>Fecha</th></tr></thead>
       <tbody id="pagosBody"></tbody>
     </table>
   `;
@@ -1613,7 +1634,9 @@ async function renderPagos() {
       tbody.innerHTML = filtrados.map(p =>
         `<tr>
           <td>${p.nombre}</td>
-          <td>${p.cantidad}</td>
+          <td>${p.cantidad} ${p.currency || "EUR"}</td>
+          <td>${commercialEscape(p.motivo || "-")}</td>
+          <td>${p.source === "platform_checkout" ? "Checkout simulado" : p.source === "payment_provider" ? "Pasarela" : "Manual"}</td>
           <td>${new Date(p.fecha).toLocaleString()}</td>
         </tr>`).join("");
     }
@@ -1623,7 +1646,8 @@ async function renderPagos() {
     input.addEventListener("input", () => {
       const q = input.value.toLowerCase();
       const filtrados = pagos.filter(p =>
-        p.nombre.toLowerCase().includes(q) ||
+        String(p.nombre || "").toLowerCase().includes(q) ||
+        String(p.motivo || "").toLowerCase().includes(q) ||
         String(p.cantidad).includes(q)
       );
       renderLista(filtrados);
@@ -1701,8 +1725,8 @@ function mostrarListaUsuarios(lista) {
       <strong>${commercialEscape(user.nombre)}</strong> (${commercialEscape(user.role)})<br>
       Email: ${commercialEscape(user.email)}<br>
       Stepcoins: ${user.stepcoins}<br>
-      <button onclick="verDetalles('${user._id}')">Ver detalles</button>
-      <button onclick="eliminarUsuario('${user._id}')">🗑️ Eliminar</button>
+      <button data-user-management-action="details" data-user-id="${commercialEscape(user._id)}">Ver detalles</button>
+      <button data-user-management-action="delete" data-user-id="${commercialEscape(user._id)}">🗑️ Eliminar</button>
     `;
     contenedor.appendChild(div);
   });
@@ -1736,14 +1760,18 @@ Carnet trasera: ${p.licenseBack || '-'}
     });
 }
 
-function eliminarUsuario(userId) {
-  if (confirm("¿Estás seguro de que quieres eliminar este usuario?")) {
-    fetch(`/api/users/${userId}`, { method: "DELETE" })
-      .then(res => res.json())
-      .then(() => {
-        alert("✅ Usuario eliminado");
-        renderUsuarios(); // recarga
-      });
+async function eliminarUsuario(userId, button) {
+  if (!confirm("¿Estás seguro de que quieres eliminar este usuario?")) return;
+  if (button) button.disabled = true;
+  try {
+    const res = await fetch(`/api/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(result.error || "No se pudo eliminar el usuario");
+    alert("✅ Usuario eliminado");
+    await renderUsuarios();
+  } catch (error) {
+    alert(error.message || "No se pudo eliminar el usuario");
+    if (button?.isConnected) button.disabled = false;
   }
 }
 

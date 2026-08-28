@@ -316,6 +316,23 @@ function createPoliceRuntime({
     unit.heading = bearingBetween(unit, destination);
     const next = geo.computeOffset(unit, distance, unit.heading); unit.lat = next.lat; unit.lng = next.lng; return 0;
   };
+  const handleRouteUnavailable = (unit, target) => {
+    unit.route = [];
+    unit.routeIndex = 0;
+    unit.routeTarget = null;
+    unit.routeRetryAt = now() + 10000;
+    const incident = incidents.get(unit.incidentId);
+    if (incident?.state === 'ambient' &&
+        incident.ambientPatrolLeaderId === unit.unitId &&
+        incident.ambientPatrolTarget &&
+        geo.distanceMeters(incident.ambientPatrolTarget, target) < 1) {
+      // An arbitrary geographic point can fall inside a building, water or an
+      // otherwise unreachable walking area. Do not retry that same point
+      // forever: the next patrol tick will choose a fresh destination, while
+      // routeRetryAt keeps failures from hammering the Directions service.
+      incident.ambientPatrolTarget = null;
+    }
+  };
   const requestRoute = (unit, target) => {
     const threshold = Number(config.routeRecalculationDistanceMeters) || 100;
     if (unit.routePending || now() < (unit.routeRetryAt || 0) || (unit.routeTarget && unit.route.length > unit.routeIndex &&
@@ -330,9 +347,9 @@ function createPoliceRuntime({
         unit.route = points; unit.routeIndex = 1; unit.routeTarget = destination;
         unit.routeRetryAt = 0;
       } else {
-        unit.routeRetryAt = now() + 10000;
+        handleRouteUnavailable(unit, target);
       }
-    }).catch(() => { unit.routeRetryAt = now() + 10000; })
+    }).catch(() => { handleRouteUnavailable(unit, target); })
       .finally(() => { unit.routePending = false; });
   };
   const moveUnit = (unit, target, elapsedSeconds) => {

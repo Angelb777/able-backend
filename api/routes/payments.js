@@ -11,6 +11,14 @@ const {
 
 const adminOnly = [verifyToken, checkRole(['admin'])];
 
+// Catálogo autoritativo del checkout provisional. El cliente solo envía la
+// cantidad elegida; nunca decide el importe monetario que se registra.
+const STEPCOIN_PACKAGES_EUR = new Map([
+  [100, 1], [500, 4], [1000, 7], [2000, 12],
+  [5000, 25], [10000, 45], [15000, 65], [20000, 80],
+  [30000, 110], [40000, 130], [50000, 150], [60000, 180],
+]);
+
 // Crear un registro monetario manual. Solo Superadmin puede certificarlo.
 router.post("/", ...adminOnly, async (req, res) => {
   const { userId, cantidad } = req.body;
@@ -40,6 +48,83 @@ router.post("/", ...adminOnly, async (req, res) => {
   } catch (err) {
     console.error("❌ Error al registrar pago:", err);
     res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+// Checkout simulado para la tienda de Stepcoins. Esta ruta representa el
+// punto que en el futuro confirmará Google Play/Apple/TPV. Hasta entonces,
+// registra un pago verificado de plataforma y abona el paquete en una sola
+// transacción. requestId hace que los reintentos no dupliquen la compra.
+router.post('/stepcoins/checkout', verifyToken, checkRole(['cliente']), async (req, res) => {
+  const cantidad = Number(req.body.cantidad);
+  const requestId = String(req.body.requestId || '').trim();
+  const price = STEPCOIN_PACKAGES_EUR.get(cantidad);
+
+  if (!Number.isInteger(cantidad) || price == null) {
+    return res.status(400).json({ error: 'Paquete de Stepcoins no válido' });
+  }
+  if (!/^[A-Za-z0-9._:-]{8,160}$/.test(requestId)) {
+    return res.status(400).json({ error: 'requestId de compra no válido' });
+  }
+
+  const userId = String(req.user.id);
+  const providerReference = `stepcoins-sim:${userId}:${requestId}`;
+  const session = await mongoose.startSession();
+  let user;
+  let payment;
+  let duplicate = false;
+
+  try {
+    await session.withTransaction(async () => {
+      payment = await Payment.findOne({ providerReference }).session(session);
+      if (payment) {
+        duplicate = true;
+        user = await User.findById(userId).select('stepcoins').session(session);
+        return;
+      }
+
+      user = await User.findOneAndUpdate(
+        { _id: userId, role: 'cliente' },
+        { $inc: { stepcoins: cantidad } },
+        { new: true, session },
+      ).select('stepcoins nombre nickname email');
+      if (!user) throw Object.assign(new Error('Usuario no encontrado'), { status: 404 });
+
+      [payment] = await Payment.create([{
+        userId,
+        nombre: user.nombre || user.nickname || user.email || 'Usuario',
+        cantidad: price,
+        motivo: `Compra simulada de ${cantidad} Stepcoins`,
+        currency: 'EUR',
+        fecha: new Date(),
+        verified: true,
+        verifiedAt: new Date(),
+        source: 'platform_checkout',
+        providerReference,
+      }], { session });
+    });
+
+    return res.status(duplicate ? 200 : 201).json({
+      message: duplicate ? 'Compra ya procesada' : 'Compra simulada completada',
+      duplicate,
+      payment,
+      user: { stepcoins: Number(user.stepcoins) },
+    });
+  } catch (error) {
+    if (error?.code === 11000) {
+      const previous = await Payment.findOne({ providerReference });
+      const current = await User.findById(userId).select('stepcoins');
+      return res.json({
+        message: 'Compra ya procesada', duplicate: true,
+        payment: previous, user: { stepcoins: Number(current?.stepcoins || 0) },
+      });
+    }
+    console.error('❌ Error en checkout simulado de Stepcoins:', error);
+    return res.status(error.status || 500).json({
+      error: error.status ? error.message : 'Error interno al procesar la compra',
+    });
+  } finally {
+    await session.endSession();
   }
 });
 

@@ -201,10 +201,14 @@ router.get('/:id/skin', async (req, res) => {
       // si no tiene imagen utilizable, continuamos con fallback
     }
 
-    // Fallback: cualquier skin disponible (sin requerir 'validada' en el schema)
-    const fallback = await Skin.findOne().lean();
+    // La apariencia inicial de cualquier cuenta nueva debe ser siempre "Simple".
+    // No usar findOne() sin filtro: depende del orden natural de MongoDB y puede
+    // terminar asignando otra skin (por ejemplo, "Angek").
+    const fallback = await Skin.findOne({
+      titulo: { $regex: '^simple$', $options: 'i' }
+    }).lean();
     if (!fallback) {
-      return res.status(404).json({ error: 'No hay skins disponibles para fallback' });
+      return res.status(404).json({ error: 'No se ha encontrado la skin inicial Simple' });
     }
 
     // Persistir seleccionada + añadir a Mis Skins sin duplicar

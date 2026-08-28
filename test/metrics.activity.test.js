@@ -129,6 +129,7 @@ test('period values combine eligible users, recurrence and ticket per payment', 
 test('activity endpoint is authenticated, idempotent and ignores non-clients', async (t) => {
   const writes = new Set();
   let eligible = true;
+  let currentTime = new Date('2026-08-25T12:00:00.000Z');
   const UserModel = { exists: async () => eligible };
   const ActivityModel = {
     async updateOne(query, update, options) {
@@ -168,7 +169,7 @@ test('activity endpoint is authenticated, idempotent and ignores non-clients', a
     ActivityModel,
     StreakModel,
     verifyToken: authenticate,
-    now: () => new Date('2026-08-25T23:59:00.000Z'),
+    now: () => currentTime,
   }));
   const server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -184,11 +185,22 @@ test('activity endpoint is authenticated, idempotent and ignores non-clients', a
   assert.equal(first.status, 201);
   const firstBody = await first.json();
   assert.equal(firstBody.day, '2026-08-25');
-  assert.equal(firstBody.streak.showPopup, true);
+  assert.equal(firstBody.streak.current, 1);
+  assert.equal(firstBody.streak.showPopup, false);
   const repeatedActivity = await fetch(url, { method: 'POST', headers });
   assert.equal(repeatedActivity.status, 200);
   assert.equal((await repeatedActivity.json()).streak.showPopup, false);
-  assert.equal(writes.size, 1);
+
+  currentTime = new Date('2026-08-26T12:00:00.000Z');
+  const secondDay = await fetch(url, { method: 'POST', headers });
+  assert.equal(secondDay.status, 201);
+  const secondDayBody = await secondDay.json();
+  assert.equal(secondDayBody.streak.current, 2);
+  assert.equal(secondDayBody.streak.showPopup, true);
+  const repeatedSecondDay = await fetch(url, { method: 'POST', headers });
+  assert.equal(repeatedSecondDay.status, 200);
+  assert.equal((await repeatedSecondDay.json()).streak.showPopup, false);
+  assert.equal(writes.size, 2);
 
   eligible = false;
   const ignored = await fetch(url, { method: 'POST', headers });

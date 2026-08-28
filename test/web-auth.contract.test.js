@@ -46,3 +46,35 @@ test('legacy web accounts are checked before Firebase initialization', () => {
   assert.ok(firebaseAttempt > legacyAttempt, 'legacy login must not depend on Firebase Web config');
   assert.match(login, /legacyError\.code !== 'INVALID_CREDENTIALS'/);
 });
+
+test('dashboard user actions comply with CSP and report delete failures', () => {
+  const dashboard = readPublic('js/dashboard.js');
+  assert.doesNotMatch(dashboard, /onclick=["'][^"']*(?:verDetalles|eliminarUsuario)/);
+  assert.match(dashboard, /data-user-management-action="delete"/);
+  assert.match(dashboard, /if \(!res\.ok\) throw new Error/);
+});
+
+test('public navigation always exposes a direct login link', () => {
+  const publicPages = [
+    'index.html',
+    'usuarios.html',
+    'empresas.html',
+    'comercios.html',
+    'taxistas.html',
+    'candados.html',
+  ];
+
+  for (const page of publicPages) {
+    const html = readPublic(page);
+    assert.match(
+      html,
+      /<a class="login-btn" href="\/login\.html" id="login-btn">Acceder<\/a>/,
+      `${page} must link directly to the login page`,
+    );
+    assert.doesNotMatch(
+      html,
+      /id="login-btn"[^>]*onclick=/,
+      `${page} must not depend on inline JavaScript to open the login page`,
+    );
+  }
+});
