@@ -17,7 +17,7 @@ const ack = (socket, event, payload) => new Promise((resolve) => {
 const emptyModel = { find: () => ({ lean: async () => [] }) };
 const lifeByUser = new Map();
 const duelUpdates = [];
-const dependencies = (grace = 40) => ({
+const dependencies = (grace = 40, overrides = {}) => ({
   requireAuth: false,
   presenceDisconnectGraceMs: grace,
   CardModel: {
@@ -48,13 +48,14 @@ const dependencies = (grace = 40) => ({
       return {};
     },
   },
+  ...overrides,
 });
 
-async function startServer(grace = 40) {
+async function startServer(grace = 40, overrides = {}) {
   duelUpdates.length = 0;
   const httpServer = http.createServer();
   const io = new Server(httpServer);
-  registerPvp(io, dependencies(grace));
+  registerPvp(io, dependencies(grace, overrides));
   await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
   const { port } = httpServer.address();
   return {
@@ -69,7 +70,7 @@ async function startServer(grace = 40) {
 }
 
 test('duel request is proximity-gated and accepted session is server authoritative', async (t) => {
-  const server = await startServer();
+  const server = await startServer(40, { chooseDuelGame: () => 'space' });
   t.after(() => server.close());
   const a = await connect(server.url);
   const b = await connect(server.url);
@@ -119,6 +120,94 @@ test('duel request is proximity-gated and accepted session is server authoritati
   assert.match(farChallenge.error, /50 metros/);
   a.disconnect();
   b.disconnect();
+});
+
+test('all four duel games share server selection, seed, timing and settlement', async () => {
+  for (const game of ['culture', 'space', 'memory', 'reflex']) {
+    const server = await startServer(40, {
+      chooseDuelGame: () => game,
+      duelStartDelayMs: 5,
+      memoryPreviewMs: 5,
+      reflexSequenceDelayMs: 25,
+    });
+    const a = await connect(server.url);
+    const b = await connect(server.url);
+    await hello(a, `${game}-a`);
+    await hello(b, `${game}-b`);
+    const incoming = once(b, 'duel:challenge');
+    await ack(a, 'duel:challenge', { targetUserId: `${game}-b` });
+    const invite = await incoming;
+    const startedA = once(a, 'duel:started');
+    const startedB = once(b, 'duel:started');
+    await ack(b, 'duel:respond', { inviteId: invite.inviteId, accept: true });
+    const [sessionA, sessionB] = await Promise.all([startedA, startedB]);
+    assert.equal(sessionA.game, game);
+    assert.equal(sessionB.game, game);
+    assert.equal(sessionA.seed, sessionB.seed);
+    assert.equal(sessionA.startsAt, sessionB.startsAt);
+    assert.equal(sessionA.releaseAt, sessionB.releaseAt);
+
+    const finishedA = once(a, 'duel:finished');
+    const finishedB = once(b, 'duel:finished');
+    if (game === 'culture') {
+      await ack(a, 'duel:answer', {
+        duelId: sessionA.duelId, questionIndex: 0, optionIndex: -1,
+      });
+    } else if (game === 'space') {
+      await ack(a, 'duel:death', { duelId: sessionA.duelId });
+    } else if (game === 'memory') {
+      await wait(Math.max(1, sessionA.startsAt + 12 - Date.now()));
+      await ack(a, 'duel:memory-complete', { duelId: sessionA.duelId });
+    } else {
+      await wait(Math.max(1, sessionA.releaseAt + 2 - Date.now()));
+      await ack(a, 'duel:reflex-result', {
+        duelId: sessionA.duelId, falseStart: false, reactionMs: 2,
+      });
+      await wait(2);
+      await ack(b, 'duel:reflex-result', {
+        duelId: sessionB.duelId, falseStart: false, reactionMs: 4,
+      });
+    }
+    const [resultA, resultB] = await Promise.all([finishedA, finishedB]);
+    assert.equal(resultA.duelId, sessionA.duelId);
+    assert.equal(resultB.duelId, sessionB.duelId);
+    assert.ok(resultA.winnerUserId);
+    assert.ok(resultA.loserUserId);
+    a.disconnect();
+    b.disconnect();
+    await server.close();
+  }
+});
+
+test('a Reflex false start is an immediate authoritative loss', async () => {
+  const server = await startServer(40, {
+    chooseDuelGame: () => 'reflex',
+    duelStartDelayMs: 50,
+    reflexSequenceDelayMs: 100,
+  });
+  const a = await connect(server.url);
+  const b = await connect(server.url);
+  await hello(a, 'false-start-a');
+  await hello(b, 'false-start-b');
+  const incoming = once(b, 'duel:challenge');
+  await ack(a, 'duel:challenge', { targetUserId: 'false-start-b' });
+  const invite = await incoming;
+  const started = once(a, 'duel:started');
+  await ack(b, 'duel:respond', { inviteId: invite.inviteId, accept: true });
+  const session = await started;
+  const finished = once(a, 'duel:finished');
+  const response = await ack(a, 'duel:reflex-result', {
+    duelId: session.duelId,
+    falseStart: true,
+    reactionMs: 0,
+  });
+  assert.equal(response.falseStart, true);
+  const result = await finished;
+  assert.equal(result.loserUserId, 'false-start-a');
+  assert.equal(result.reason, 'false-start');
+  a.disconnect();
+  b.disconnect();
+  await server.close();
 });
 
 async function connect(url) {

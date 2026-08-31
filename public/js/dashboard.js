@@ -975,9 +975,22 @@ document.addEventListener('visibilitychange', () => {
 
 
 
+const DEFAULT_SKIN_ORIENTATION_ROWS = "south,southWest,west,northWest,north";
+
+function commaSeparatedStrings(value) {
+  return String(value || "").split(",")
+    .map(item => item.trim()).filter(Boolean);
+}
+
+function commaSeparatedIntegers(value) {
+  return String(value || "").split(",")
+    .map(item => Number(item.trim())).filter(Number.isInteger);
+}
+
 function installSimpleSpriteEditor(kind) {
   const container = document.getElementById(`${kind}FlameFields`);
   if (!container || container.dataset.ready) return;
+  const usesSkinOrientationFormat = kind.startsWith("unit");
   container.dataset.ready = "true";
   container.innerHTML = `
     <input type="file" id="${kind}SpritesheetPng" name="${kind}SpritesheetPng" accept="image/png">
@@ -987,10 +1000,10 @@ function installSimpleSpriteEditor(kind) {
     <label>Frames <input type="number" min="1" value="1" data-sheet="${kind}" data-key="frames"></label>
     <label>FPS <input type="number" min="0.01" step="0.01" value="12" data-sheet="${kind}" data-key="fps"></label>
     <label><input type="checkbox" checked data-sheet="${kind}" data-key="loop"> Bucle</label>
-    <label><input type="checkbox" data-sheet="${kind}" data-key="multipleOrientations"> Orientaciones</label>
+    <label><input type="checkbox" ${usesSkinOrientationFormat ? "checked" : ""} data-sheet="${kind}" data-key="multipleOrientations"> Orientaciones</label>
     <select data-sheet="${kind}" data-key="readOrder"><option value="row-major">Por filas</option><option value="column-major">Por columnas</option><option value="row-major-reverse">Por filas, inverso</option></select>
-    <input type="text" placeholder='Orientaciones ["north","east"]' data-sheet="${kind}" data-key="orientationRows">
-    <input type="text" placeholder="Orden de frames [0,1,2]" data-sheet="${kind}" data-key="frameOrder">`;
+    <input type="text" ${usesSkinOrientationFormat ? `value="${DEFAULT_SKIN_ORIENTATION_ROWS}"` : `placeholder='Orientaciones ["north","east"]'`} data-sheet="${kind}" data-key="orientationRows">
+    <input type="text" placeholder="${usesSkinOrientationFormat ? "0,1,2" : "Orden de frames [0,1,2]"}" data-sheet="${kind}" data-key="frameOrder">`;
   const file = document.getElementById(`${kind}SpritesheetPng`);
   const preview = document.getElementById(`${kind}SpritesheetPreview`);
   file?.addEventListener("change", () => {
@@ -1008,10 +1021,16 @@ function simpleSpriteConfig(root, kind) {
     throw new Error(`Completa columnas, filas, frames y FPS para ${kind}.`);
   }
   const array = (value) => value?.trim() ? JSON.parse(value) : [];
+  const usesSkinOrientationFormat = kind.startsWith("unit");
   return { columns, rows, frames, fps, frameTime: 1 / fps,
     loop: Boolean(get("loop")?.checked), multipleOrientations: Boolean(get("multipleOrientations")?.checked),
     readOrder: get("readOrder")?.value || "row-major",
-    orientationRows: array(get("orientationRows")?.value), frameOrder: array(get("frameOrder")?.value) };
+    orientationRows: usesSkinOrientationFormat
+      ? commaSeparatedStrings(get("orientationRows")?.value || DEFAULT_SKIN_ORIENTATION_ROWS)
+      : array(get("orientationRows")?.value),
+    frameOrder: usesSkinOrientationFormat
+      ? commaSeparatedIntegers(get("frameOrder")?.value)
+      : array(get("frameOrder")?.value) };
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -1685,6 +1704,15 @@ async function renderUsuarios() {
       👥 Total: <strong>${stats.total}</strong> |
       🧑‍💼 Clientes: <strong>${stats.clientes}</strong> |
       🛍️ Comercios: <strong>${stats.comercios}</strong>
+      ${stats.miniGames ? `
+        <div style="margin-top:12px;padding:12px;border:1px solid #dfe8e1;border-radius:10px">
+          <strong>Minijuegos · ${stats.miniGames.played} partidas · ${stats.miniGames.rewards} Stepcoins</strong>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;margin-top:8px">
+            ${Object.entries(stats.miniGames.byGame).map(([game, values]) => `
+              <span><b>${game[0].toUpperCase() + game.slice(1)}</b>: ${values.played} partidas · ${values.rewards} SC</span>
+            `).join('')}
+          </div>
+        </div>` : ''}
     `;
   } catch (err) {
     console.error("❌ Error al cargar estadísticas de usuarios:", err);
@@ -2643,8 +2671,7 @@ function inicializarFormularioSkins() {
 
 function configSpritesheetDesdeCampo(field) {
   const value = name => field.querySelector(`[data-config="${name}"]`);
-  const frameOrder = value("frameOrder").value.split(",")
-    .map(item => Number(item.trim())).filter(Number.isInteger);
+  const frameOrder = commaSeparatedIntegers(value("frameOrder").value);
   return {
     columns: Number(value("columns").value),
     rows: Number(value("rows").value),
@@ -2653,8 +2680,7 @@ function configSpritesheetDesdeCampo(field) {
     loop: value("loop").checked,
     multipleOrientations: value("multipleOrientations").checked,
     readOrder: value("readOrder").value,
-    orientationRows: value("orientationRows").value.split(",")
-      .map(item => item.trim()).filter(Boolean),
+    orientationRows: commaSeparatedStrings(value("orientationRows").value),
     frameOrder
   };
 }
@@ -5019,6 +5045,8 @@ document.addEventListener("DOMContentLoaded", function () {
       if (el.type === "file") {
         // limpiar selección de archivos
         el.value = "";
+      } else if (el.type === "hidden") {
+        // Conserva los modos de render fijos, que no son controles visuales.
       } else if (el.dataset.sheet) {
         // La cuadrícula Flame conserva sus valores. Al volver a mostrar la
         // sección no debe acabar con columnas/frames/FPS convertidos a cero.
@@ -5299,9 +5327,7 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     ["projectile", "explosion"].forEach((kind) => {
-      const mode = kind.startsWith("unit")
-        ? "flame_spritesheet"
-        : (carta[`${kind}RenderType`] || "classic");
+      const mode = carta[`${kind}RenderType`] || "classic";
       const config = carta[`${kind}Spritesheet`] || {};
       const modeInput = document.getElementById(`${kind}RenderType`);
       if (modeInput) modeInput.value = mode;
@@ -5349,7 +5375,11 @@ document.addEventListener("DOMContentLoaded", function () {
         const input = form.querySelector(`[data-sheet="${kind}"][data-key="${key}"]`);
         if (!input) return;
         if (input.type === "checkbox") input.checked = Boolean(value);
-        else input.value = Array.isArray(value) ? JSON.stringify(value) : (value ?? "");
+        else if (Array.isArray(value) && kind.startsWith("unit")) {
+          input.value = value.length > 0
+            ? value.join(",")
+            : (key === "orientationRows" ? DEFAULT_SKIN_ORIENTATION_ROWS : "");
+        } else input.value = Array.isArray(value) ? JSON.stringify(value) : (value ?? "");
       });
       const preview = document.getElementById(`${kind}SpritesheetPreview`);
       if (preview && config.url) { preview.src = config.url; preview.style.display = "block"; }

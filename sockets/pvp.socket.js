@@ -21,6 +21,12 @@ const {
   newDuelId,
 } = require('../api/services/duel.service');
 const {
+  chooseDuelGame,
+  reflexDelay,
+  REFLEX_LIGHT_COUNT,
+  REFLEX_LIGHT_INTERVAL_MS,
+} = require('../api/services/miniGameConfig');
+const {
   effectiveCard,
   upgradeLevelForUser,
 } = require('../api/services/cardUpgrades');
@@ -79,6 +85,10 @@ module.exports = function(io, dependencies = {}) {
   let snapshotVersion = 0;
   const presenceDisconnectGraceMs =
     dependencies.presenceDisconnectGraceMs ?? 15000;
+  const duelGameChooser = dependencies.chooseDuelGame || chooseDuelGame;
+  const duelStartDelayMs = dependencies.duelStartDelayMs ?? 3200;
+  const memoryPreviewMs = dependencies.memoryPreviewMs ?? 2400;
+  const reflexSequenceDelayMs = dependencies.reflexSequenceDelayMs;
   const turrets = new Map();
   const mines = new Map();
   const airstrikes = new Map();
@@ -300,6 +310,7 @@ module.exports = function(io, dependencies = {}) {
   const settleDuel = async (session, loserUserId, reason) => {
     if (!session || session.status !== 'active') return;
     session.status = 'settling';
+    if (session.resultTimer) clearTimeout(session.resultTimer);
     const loserId = String(loserUserId);
     const winnerId = duelOpponent(session, loserId);
     if (!winnerId) return;
@@ -2664,8 +2675,13 @@ module.exports = function(io, dependencies = {}) {
         return cb?.({ ok: false, error: 'El rival ya no está disponible' });
       }
 
-      const game = Math.random() < 0.5 ? 'culture' : 'space';
+      const game = duelGameChooser();
       const questions = game === 'culture' ? shuffledCultureQuestions() : [];
+      const startsAt = Date.now() + duelStartDelayMs;
+      const releaseAt = game === 'reflex'
+        ? startsAt + (reflexSequenceDelayMs ??
+          REFLEX_LIGHT_COUNT * REFLEX_LIGHT_INTERVAL_MS + reflexDelay())
+        : null;
       const session = {
         id: newDuelId(),
         players: [...invite.players],
@@ -2675,7 +2691,17 @@ module.exports = function(io, dependencies = {}) {
         questions,
         questionIndexByUser: new Map(invite.players.map((userId) => [userId, 0])),
         startedAt: Date.now(),
+        startsAt,
+        releaseAt,
+        reflexResults: new Map(),
       };
+      if (game === 'reflex') {
+        session.resultTimer = setTimeout(() => {
+          if (session.status !== 'active') return;
+          const missing = session.players.find((userId) => !session.reflexResults.has(userId));
+          if (missing) settleDuel(session, missing, 'reaction-timeout');
+        }, Math.max(1, releaseAt + 10000 - Date.now()));
+      }
       duelSessions.set(session.id, session);
       for (const userId of session.players) activeDuelByUser.set(userId, session.id);
       for (const userId of session.players) {
@@ -2688,6 +2714,8 @@ module.exports = function(io, dependencies = {}) {
           opponentNickname: opponent?.nickname || 'Rival',
           questions: questions.map(({ id, question, options }) => ({ id, question, options })),
           startedAt: session.startedAt,
+          startsAt: session.startsAt,
+          releaseAt: session.releaseAt,
         });
       }
       cb?.({ ok: true, accepted: true, duelId: session.id });
@@ -2723,6 +2751,50 @@ module.exports = function(io, dependencies = {}) {
       }
       cb?.({ ok: true });
       settleDuel(session, player.userId, 'death');
+    });
+
+    socket.on('duel:memory-complete', (payload, cb) => {
+      const player = players.get(socket.id);
+      const session = duelSessions.get(String(payload?.duelId || ''));
+      if (!player || !session || session.status !== 'active' ||
+          session.game !== 'memory' || !session.players.includes(player.userId)) {
+        return cb?.({ ok: false, error: 'Sesión de duelo no válida' });
+      }
+      const earliest = session.startsAt + memoryPreviewMs;
+      if (Date.now() < earliest - 150) {
+        return cb?.({ ok: false, error: 'La partida todavía no ha comenzado' });
+      }
+      cb?.({ ok: true });
+      settleDuel(session, duelOpponent(session, player.userId), 'memory-complete');
+    });
+
+    socket.on('duel:reflex-result', (payload, cb) => {
+      const player = players.get(socket.id);
+      const session = duelSessions.get(String(payload?.duelId || ''));
+      if (!player || !session || session.status !== 'active' ||
+          session.game !== 'reflex' || !session.players.includes(player.userId) ||
+          session.reflexResults.has(player.userId)) {
+        return cb?.({ ok: false, error: 'Sesión de duelo no válida' });
+      }
+      const receivedAt = Date.now();
+      const falseStart = payload?.falseStart === true || receivedAt < session.releaseAt;
+      if (falseStart) {
+        cb?.({ ok: true, falseStart: true });
+        settleDuel(session, player.userId, 'false-start');
+        return;
+      }
+      const result = { reactionMs: receivedAt - session.releaseAt, receivedAt };
+      session.reflexResults.set(player.userId, result);
+      cb?.({ ok: true, reactionMs: result.reactionMs });
+      if (session.reflexResults.size === session.players.length) {
+        const [firstId, secondId] = session.players;
+        const first = session.reflexResults.get(firstId);
+        const second = session.reflexResults.get(secondId);
+        const loser = first.reactionMs === second.reactionMs
+          ? (first.receivedAt <= second.receivedAt ? secondId : firstId)
+          : (first.reactionMs > second.reactionMs ? firstId : secondId);
+        settleDuel(session, loser, 'reaction-time');
+      }
     });
 
     socket.on('duel:forfeit', (payload, cb) => {

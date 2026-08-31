@@ -4,15 +4,17 @@ const User = require("../models/User");
 const StepcoinTransaction = require("../models/StepcoinTransaction");
 const Card = require("../models/Card");
 const { publicNickname } = require('../utils/publicIdentity');
-const { randomInt } = require('crypto');
+const { randomInt, randomUUID } = require('crypto');
 const { verifyToken, requireSelfOrAdmin } = require('../middlewares/authMiddleware');
 const { findRandomUnownedCard, publicCard } = require('../services/randomCardService');
-
-const ROULETTE_OPTIONS = [
-  ['Tirar otra vez', 3000], ['Nada', 2500], ['Juego de Cultura', 2200],
-  ['Carta aleatoria', 1500], ['Juego Nave Espacial', 787],
-  ['Gana 20000 Stepcoins', 5], ['Pierde 20000 Stepcoins', 8],
-];
+const {
+  MINI_GAME_IDS,
+  MINI_GAMES,
+  LEGACY_LEVEL_REWARD_GAMES,
+  ROULETTE_OPTIONS,
+  memoryScore,
+  reflexScore,
+} = require('../services/miniGameConfig');
 
 function rouletteOutcome() {
   const total = ROULETTE_OPTIONS.reduce((sum, option) => sum + option[1], 0);
@@ -52,7 +54,7 @@ router.post("/adjust", verifyToken, async (req, res) => {
   const normalizedClaimId = String(claimId || '').trim();
   if (req.user.role !== 'admin') {
     const validPedometer = clientSource === 'pedometer' && cantidad <= 500;
-    const validMiniGame = ['culture', 'space'].includes(clientSource) &&
+    const validMiniGame = LEGACY_LEVEL_REWARD_GAMES.includes(clientSource) &&
       cantidad === 100 && Number.isInteger(level) && level >= 1 && level <= 100;
     if ((!validPedometer && !validMiniGame) ||
         normalizedClaimId.length < 4 || normalizedClaimId.length > 160) {
@@ -97,6 +99,13 @@ router.post("/adjust", verifyToken, async (req, res) => {
       metadata: { requestedType: tipo, source: clientSource, level },
     });
     await trans.save();
+
+    if (LEGACY_LEVEL_REWARD_GAMES.includes(clientSource)) {
+      await User.updateOne(
+        { _id: targetUserId },
+        { $inc: { [`miniGameStats.${clientSource}.rewards`]: cantidad } },
+      );
+    }
 
     res.json({ message: "Stepcoins actualizados correctamente", user });
   } catch (err) {
@@ -204,7 +213,7 @@ router.post("/ruleta", verifyToken, async (req, res) => {
       { _id: targetUserId, rouletteRequestIds: { $ne: requestId } },
       { $push: { rouletteRequestIds: { $each: [requestId], $slice: -100 } } },
       { new: true },
-    ).select('+rouletteRequestIds');
+    ).select('+rouletteRequestIds +miniGameSessions');
     if (!user) {
       const current = await User.findById(targetUserId)
         .select('+rouletteRequestIds stepcoins')
@@ -299,8 +308,29 @@ router.post("/ruleta", verifyToken, async (req, res) => {
       case "Nada":
       case "Juego de Cultura":
       case "Juego Nave Espacial":
+      case "Memory Game":
+      case "Reflex Game":
       default:
         break;
+    }
+
+    let miniGameSessionId = null;
+    const miniGame = Object.values(MINI_GAMES).find(
+      (candidate) => candidate.rouletteLabel === applied,
+    );
+    if (miniGame) {
+      miniGameSessionId = randomUUID();
+      const now = new Date();
+      user.miniGameSessions = (user.miniGameSessions || [])
+        .filter((entry) => entry.expiresAt > now && !entry.claimed)
+        .slice(-19);
+      user.miniGameSessions.push({
+        id: miniGameSessionId,
+        game: miniGame.id,
+        issuedAt: now,
+        expiresAt: new Date(now.getTime() + 60 * 60 * 1000),
+        claimed: false,
+      });
     }
 
     await user.save();
@@ -319,6 +349,7 @@ router.post("/ruleta", verifyToken, async (req, res) => {
       resultado: applied,          // lo que se aplicó realmente
       nuevosStepcoins: user.stepcoins,
       nuevaCarta,                  // opcional
+      miniGameSessionId,
     });
   } catch (err) {
     console.error("❌ Error en ruleta:", err);
@@ -326,6 +357,82 @@ router.post("/ruleta", verifyToken, async (req, res) => {
   }
 });
 
+
+router.post('/minigame-result', verifyToken, async (req, res) => {
+  try {
+    const targetUserId = authenticatedTarget(req);
+    const game = String(req.body?.game || '').trim();
+    const sessionId = String(req.body?.sessionId || '').trim();
+    const score = Number(req.body?.score);
+    const durationMs = Number(req.body?.durationMs);
+    const reactionMs = Number(req.body?.reactionMs ?? 0);
+    const errors = Number(req.body?.errors || 0);
+    const falseStart = req.body?.falseStart === true;
+    if (!MINI_GAME_IDS.includes(game) || sessionId.length < 8 || sessionId.length > 160 ||
+        !Number.isInteger(score) || score < 1 || score > 10 ||
+        !Number.isInteger(durationMs) || durationMs < 0 || durationMs > 3600000 ||
+        !Number.isInteger(errors) || errors < 0 || errors > 1000 ||
+        !Number.isInteger(reactionMs) || reactionMs < 0 || reactionMs > 60000) {
+      return res.status(400).json({ error: 'Resultado de minijuego no válido' });
+    }
+    if (game === 'memory' && score !== memoryScore(durationMs, errors)) {
+      return res.status(400).json({ error: 'Puntuación Memory incoherente' });
+    }
+    if (game === 'reflex' && score !== reflexScore(reactionMs, falseStart)) {
+      return res.status(400).json({ error: 'Puntuación Reflex incoherente' });
+    }
+
+    const operationKey = `minigame-result:${targetUserId}:${game}:${sessionId}`;
+    const previous = await StepcoinTransaction.findOne({ operationKey }).lean();
+    if (previous) {
+      const current = await User.findById(targetUserId).select('stepcoins').lean();
+      return res.json({ duplicate: true, nuevosStepcoins: current?.stepcoins || 0 });
+    }
+
+    // El servidor solo abona una sesión emitida por una tirada real y aún no
+    // consumida. Culture y Space conservan su abono histórico por nivel.
+    const reward = ['memory', 'reflex'].includes(game) ? score * 100 : 0;
+    const inc = {
+      stepcoins: reward,
+      [`miniGameStats.${game}.played`]: 1,
+      [`miniGameStats.${game}.totalScore`]: score,
+      [`miniGameStats.${game}.totalDurationMs`]: durationMs,
+      [`miniGameStats.${game}.totalErrors`]: errors,
+      [`miniGameStats.${game}.falseStarts`]: falseStart ? 1 : 0,
+      [`miniGameStats.${game}.rewards`]: reward,
+    };
+    const user = await User.findOneAndUpdate(
+      {
+        _id: targetUserId,
+        miniGameSessions: { $elemMatch: {
+          id: sessionId, game, claimed: false, expiresAt: { $gt: new Date() },
+        } },
+      },
+      {
+        $set: { 'miniGameSessions.$.claimed': true },
+        $inc: inc,
+        $max: { [`miniGameStats.${game}.bestScore`]: score },
+      },
+      { new: true },
+    ).select('stepcoins');
+    if (!user) {
+      return res.status(409).json({ error: 'Sesión de minijuego inválida, caducada o usada' });
+    }
+    await StepcoinTransaction.create({
+      userId: targetUserId,
+      cantidad: reward,
+      tipo: 'recompensa',
+      descripcion: `Resultado ${game}: ${score}/10`,
+      operationKey,
+      metadata: { source: game, score, durationMs, reactionMs, errors, falseStart },
+    });
+    return res.json({ ok: true, reward, nuevosStepcoins: user.stepcoins });
+  } catch (error) {
+    if (error?.code === 11000) return res.status(409).json({ duplicate: true });
+    console.error('Error registrando resultado de minijuego:', error);
+    return res.status(500).json({ error: 'Error interno registrando minijuego' });
+  }
+});
 
 // Ranking de actividad: solo Stepcoins positivos obtenidos por movilidad.
 // El saldo de User.stepcoins no interviene, por lo que gastar no resta puestos.

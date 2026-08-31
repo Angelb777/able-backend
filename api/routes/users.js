@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Skin = require('../models/Skin'); // necesario para fallback
 const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
 const { publicNickname } = require('../utils/publicIdentity');
+const { MINI_GAME_IDS } = require('../services/miniGameConfig');
 
 function requireSelfOrAdmin(req, res, next) {
   if (req.user.role === 'admin' || String(req.user.id) === String(req.params.id)) return next();
@@ -102,7 +103,29 @@ router.get('/stats', verifyToken, checkRole(['admin']), async (req, res) => {
     const clientes = await User.countDocuments({ role: 'cliente' });
     const comercios = await User.countDocuments({ role: 'comercio' });
 
-    res.json({ total, clientes, comercios });
+    const gameIds = MINI_GAME_IDS;
+    const group = { _id: null };
+    for (const game of gameIds) {
+      for (const metric of ['played', 'totalScore', 'rewards', 'falseStarts']) {
+        group[`${game}_${metric}`] = {
+          $sum: { $ifNull: [`$miniGameStats.${game}.${metric}`, 0] },
+        };
+      }
+    }
+    const [raw = {}] = await User.aggregate([{ $group: group }]);
+    const byGame = Object.fromEntries(gameIds.map((game) => [game, {
+      played: raw[`${game}_played`] || 0,
+      totalScore: raw[`${game}_totalScore`] || 0,
+      rewards: raw[`${game}_rewards`] || 0,
+      falseStarts: raw[`${game}_falseStarts`] || 0,
+    }]));
+    const miniGames = {
+      byGame,
+      played: gameIds.reduce((sum, game) => sum + byGame[game].played, 0),
+      rewards: gameIds.reduce((sum, game) => sum + byGame[game].rewards, 0),
+    };
+
+    res.json({ total, clientes, comercios, miniGames });
   } catch (err) {
     res.status(500).json({ error: 'Error al obtener estadísticas' });
   }
