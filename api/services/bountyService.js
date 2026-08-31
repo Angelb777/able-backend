@@ -9,6 +9,7 @@ const socialRealtime = require('./socialRealtime');
 
 const BOUNTY_DURATION_MS = Number(process.env.BOUNTY_DURATION_MS) || 7 * 24 * 60 * 60 * 1000;
 const BOUNTY_EXPIRY_INTERVAL_MS = Number(process.env.BOUNTY_EXPIRY_INTERVAL_MS) || 60 * 1000;
+const PVP_KILL_REWARD_STEPCOINS = 250;
 let expiryTimer = null;
 
 async function totalForTarget(targetUserId) {
@@ -40,20 +41,26 @@ async function emitBountyTotal(targetUserId) {
 
 async function claimForKill({ attackerUserId, targetUserId, killEventId, source }) {
   if (!attackerUserId || !targetUserId || attackerUserId === targetUserId) {
-    return { paid: 0, refunded: 0, claimed: 0, duplicate: false };
+    return { killReward: 0, paid: 0, refunded: 0, claimed: 0, duplicate: false };
   }
   if (await clanMembershipCache.shareActiveClan(attackerUserId, targetUserId)) {
-    return { paid: 0, refunded: 0, claimed: 0, protected: true };
+    return { killReward: 0, paid: 0, refunded: 0, claimed: 0, protected: true };
   }
 
   const session = await mongoose.startSession();
-  let result = { paid: 0, refunded: 0, claimed: 0, duplicate: false };
+  let result = { killReward: 0, paid: 0, refunded: 0, claimed: 0, duplicate: false };
   let claimedBounties = [];
   try {
     await session.withTransaction(async () => {
       const existing = await CombatKillEvent.findOne({ killEventId }).session(session).lean();
       if (existing) {
-        result = { paid: existing.bountyPaid || 0, refunded: 0, claimed: 0, duplicate: true };
+        result = {
+          killReward: existing.killRewardPaid || 0,
+          paid: existing.bountyPaid || 0,
+          refunded: 0,
+          claimed: 0,
+          duplicate: true,
+        };
         return;
       }
 
@@ -89,14 +96,22 @@ async function claimForKill({ attackerUserId, targetUserId, killEventId, source 
         await bounty.save({ session });
       }
 
-      const credited = paid + refunded;
+      const killReward = PVP_KILL_REWARD_STEPCOINS;
+      const credited = killReward + paid + refunded;
       if (credited > 0) {
         await User.updateOne(
           { _id: attackerUserId },
           { $inc: { stepcoins: credited } },
           { session }
         );
-        const transactions = [];
+        const transactions = [{
+          userId: attackerUserId,
+          cantidad: killReward,
+          tipo: 'recompensa_pvp',
+          descripcion: `Recompensa por eliminar a ${targetUserId}`,
+          operationKey: `pvp-kill-reward:${killEventId}`,
+          metadata: { targetUserId, killEventId, source },
+        }];
         if (paid > 0) {
           transactions.push({
             userId: attackerUserId,
@@ -129,9 +144,11 @@ async function claimForKill({ attackerUserId, targetUserId, killEventId, source 
         attackerUserId,
         targetUserId,
         source,
+        killRewardPaid: killReward,
         bountyPaid: paid,
       }], { session });
       result = {
+        killReward,
         paid,
         refunded,
         claimed: candidates.length,
@@ -173,11 +190,11 @@ async function claimForKill({ attackerUserId, targetUserId, killEventId, source 
         dedupeKey: `bounty-self-refund:${killEventId}:${attackerUserId}`,
       }).catch(() => {});
     }
-    const credited = result.paid + result.refunded;
+    const credited = result.killReward + result.paid + result.refunded;
     if (credited > 0) {
       socialRealtime.emitToUser(attackerUserId, 'stepcoins:update', {
         delta: credited,
-        reason: result.paid > 0 ? 'bounty_claimed' : 'bounty_self_refund',
+        reason: 'pvp_kill_reward',
       });
     }
     await emitBountyTotal(targetUserId).catch(() => {});
@@ -247,6 +264,7 @@ function startExpiryWorker() {
 
 module.exports = {
   BOUNTY_DURATION_MS,
+  PVP_KILL_REWARD_STEPCOINS,
   totalForTarget,
   totalsForTargets,
   emitBountyTotal,

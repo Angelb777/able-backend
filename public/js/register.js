@@ -1,5 +1,6 @@
 import {
   GoogleAuthProvider,
+  acceptCurrentTerms,
   createAbleProfile,
   createUserWithEmailAndPassword,
   createWebSession,
@@ -27,6 +28,7 @@ function values() {
     email: document.getElementById('email').value.trim(),
     password: document.getElementById('password').value,
     role: document.getElementById('rol').value,
+    termsAccepted: document.getElementById('terms-accepted').checked,
   };
 }
 function validNickname(nickname) {
@@ -37,6 +39,7 @@ function loading(value) { submitNode.disabled = value; googleNode.disabled = val
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const data = values();
+  if (!data.termsAccepted) return message('Debes aceptar los Términos de Uso para crear tu cuenta.');
   if (!validNickname(data.nickname)) return message('El nickname debe tener 3-20 caracteres y usar letras, numeros, guion o guion bajo.');
   loading(true); message('');
   try {
@@ -76,6 +79,7 @@ googleNode.addEventListener('click', async () => {
     pendingUser = credential.user;
     const status = await firebaseStatus(pendingUser);
     if (status.status === 'needs_profile') await createAbleProfile(pendingUser, data.nickname, data.role);
+    if (status.status === 'terms_required') await acceptCurrentTerms(pendingUser);
     await createWebSession(pendingUser);
     location.assign('/dashboard.html');
   } catch (error) {
@@ -93,6 +97,7 @@ googleNode.addEventListener('click', async () => {
           if (status.status === 'needs_profile') {
             await createAbleProfile(pendingUser, data.nickname, data.role);
           }
+          if (status.status === 'terms_required') await acceptCurrentTerms(pendingUser);
           await createWebSession(pendingUser);
           location.assign('/dashboard.html');
         } catch (linkError) { message(friendlyError(linkError)); }

@@ -27,6 +27,7 @@ test('bounty claims and expiration are idempotent and enforce antifraud rules', 
     target: new mongoose.Types.ObjectId(),
     creator: new mongoose.Types.ObjectId(),
     creatorTwo: new mongoose.Types.ObjectId(),
+    noBountyTarget: new mongoose.Types.ObjectId(),
     protectedTarget: new mongoose.Types.ObjectId(),
   };
   const balances = new Map([
@@ -165,9 +166,10 @@ test('bounty claims and expiration are idempotent and enforce antifraud rules', 
     source: 'bullet',
   });
   assert.equal(first.paid, 160, 'multiple valid bounties are accumulated');
+  assert.equal(first.killReward, 250, 'every valid enemy kill pays the base reward');
   assert.equal(first.refunded, 40, 'the killer recovers their own bounty');
   assert.equal(first.claimed, 3);
-  assert.equal(balances.get(String(ids.killer)), 200);
+  assert.equal(balances.get(String(ids.killer)), 450);
   assert.equal(bounties[0].status, 'claimed');
   assert.equal(bounties[1].status, 'claimed');
   assert.equal(bounties[3].status, 'cancelled', 'own bounty is closed and refunded');
@@ -179,7 +181,17 @@ test('bounty claims and expiration are idempotent and enforce antifraud rules', 
     source: 'bullet',
   });
   assert.equal(duplicate.duplicate, true);
-  assert.equal(balances.get(String(ids.killer)), 200, 'duplicate kill cannot pay or refund twice');
+  assert.equal(balances.get(String(ids.killer)), 450, 'duplicate kill cannot pay or refund twice');
+
+  const noBountyKill = await bountyService.claimForKill({
+    attackerUserId: String(ids.killer),
+    targetUserId: String(ids.noBountyTarget),
+    killEventId: 'kill-no-bounty',
+    source: 'bullet',
+  });
+  assert.equal(noBountyKill.killReward, 250);
+  assert.equal(noBountyKill.paid, 0);
+  assert.equal(balances.get(String(ids.killer)), 700, 'a kill without a bounty still pays 250');
 
   protectedPair = true;
   const protectedResult = await bountyService.claimForKill({
@@ -195,8 +207,8 @@ test('bounty claims and expiration are idempotent and enforce antifraud rules', 
   bounties[2].expiresAt = new Date(Date.now() - 1000);
   const processed = await bountyService.processExpiredBounties({ limit: 10 });
   assert.equal(processed, 1);
-  assert.equal(balances.get(String(ids.killer)), 240);
+  assert.equal(balances.get(String(ids.killer)), 740);
   const processedAgain = await bountyService.processExpiredBounties({ limit: 10 });
   assert.equal(processedAgain, 0);
-  assert.equal(balances.get(String(ids.killer)), 240, 'refund happens once');
+  assert.equal(balances.get(String(ids.killer)), 740, 'refund happens once');
 });

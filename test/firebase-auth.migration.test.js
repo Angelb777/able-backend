@@ -66,13 +66,17 @@ test('Firebase registration creates a profile with uid, nickname and public role
     const response = await fetch(`${base}/api/auth/firebase/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: 'Bearer firebase-token' },
-      body: JSON.stringify({ nickname: 'Nuevo_73', role: 'cliente' }),
+      body: JSON.stringify({
+        nickname: 'Nuevo_73', role: 'cliente', termsAccepted: true, termsVersion: '1.0',
+      }),
     });
     assert.equal(response.status, 201);
   });
   assert.equal(created[0].firebaseUid, 'firebase-new');
   assert.equal(created[0].nickname, 'Nuevo_73');
   assert.equal(created[0].role, 'cliente');
+  assert.equal(created[0].termsVersionAccepted, '1.0');
+  assert.ok(created[0].termsAcceptedAt instanceof Date);
   assert.equal(Object.hasOwn(created[0], 'password'), false);
 });
 
@@ -140,7 +144,10 @@ test('an unverified Firebase email never auto-links an existing profile', async 
   await withServer(router, async (base) => {
     const response = await fetch(`${base}/api/auth/firebase/register`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ idToken: 'token', nickname: 'NoLink', role: 'cliente' }),
+      body: JSON.stringify({
+        idToken: 'token', nickname: 'NoLink', role: 'cliente',
+        termsAccepted: true, termsVersion: '1.0',
+      }),
     });
     const body = await response.json();
     assert.equal(response.status, 409);
@@ -156,6 +163,8 @@ test('verified Google login links an existing profile and preserves its identity
     password: 'existing-hash',
     nickname: 'ExistingPlayer',
     role: 'comercio',
+    termsVersionAccepted: '1.0',
+    termsAcceptedAt: new Date(),
     authProviders: [],
     async save() {},
   };
@@ -193,7 +202,10 @@ test('legacy login accepts only existing profiles without firebaseUid and hides 
   const originalCompare = bcrypt.compare;
   bcrypt.compare = async () => true;
   t.after(() => { bcrypt.compare = originalCompare; });
-  const legacy = { _id: 'legacy', email: 'legacy@example.test', password: 'hash', role: 'cliente' };
+  const legacy = {
+    _id: 'legacy', email: 'legacy@example.test', password: 'hash', role: 'cliente',
+    termsVersionAccepted: '1.0', termsAcceptedAt: new Date(),
+  };
   class FakeUser {
     static findOne(filter) { return query(String(filter.email?.$regex).includes('legacy') ? legacy : null); }
   }
@@ -216,6 +228,40 @@ test('legacy login accepts only existing profiles without firebaseUid and hides 
   });
 });
 
+test('an existing user accepts terms once before login and the acceptance is persisted', async (t) => {
+  const originalCompare = bcrypt.compare;
+  bcrypt.compare = async () => true;
+  t.after(() => { bcrypt.compare = originalCompare; });
+  const existing = {
+    _id: 'pre-terms', email: 'existing@example.test', password: 'hash', role: 'cliente',
+    async save() {},
+  };
+  class FakeUser { static findOne() { return query(existing); } }
+  const previousSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = 'terms-test-secret';
+  t.after(() => { process.env.JWT_SECRET = previousSecret; });
+  const router = createAuthRouter({ UserModel: FakeUser, disableRateLimit: true });
+  await withServer(router, async (base) => {
+    const pending = await fetch(`${base}/api/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: existing.email, password: 'secret' }),
+    });
+    assert.equal(pending.status, 428);
+    assert.equal((await pending.json()).code, 'TERMS_ACCEPTANCE_REQUIRED');
+
+    const accepted = await fetch(`${base}/api/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        email: existing.email, password: 'secret',
+        termsAccepted: true, termsVersion: '1.0',
+      }),
+    });
+    assert.equal(accepted.status, 200);
+  });
+  assert.equal(existing.termsVersionAccepted, '1.0');
+  assert.ok(existing.termsAcceptedAt instanceof Date);
+});
+
 test('linked admins retain password fallback when Firebase Web is unavailable', async (t) => {
   const originalCompare = bcrypt.compare;
   bcrypt.compare = async () => true;
@@ -223,6 +269,7 @@ test('linked admins retain password fallback when Firebase Web is unavailable', 
   const admin = {
     _id: 'linked-admin', email: 'admin@example.test', password: 'hash',
     role: 'admin', firebaseUid: 'google-admin',
+    termsVersionAccepted: '1.0', termsAcceptedAt: new Date(),
   };
   class FakeUser { static findOne() { return query(admin); } }
   const previousSecret = process.env.JWT_SECRET;
@@ -336,7 +383,10 @@ test('web legacy session uses HttpOnly cookie and requires CSRF', async (t) => {
   const previousSecret = process.env.JWT_SECRET;
   process.env.JWT_SECRET = 'web-legacy-secret';
   t.after(() => { process.env.JWT_SECRET = previousSecret; });
-  const user = { _id: 'legacy', email: 'legacy@example.test', password: 'hash', role: 'cliente' };
+  const user = {
+    _id: 'legacy', email: 'legacy@example.test', password: 'hash', role: 'cliente',
+    termsVersionAccepted: '1.0', termsAcceptedAt: new Date(),
+  };
   class FakeUser { static findOne() { return query(user); } }
   const router = createAuthRouter({ UserModel: FakeUser, disableRateLimit: true });
   await withServer(router, async (base) => {
@@ -374,12 +424,15 @@ test('web Firebase session cookie is HttpOnly and logout revokes and clears sess
     async revokeRefreshTokens(uid) { revoked.push(uid); },
   };
   class FakeUser {
-    static findOne() {
-      return query({
+    static profile() {
+      return {
         _id: 'mongo-web', role: 'cliente', firebaseUid: decoded.uid,
         email: decoded.email, nickname: 'WebFirebase',
-      });
+        termsVersionAccepted: '1.0', termsAcceptedAt: new Date(),
+      };
     }
+    static findOne() { return query(this.profile()); }
+    static findById() { return query(this.profile()); }
   }
   const router = createAuthRouter({
     UserModel: FakeUser, firebaseAuth: auth, disableRateLimit: true,

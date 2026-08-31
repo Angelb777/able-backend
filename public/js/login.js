@@ -1,5 +1,6 @@
 import {
   GoogleAuthProvider,
+  acceptCurrentTerms,
   backend,
   createAbleProfile,
   createWebSession,
@@ -23,6 +24,7 @@ const googleNode = document.getElementById('google-login');
 const verifyNode = document.getElementById('verification-actions');
 const onboardingNode = document.getElementById('google-onboarding');
 let pendingGoogleUser = null;
+let pendingLegacyCredentials = null;
 
 function message(text) { errorNode.textContent = text || ''; }
 function loading(value) {
@@ -31,14 +33,19 @@ function loading(value) {
   submitNode.textContent = value ? 'Conectando...' : 'Entrar';
 }
 
-async function legacyWebLogin(email, password) {
+async function legacyWebLogin(email, password, acceptTerms = false) {
   const csrfResponse = await backend('/api/auth/csrf');
   const data = await backend('/api/auth/login', {
     method: 'POST', headers: {
       'content-type': 'application/json',
       'x-csrf-token': csrfResponse.csrfToken,
     },
-    body: JSON.stringify({ email, password, webSession: true }),
+    body: JSON.stringify({
+      email,
+      password,
+      webSession: true,
+      ...(acceptTerms ? { termsAccepted: true, termsVersion: '1.0' } : {}),
+    }),
   });
   localStorage.removeItem('token');
   localStorage.setItem('user', JSON.stringify(data.user));
@@ -51,6 +58,18 @@ async function finishFirebase(user) {
     pendingGoogleUser = user;
     onboardingNode.hidden = false;
     message('Elige nickname y tipo de cuenta para completar tu alta con Google.');
+    return;
+  }
+  if (status.status === 'terms_required') {
+    pendingGoogleUser = user;
+    window.AbleLegal.showTermsGate(async () => {
+      await acceptCurrentTerms(user);
+      await createWebSession(user);
+      location.assign('/dashboard.html');
+    }, async () => {
+      try { await (await import('./firebase-client.js')).logoutWebSession(); }
+      finally { location.assign('/login.html'); }
+    });
     return;
   }
   await createWebSession(user);
@@ -71,6 +90,15 @@ form.addEventListener('submit', async (event) => {
       await legacyWebLogin(email, password);
       return;
     } catch (legacyError) {
+      if (legacyError.code === 'TERMS_ACCEPTANCE_REQUIRED') {
+        pendingLegacyCredentials = { email, password };
+        window.AbleLegal.showTermsGate(async () => {
+          const pending = pendingLegacyCredentials;
+          if (!pending) throw new Error('Vuelve a iniciar sesión.');
+          await legacyWebLogin(pending.email, pending.password, true);
+        }, () => location.assign('/login.html'));
+        return;
+      }
       if (legacyError.code !== 'INVALID_CREDENTIALS') throw legacyError;
     }
 

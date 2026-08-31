@@ -64,7 +64,24 @@ export async function createAbleProfile(user, nickname, role) {
   return backend('/api/auth/firebase/register', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${idToken}` },
-    body: JSON.stringify({ nickname, role }),
+    body: JSON.stringify({
+      nickname,
+      role,
+      termsAccepted: true,
+      termsVersion: '1.0',
+    }),
+  });
+}
+
+export async function acceptCurrentTerms(user) {
+  const idToken = await user.getIdToken(true);
+  return backend('/api/auth/terms/accept', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ termsAccepted: true, termsVersion: '1.0' }),
   });
 }
 

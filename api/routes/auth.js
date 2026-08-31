@@ -26,6 +26,7 @@ const {
 
 const PUBLIC_ROLES = new Set(['cliente', 'comercio']);
 const SESSION_MAX_AGE_MS = 5 * 24 * 60 * 60 * 1000;
+const CURRENT_TERMS_VERSION = '1.0';
 const GENERIC_LOGIN_ERROR = 'El correo o la contrasena no son correctos';
 // La configuracion del SDK Web identifica la aplicacion, pero no concede
 // privilegios administrativos ni contiene credenciales privadas. Las variables
@@ -59,6 +60,23 @@ function serializeUser(user, authType) {
     role: normalizeRole(user.role),
     authType,
   };
+}
+
+function hasAcceptedCurrentTerms(user) {
+  return user?.termsVersionAccepted === CURRENT_TERMS_VERSION &&
+    user?.termsAcceptedAt instanceof Date;
+}
+
+function validTermsAcceptance(body = {}) {
+  return body.termsAccepted === true &&
+    body.termsVersion === CURRENT_TERMS_VERSION;
+}
+
+async function recordCurrentTermsAcceptance(user) {
+  user.termsVersionAccepted = CURRENT_TERMS_VERSION;
+  user.termsAcceptedAt = new Date();
+  await user.save();
+  return user;
 }
 
 function authLimiter(options = {}) {
@@ -156,7 +174,11 @@ function createAuthRouter(dependencies = {}) {
       });
       const linked = await UserModel.findOne({ firebaseUid: decoded.uid });
       if (linked) {
-        return res.json({ status: 'linked', user: serializeUser(linked, 'firebase') });
+        return res.json({
+          status: hasAcceptedCurrentTerms(linked) ? 'linked' : 'terms_required',
+          termsVersion: CURRENT_TERMS_VERSION,
+          user: serializeUser(linked, 'firebase'),
+        });
       }
       const email = normalizeEmail(decoded.email);
       if (!email) return res.status(400).json({ error: 'Firebase no ha proporcionado un email' });
@@ -165,7 +187,8 @@ function createAuthRouter(dependencies = {}) {
         if (canLinkVerifiedGoogleProfile(decoded)) {
           const migrated = await linkGoogleProfile(collision, decoded);
           return res.json({
-            status: 'linked',
+            status: hasAcceptedCurrentTerms(migrated) ? 'linked' : 'terms_required',
+            termsVersion: CURRENT_TERMS_VERSION,
             user: serializeUser(migrated, 'firebase'),
           });
         }
@@ -202,6 +225,13 @@ function createAuthRouter(dependencies = {}) {
           code: 'PUBLIC_ROLE_NOT_ALLOWED',
         });
       }
+      if (!validTermsAcceptance(req.body)) {
+        return res.status(400).json({
+          error: 'Debes aceptar los Terminos de Uso para crear tu cuenta',
+          code: 'TERMS_ACCEPTANCE_REQUIRED',
+          termsVersion: CURRENT_TERMS_VERSION,
+        });
+      }
       const checked = validateNickname(req.body.nickname);
       if (!checked.ok) return res.status(400).json({ error: checked.error, code: 'INVALID_NICKNAME' });
 
@@ -214,7 +244,12 @@ function createAuthRouter(dependencies = {}) {
       if (!email) return res.status(400).json({ error: 'Firebase no ha proporcionado un email' });
 
       const linked = await UserModel.findOne({ firebaseUid: decoded.uid });
-      if (linked) return res.json({ user: serializeUser(linked, 'firebase') });
+      if (linked) {
+        if (!hasAcceptedCurrentTerms(linked)) {
+          await recordCurrentTermsAcceptance(linked);
+        }
+        return res.json({ user: serializeUser(linked, 'firebase') });
+      }
 
       // Google verificado puede recuperar el perfil del mismo correo sin
       // duplicar ni perder sus datos. Otros proveedores siguen bloqueados.
@@ -222,6 +257,9 @@ function createAuthRouter(dependencies = {}) {
       if (emailCollision) {
         if (canLinkVerifiedGoogleProfile(decoded)) {
           const migrated = await linkGoogleProfile(emailCollision, decoded);
+          if (!hasAcceptedCurrentTerms(migrated)) {
+            await recordCurrentTermsAcceptance(migrated);
+          }
           return res.json({ user: serializeUser(migrated, 'firebase') });
         }
         return res.status(409).json({
@@ -244,6 +282,8 @@ function createAuthRouter(dependencies = {}) {
         nickname: checked.nickname,
         normalizedNickname: checked.normalizedNickname,
         role,
+        termsVersionAccepted: CURRENT_TERMS_VERSION,
+        termsAcceptedAt: new Date(),
         ...(role === 'cliente' ? {
           onboarding: {
             version: 1,
@@ -300,6 +340,16 @@ function createAuthRouter(dependencies = {}) {
       if (!matches) {
         return res.status(401).json({ error: GENERIC_LOGIN_ERROR, code: 'INVALID_CREDENTIALS' });
       }
+      if (!hasAcceptedCurrentTerms(user)) {
+        if (!validTermsAcceptance(req.body)) {
+          return res.status(428).json({
+            error: 'Debes aceptar los Terminos de Uso para continuar',
+            code: 'TERMS_ACCEPTANCE_REQUIRED',
+            termsVersion: CURRENT_TERMS_VERSION,
+          });
+        }
+        await recordCurrentTermsAcceptance(user);
+      }
       const token = jwt.sign({ id: user._id, legacy: true }, process.env.JWT_SECRET, {
         expiresIn: '7d',
       });
@@ -332,6 +382,14 @@ function createAuthRouter(dependencies = {}) {
       const identity = await userFromFirebaseToken(idToken, {
         firebaseAuth: currentFirebaseAuth(), UserModel,
       });
+      const profile = await UserModel.findById(identity.id);
+      if (!hasAcceptedCurrentTerms(profile)) {
+        return res.status(428).json({
+          error: 'Debes aceptar los Terminos de Uso para continuar',
+          code: 'TERMS_ACCEPTANCE_REQUIRED',
+          termsVersion: CURRENT_TERMS_VERSION,
+        });
+      }
       const sessionCookie = await currentFirebaseAuth().createSessionCookie(idToken, {
         expiresIn: SESSION_MAX_AGE_MS,
       });
@@ -363,6 +421,44 @@ function createAuthRouter(dependencies = {}) {
     res.clearCookie(legacySessionCookieName(), sessionCookieOptions(0));
     res.clearCookie(CSRF_COOKIE, csrfCookieOptions());
     return res.status(204).end();
+  });
+
+  router.get('/terms/status', verifyToken, async (req, res, next) => {
+    try {
+      const user = await UserModel.findById(req.user.id);
+      if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+      return res.json({
+        accepted: hasAcceptedCurrentTerms(user),
+        termsVersion: CURRENT_TERMS_VERSION,
+      });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.post('/terms/accept', verifyToken, async (req, res, next) => {
+    try {
+      if (!validTermsAcceptance(req.body)) {
+        return res.status(400).json({
+          error: 'Aceptacion de terminos no valida',
+          code: 'TERMS_ACCEPTANCE_REQUIRED',
+          termsVersion: CURRENT_TERMS_VERSION,
+        });
+      }
+      if (!String(req.headers.authorization || '').startsWith('Bearer ') &&
+          !validCsrfRequest(req)) {
+        return res.status(403).json({ error: 'Solicitud no valida', code: 'INVALID_CSRF_TOKEN' });
+      }
+      const user = await UserModel.findById(req.user.id);
+      if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+      if (!hasAcceptedCurrentTerms(user)) await recordCurrentTermsAcceptance(user);
+      return res.json({
+        termsVersion: CURRENT_TERMS_VERSION,
+        user: serializeUser(user, req.user.authType || 'firebase'),
+      });
+    } catch (error) {
+      return next(error);
+    }
   });
 
   router.post('/logout', verifyToken, async (req, res, next) => {

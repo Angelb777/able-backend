@@ -49,6 +49,8 @@ const userSchema = new mongoose.Schema({
   },
   firebaseUid: { type: String, trim: true, unique: true, sparse: true },
   authProviders: { type: [String], default: [] },
+  termsVersionAccepted: { type: String, default: '' },
+  termsAcceptedAt: { type: Date },
 
   role: {
     type: String,

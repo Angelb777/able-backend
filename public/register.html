@@ -199,8 +199,14 @@
         <option value="comercio">Comercio</option>
       </select>
 
+      <label style="display:flex;align-items:flex-start;gap:10px;font-weight:400;line-height:1.45;margin-bottom:18px">
+        <input type="checkbox" id="terms-accepted" required style="margin-top:3px;accent-color:#2faa36">
+        <span>He leído y acepto los <a class="legal-inline-link" href="/terminos.html" target="_blank" rel="noopener">Términos de Uso</a>. Consulta la <a class="legal-inline-link" href="/privacidad.html" target="_blank" rel="noopener">Política de Privacidad</a>.</span>
+      </label>
+
       <button id="register-submit" type="submit" class="form-button">Crear cuenta con Email</button>
       <button id="google-register" type="button" class="form-button" style="margin-top:12px;background:#fff;color:#222">Crear o entrar con Google</button>
+      <p style="margin:10px 0 0;text-align:center;color:#aeb8b0;font-size:.82rem;line-height:1.45">Al continuar, aceptas los <a class="legal-inline-link" href="/terminos.html" target="_blank" rel="noopener">Términos de Uso</a> y confirmas que has leído la <a class="legal-inline-link" href="/privacidad.html" target="_blank" rel="noopener">Política de Privacidad</a>.</p>
     </form>
 
     <div id="verification-actions" hidden>
@@ -212,6 +218,7 @@
     <p>¿Ya tienes cuenta? <a href="login.html">Iniciar sesión</a></p>
   </main>
 
+  <script src="js/legal-ui.js?v=1"></script>
   <script type="module" src="js/register.js"></script>
 </body>
 </html>

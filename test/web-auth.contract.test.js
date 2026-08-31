@@ -78,3 +78,34 @@ test('public navigation always exposes a direct login link', () => {
     );
   }
 });
+
+test('legal pages, footer, cookie choice and registration consent are present', () => {
+  for (const page of ['terminos.html', 'privacidad.html', 'aviso-legal.html', 'cookies.html']) {
+    const html = readPublic(page);
+    assert.match(html, /<main class="legal-document">/);
+    assert.match(html, /js\/legal-ui\.js/);
+    assert.match(html, /data-legal-email>Mostrar correo electrónico<\/a>/);
+    assert.doesNotMatch(html, /info@able73\.com/);
+  }
+
+  const legalUi = readPublic('js/legal-ui.js');
+  assert.match(legalUi, /Política de Privacidad/);
+  assert.match(legalUi, /Términos de Uso/);
+  assert.match(legalUi, /Aviso Legal/);
+  assert.match(legalUi, /Política de Cookies/);
+  assert.match(legalUi, /data-cookie-choice="rejected"[^>]*>Rechazar/);
+  assert.match(legalUi, /data-cookie-choice="accepted"[^>]*>Aceptar/);
+  assert.match(legalUi, /String\.fromCharCode\(64\)/);
+  assert.match(legalUi, /mailto:\$\{email\}/);
+
+  const registration = readPublic('register.html');
+  assert.match(registration, /id="terms-accepted"[^>]*required/);
+  assert.doesNotMatch(registration, /id="terms-accepted"[^>]*checked/);
+  assert.match(registration, /He leído y acepto/);
+  assert.match(registration, /Al continuar, aceptas los/);
+
+  const login = readPublic('login.html');
+  assert.match(login, /Al continuar, aceptas los/);
+  assert.match(login, /href="\/terminos\.html"/);
+  assert.match(login, /href="\/privacidad\.html"/);
+});

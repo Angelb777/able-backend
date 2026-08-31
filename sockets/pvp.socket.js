@@ -386,6 +386,7 @@ module.exports = function(io, dependencies = {}) {
         attackerUserId: attackerId,
         targetUserId,
         source,
+        killRewardPaid: bounty.killReward || 0,
         bountyPaid: bounty.paid || 0,
       });
     }
