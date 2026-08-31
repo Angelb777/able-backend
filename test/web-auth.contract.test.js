@@ -48,7 +48,9 @@ test('legacy web accounts are checked before Firebase initialization', () => {
 });
 
 test('dashboard user actions comply with CSP and report delete failures', () => {
+  const dashboardHtml = readPublic('dashboard.html');
   const dashboard = readPublic('js/dashboard.js');
+  assert.match(dashboardHtml, /data-hide-legal-chrome="true"/);
   assert.doesNotMatch(dashboard, /onclick=["'][^"']*(?:verDetalles|eliminarUsuario)/);
   assert.match(dashboard, /data-user-management-action="delete"/);
   assert.match(dashboard, /if \(!res\.ok\) throw new Error/);

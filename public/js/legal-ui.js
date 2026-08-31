@@ -15,7 +15,9 @@
     document.head.appendChild(stylesheet);
   }
 
-  if (!document.querySelector('.legal-footer')) {
+  const hideLegalChrome = document.body.dataset.hideLegalChrome === 'true';
+
+  if (!hideLegalChrome && !document.querySelector('.legal-footer')) {
     const footer = document.createElement('footer');
     footer.className = 'legal-footer';
     footer.innerHTML = `<nav aria-label="Información legal">${links
@@ -38,7 +40,7 @@
   });
 
   const cookieChoiceKey = 'able73_cookie_choice';
-  if (!localStorage.getItem(cookieChoiceKey)) {
+  if (!hideLegalChrome && !localStorage.getItem(cookieChoiceKey)) {
     const banner = document.createElement('section');
     banner.className = 'cookie-banner';
     banner.setAttribute('aria-label', 'Preferencias de cookies');
