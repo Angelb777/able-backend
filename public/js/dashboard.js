@@ -3645,6 +3645,7 @@ async function cargarCartas() {
         ${carta.tipoArma === "Proyectil" ? `<p><strong>Render proyectil:</strong> ${carta.projectileRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p>` : ""}
         ${carta.tipoArma === "Proyectil" ? `<p><strong>Render explosión:</strong> ${carta.explosionRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p>` : ""}
         ${carta.tipoArma === "Arrastre" ? `<p><strong>Render torre:</strong> ${carta.turretRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p>` : ""}
+        ${carta.tipoArma === "TROPA" ? `<p><strong>Unidades:</strong> ${carta.numeroUnidades || 1}</p>` : ""}
         <p><strong>Daño:</strong> ${carta.dano}</p>
         <p><strong>Dispositivo:</strong> ${carta.dispositivo || "Ambos"}</p>
         <p><strong>Tiempo de espera:</strong> ${carta.tiempoEspera || 0} segundos</p>
@@ -4994,7 +4995,7 @@ async function renderMisSkinsCliente() {
 }
 
 document.addEventListener("DOMContentLoaded", function () {
-  const extendedCardSpriteKinds = ["mine", "mineExplosion", "airstrikePlane", "airstrikeBomb", "airstrikeExplosion"];
+  const extendedCardSpriteKinds = ["mine", "mineExplosion", "airstrikePlane", "airstrikeBomb", "airstrikeExplosion", "unitIdle", "unitWalk", "unitAttack"];
   extendedCardSpriteKinds.forEach(installSimpleSpriteEditor);
   const tipoSelect = document.getElementById("tipoArmaSelect");
   const seccionComun = document.getElementById("comunCarta");
@@ -5004,6 +5005,7 @@ document.addEventListener("DOMContentLoaded", function () {
     Arrastre:   document.getElementById("seccionArrastre"),
     Trampa:     document.getElementById("seccionTrampa"),
     Invocacion: document.getElementById("seccionInvocacion"),
+    TROPA:      document.getElementById("seccionTropa"),
     Vida:       document.getElementById("seccionVida"),
     Defensa:    document.getElementById("seccionDefensa")
   };
@@ -5129,6 +5131,8 @@ document.addEventListener("DOMContentLoaded", function () {
           setRenderFields("mine"); setRenderFields("mineExplosion");
         } else if (key === "Invocacion") {
           setRenderFields("airstrikePlane"); setRenderFields("airstrikeBomb"); setRenderFields("airstrikeExplosion");
+        } else if (key === "TROPA") {
+          setRenderFields("unitIdle"); setRenderFields("unitWalk"); setRenderFields("unitAttack");
         }
       } else {
         seccion.style.display = "none";
@@ -5277,7 +5281,15 @@ document.addEventListener("DOMContentLoaded", function () {
       radioExplosion: carta.radioExplosion ?? 1,
       tiempoHastaAtaque: carta.tiempoHastaAtaque ?? 0,
       usoUnico: String(carta.usoUnico !== false),
-      duracionDefensa: carta.duracionDefensa ?? 5
+      duracionDefensa: carta.duracionDefensa ?? 5,
+      numeroUnidades: carta.numeroUnidades ?? 1,
+      separacionUnidades: carta.separacionUnidades ?? 3,
+      distanciaMaximaColocacion: carta.distanciaMaximaColocacion ?? 500,
+      rangoDeteccion: carta.rangoDeteccion ?? 100,
+      rangoAtaque: carta.rangoAtaque ?? 2,
+      distanciaMaximaPersecucion: carta.distanciaMaximaPersecucion ?? 250,
+      velocidadMovimiento: carta.velocidadMovimiento ?? 3,
+      cooldownAtaque: carta.cooldownAtaque ?? 1,
     };
 
     Object.entries(valores).forEach(([campo, valor]) => {
@@ -5287,7 +5299,9 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     ["projectile", "explosion"].forEach((kind) => {
-      const mode = carta[`${kind}RenderType`] || "classic";
+      const mode = kind.startsWith("unit")
+        ? "flame_spritesheet"
+        : (carta[`${kind}RenderType`] || "classic");
       const config = carta[`${kind}Spritesheet`] || {};
       const modeInput = document.getElementById(`${kind}RenderType`);
       if (modeInput) modeInput.value = mode;
@@ -5326,7 +5340,9 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     extendedCardSpriteKinds.forEach((kind) => {
       const modeInput = document.getElementById(`${kind}RenderType`);
-      const mode = carta[`${kind}RenderType`] || "classic";
+      const mode = kind.startsWith("unit")
+        ? "flame_spritesheet"
+        : (carta[`${kind}RenderType`] || "classic");
       const config = carta[`${kind}Spritesheet`] || {};
       if (modeInput) modeInput.value = mode;
       Object.entries(config).forEach(([key, value]) => {

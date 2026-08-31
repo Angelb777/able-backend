@@ -35,6 +35,11 @@ const onboardingSchema = new mongoose.Schema({
   skippedAt: { type: Date },
 }, { _id: false });
 
+const duelStatsSchema = new mongoose.Schema({
+  wins: { type: Number, min: 0, default: 0 },
+  losses: { type: Number, min: 0, default: 0 },
+}, { _id: false });
+
 const userSchema = new mongoose.Schema({
   nickname: { type: String, trim: true, maxlength: 20 },
   normalizedNickname: { type: String, trim: true, maxlength: 20 },
@@ -62,6 +67,7 @@ const userSchema = new mongoose.Schema({
   stepcoinsTorretaPendientes: { type: Number, default: 0 },
   // Ausencia/legacy se interpreta como activado en todos los puntos de uso.
   gameModeEnabled: { type: Boolean, default: true },
+  duelStats: { type: duelStatsSchema, default: () => ({}) },
 
   cartas: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Card' }],
   cardUpgrades: { type: [cardUpgradeSchema], default: [] },

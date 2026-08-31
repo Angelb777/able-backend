@@ -27,7 +27,10 @@ const SPRITESHEET_FIELDS = new Set([
   "mineExplosionSpritesheetPng",
   "airstrikePlaneSpritesheetPng",
   "airstrikeBombSpritesheetPng",
-  "airstrikeExplosionSpritesheetPng"
+  "airstrikeExplosionSpritesheetPng",
+  "unitIdleSpritesheetPng",
+  "unitWalkSpritesheetPng",
+  "unitAttackSpritesheetPng"
 ]);
 
 class SpritesheetValidationError extends Error {}
@@ -147,6 +150,18 @@ function normalizedRenderType(value) {
   return value === "flame_spritesheet" ? "flame_spritesheet" : "classic";
 }
 
+function validateTroopFields(body) {
+  const positive = (value) => Number.isFinite(Number(value)) && Number(value) > 0;
+  const nonNegative = (value) => Number.isFinite(Number(value)) && Number(value) >= 0;
+  return Number.isInteger(Number(body.numeroUnidades)) && Number(body.numeroUnidades) > 0 &&
+    nonNegative(body.separacionUnidades) &&
+    positive(body.distanciaMaximaColocacion) &&
+    positive(body.rangoDeteccion) && positive(body.rangoAtaque) &&
+    positive(body.distanciaMaximaPersecucion) && positive(body.vida) &&
+    positive(body.velocidadMovimiento) && positive(body.dano) &&
+    positive(body.cooldownAtaque) && positive(body.duracion);
+}
+
 async function guardarImagenes(files) {
   const entries = await Promise.all(
     Object.entries(files).map(async ([campo, archivos]) => {
@@ -178,6 +193,9 @@ router.post(
     { name: "airstrikePlaneSpritesheetPng", maxCount: 1 },
     { name: "airstrikeBombSpritesheetPng", maxCount: 1 },
     { name: "airstrikeExplosionSpritesheetPng", maxCount: 1 },
+    { name: "unitIdleSpritesheetPng", maxCount: 1 },
+    { name: "unitWalkSpritesheetPng", maxCount: 1 },
+    { name: "unitAttackSpritesheetPng", maxCount: 1 },
     { name: "imagenesExtras", maxCount: 5 },
 
     { name: "imagenesMovimiento", maxCount: 4 },
@@ -242,6 +260,9 @@ router.post(
       requiredSheet(body.tipoArma === "Invocacion" && airstrikePlaneRenderType === "flame_spritesheet", "airstrikePlaneSpritesheetPng", "el aviÃ³n");
       requiredSheet(body.tipoArma === "Invocacion" && airstrikeBombRenderType === "flame_spritesheet", "airstrikeBombSpritesheetPng", "la bomba");
       requiredSheet(body.tipoArma === "Invocacion" && airstrikeExplosionRenderType === "flame_spritesheet", "airstrikeExplosionSpritesheetPng", "la explosiÃ³n del ataque aÃ©reo");
+      requiredSheet(body.tipoArma === "TROPA", "unitIdleSpritesheetPng", "el idle de la unidad");
+      requiredSheet(body.tipoArma === "TROPA", "unitWalkSpritesheetPng", "el movimiento de la unidad");
+      requiredSheet(body.tipoArma === "TROPA", "unitAttackSpritesheetPng", "el ataque de la unidad");
       if (body.tipoArma === "Arrastre" &&
           (toInt(body.alcance, 0) <= 0 || toInt(body.dano, 0) <= 0)) {
         return res.status(400).json({
@@ -270,6 +291,11 @@ router.post(
         });
       }
       // ❗ Evita duplicados
+      if (body.tipoArma === "TROPA" && !validateTroopFields(body)) {
+        return res.status(400).json({
+          error: "La carta TROPA tiene una configuracion incompleta o invalida."
+        });
+      }
       const yaExiste = await Card.findOne({
         titulo: body.titulo,
         tipoArma: body.tipoArma,
@@ -290,6 +316,9 @@ router.post(
       const airstrikePlaneSheetFile = files.airstrikePlaneSpritesheetPng?.[0];
       const airstrikeBombSheetFile = files.airstrikeBombSpritesheetPng?.[0];
       const airstrikeExplosionSheetFile = files.airstrikeExplosionSpritesheetPng?.[0];
+      const unitIdleSheetFile = files.unitIdleSpritesheetPng?.[0];
+      const unitWalkSheetFile = files.unitWalkSpritesheetPng?.[0];
+      const unitAttackSheetFile = files.unitAttackSpritesheetPng?.[0];
       const projectileSpritesheet = projectileRenderType === "flame_spritesheet"
         ? parseSpritesheetConfig(body.projectileSpritesheetConfig, "proyectil", normalizarRuta(projectileSheetFile), projectileSheetFile)
         : undefined;
@@ -312,6 +341,12 @@ router.post(
         ? parseSpritesheetConfig(body.airstrikeBombSpritesheetConfig, "bomba", normalizarRuta(airstrikeBombSheetFile), airstrikeBombSheetFile, null, true) : undefined;
       const airstrikeExplosionSpritesheet = airstrikeExplosionRenderType === "flame_spritesheet"
         ? parseSpritesheetConfig(body.airstrikeExplosionSpritesheetConfig, "explosiÃ³n de ataque aÃ©reo", normalizarRuta(airstrikeExplosionSheetFile), airstrikeExplosionSheetFile, null, false) : undefined;
+      const unitIdleSpritesheet = body.tipoArma === "TROPA"
+        ? parseSpritesheetConfig(body.unitIdleSpritesheetConfig, "idle de unidad", normalizarRuta(unitIdleSheetFile), unitIdleSheetFile, null, true) : undefined;
+      const unitWalkSpritesheet = body.tipoArma === "TROPA"
+        ? parseSpritesheetConfig(body.unitWalkSpritesheetConfig, "movimiento de unidad", normalizarRuta(unitWalkSheetFile), unitWalkSheetFile, null, true) : undefined;
+      const unitAttackSpritesheet = body.tipoArma === "TROPA"
+        ? parseSpritesheetConfig(body.unitAttackSpritesheetConfig, "ataque de unidad", normalizarRuta(unitAttackSheetFile), unitAttackSheetFile, null, true) : undefined;
       const imgsDisparo = [];
       if (files.imagenesDisparo) imgsDisparo.push(...files.imagenesDisparo.map(normalizarRuta));
       if (files.imagenesBala)     imgsDisparo.push(...files.imagenesBala.map(normalizarRuta));
@@ -367,6 +402,9 @@ router.post(
         airstrikeBombSpritesheet,
         airstrikeExplosionRenderType,
         airstrikeExplosionSpritesheet,
+        unitIdleSpritesheet,
+        unitWalkSpritesheet,
+        unitAttackSpritesheet,
 
         // Específicos
         vida: toInt(body.vida, 0),
@@ -385,6 +423,13 @@ router.post(
         duracionDefensa: toInt(body.duracionDefensa, 0),
         tipoDefensa: body.tipoDefensa || "Inmunidad",
         porcentajeReduccion: toInt(body.porcentajeReduccion, 0),
+        numeroUnidades: toInt(body.numeroUnidades, 1),
+        separacionUnidades: toFloat(body.separacionUnidades, 3),
+        distanciaMaximaColocacion: toFloat(body.distanciaMaximaColocacion, 500),
+        rangoDeteccion: toFloat(body.rangoDeteccion, 100),
+        rangoAtaque: toFloat(body.rangoAtaque, 2),
+        distanciaMaximaPersecucion: toFloat(body.distanciaMaximaPersecucion, 250),
+        cooldownAtaque: toFloat(body.cooldownAtaque, 1),
       });
 
       // Por si faltó imagen en Proyectil (fallback)
@@ -431,6 +476,9 @@ router.put(
     { name: "airstrikePlaneSpritesheetPng", maxCount: 1 },
     { name: "airstrikeBombSpritesheetPng", maxCount: 1 },
     { name: "airstrikeExplosionSpritesheetPng", maxCount: 1 },
+    { name: "unitIdleSpritesheetPng", maxCount: 1 },
+    { name: "unitWalkSpritesheetPng", maxCount: 1 },
+    { name: "unitAttackSpritesheetPng", maxCount: 1 },
     { name: "imagenesExtras", maxCount: 5 },
     { name: "imagenesMovimiento", maxCount: 4 },
     { name: "imagenesDisparo", maxCount: 4 },
@@ -496,6 +544,11 @@ router.put(
         });
       }
 
+      if (body.tipoArma === "TROPA" && !validateTroopFields(body)) {
+        return res.status(400).json({
+          error: "La carta TROPA tiene una configuracion incompleta o invalida."
+        });
+      }
       const duplicada = await Card.findOne({
         _id: { $ne: card._id },
         titulo: body.titulo,
@@ -526,6 +579,9 @@ router.put(
       const airstrikePlaneSheetFile = files.airstrikePlaneSpritesheetPng?.[0];
       const airstrikeBombSheetFile = files.airstrikeBombSpritesheetPng?.[0];
       const airstrikeExplosionSheetFile = files.airstrikeExplosionSpritesheetPng?.[0];
+      const unitIdleSheetFile = files.unitIdleSpritesheetPng?.[0];
+      const unitWalkSheetFile = files.unitWalkSpritesheetPng?.[0];
+      const unitAttackSheetFile = files.unitAttackSpritesheetPng?.[0];
       const projectileSpritesheet = projectileRenderType === "flame_spritesheet"
         ? parseSpritesheetConfig(body.projectileSpritesheetConfig, "proyectil", normalizarRuta(projectileSheetFile) || card.projectileSpritesheet?.url, projectileSheetFile, card.projectileSpritesheet)
         : card.projectileSpritesheet;
@@ -547,6 +603,15 @@ router.put(
       const airstrikePlaneSpritesheet = updateSheet(airstrikePlaneRenderType, body.airstrikePlaneSpritesheetConfig, "aviÃ³n", airstrikePlaneSheetFile, card.airstrikePlaneSpritesheet, true);
       const airstrikeBombSpritesheet = updateSheet(airstrikeBombRenderType, body.airstrikeBombSpritesheetConfig, "bomba", airstrikeBombSheetFile, card.airstrikeBombSpritesheet, true);
       const airstrikeExplosionSpritesheet = updateSheet(airstrikeExplosionRenderType, body.airstrikeExplosionSpritesheetConfig, "explosiÃ³n de ataque aÃ©reo", airstrikeExplosionSheetFile, card.airstrikeExplosionSpritesheet, false);
+      const unitIdleSpritesheet = body.tipoArma === "TROPA"
+        ? parseSpritesheetConfig(body.unitIdleSpritesheetConfig, "idle de unidad", normalizarRuta(unitIdleSheetFile) || card.unitIdleSpritesheet?.url, unitIdleSheetFile, card.unitIdleSpritesheet, true)
+        : card.unitIdleSpritesheet;
+      const unitWalkSpritesheet = body.tipoArma === "TROPA"
+        ? parseSpritesheetConfig(body.unitWalkSpritesheetConfig, "movimiento de unidad", normalizarRuta(unitWalkSheetFile) || card.unitWalkSpritesheet?.url, unitWalkSheetFile, card.unitWalkSpritesheet, true)
+        : card.unitWalkSpritesheet;
+      const unitAttackSpritesheet = body.tipoArma === "TROPA"
+        ? parseSpritesheetConfig(body.unitAttackSpritesheetConfig, "ataque de unidad", normalizarRuta(unitAttackSheetFile) || card.unitAttackSpritesheet?.url, unitAttackSheetFile, card.unitAttackSpritesheet, true)
+        : card.unitAttackSpritesheet;
       Object.assign(card, {
         titulo: body.titulo,
         descripcion: body.descripcion || "",
@@ -578,6 +643,13 @@ router.put(
         duracionDefensa: toInt(body.duracionDefensa, 0),
         tipoDefensa: body.tipoDefensa || "Inmunidad",
         porcentajeReduccion: toInt(body.porcentajeReduccion, 0),
+        numeroUnidades: toInt(body.numeroUnidades, card.numeroUnidades || 1),
+        separacionUnidades: toFloat(body.separacionUnidades, card.separacionUnidades ?? 3),
+        distanciaMaximaColocacion: toFloat(body.distanciaMaximaColocacion, card.distanciaMaximaColocacion || 500),
+        rangoDeteccion: toFloat(body.rangoDeteccion, card.rangoDeteccion || 100),
+        rangoAtaque: toFloat(body.rangoAtaque, card.rangoAtaque || 2),
+        distanciaMaximaPersecucion: toFloat(body.distanciaMaximaPersecucion, card.distanciaMaximaPersecucion || 250),
+        cooldownAtaque: toFloat(body.cooldownAtaque, card.cooldownAtaque || 1),
         projectileRenderType,
         explosionRenderType,
         projectileSpritesheet,
@@ -594,7 +666,10 @@ router.put(
         airstrikeBombRenderType,
         airstrikeBombSpritesheet,
         airstrikeExplosionRenderType,
-        airstrikeExplosionSpritesheet
+        airstrikeExplosionSpritesheet,
+        unitIdleSpritesheet,
+        unitWalkSpritesheet,
+        unitAttackSpritesheet
       });
 
       if (files.imagenPortada?.length) {

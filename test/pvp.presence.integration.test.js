@@ -16,6 +16,7 @@ const ack = (socket, event, payload) => new Promise((resolve) => {
 
 const emptyModel = { find: () => ({ lean: async () => [] }) };
 const lifeByUser = new Map();
+const duelUpdates = [];
 const dependencies = (grace = 40) => ({
   requireAuth: false,
   presenceDisconnectGraceMs: grace,
@@ -42,11 +43,15 @@ const dependencies = (grace = 40) => ({
       return query;
     },
     findOneAndUpdate: () => ({ lean: async () => null }),
-    updateOne: async () => ({}),
+    updateOne: async (filter, update) => {
+      duelUpdates.push({ filter, update });
+      return {};
+    },
   },
 });
 
 async function startServer(grace = 40) {
+  duelUpdates.length = 0;
   const httpServer = http.createServer();
   const io = new Server(httpServer);
   registerPvp(io, dependencies(grace));
@@ -62,6 +67,59 @@ async function startServer(grace = 40) {
     },
   };
 }
+
+test('duel request is proximity-gated and accepted session is server authoritative', async (t) => {
+  const server = await startServer();
+  t.after(() => server.close());
+  const a = await connect(server.url);
+  const b = await connect(server.url);
+  await hello(a, 'duel-a');
+  await hello(b, 'duel-b');
+
+  const incoming = once(b, 'duel:challenge');
+  const challenge = await ack(a, 'duel:challenge', { targetUserId: 'duel-b' });
+  assert.equal(challenge.ok, true);
+  const invite = await incoming;
+  assert.ok(invite.expiresAt > Date.now());
+
+  // La cercanía solo se exige al enviar. Alejarse después no cancela el duelo.
+  const moved = once(a, 'presence:move');
+  b.emit('presence:update', { clientSeq: 1, lat: 41.651, lng: -0.88, heading: 0 });
+  await moved;
+  const startedA = once(a, 'duel:started');
+  const startedB = once(b, 'duel:started');
+  const accepted = await ack(b, 'duel:respond', { inviteId: invite.inviteId, accept: true });
+  assert.equal(accepted.ok, true);
+  const [sessionA, sessionB] = await Promise.all([startedA, startedB]);
+  assert.equal(sessionA.duelId, sessionB.duelId);
+  assert.equal(sessionA.game, sessionB.game);
+  assert.equal(sessionA.seed, sessionB.seed);
+  assert.deepEqual(sessionA.questions, sessionB.questions);
+
+  const finishedA = once(a, 'duel:finished');
+  const finishedB = once(b, 'duel:finished');
+  if (sessionA.game === 'culture') {
+    const answer = await ack(a, 'duel:answer', {
+      duelId: sessionA.duelId,
+      questionIndex: 0,
+      optionIndex: -1,
+    });
+    assert.equal(answer.correct, false);
+  } else {
+    const death = await ack(a, 'duel:death', { duelId: sessionA.duelId });
+    assert.equal(death.ok, true);
+  }
+  const [resultA, resultB] = await Promise.all([finishedA, finishedB]);
+  assert.equal(resultA.winnerUserId, 'duel-b');
+  assert.equal(resultB.loserUserId, 'duel-a');
+  assert.equal(duelUpdates.length, 2);
+
+  const farChallenge = await ack(a, 'duel:challenge', { targetUserId: 'duel-b' });
+  assert.equal(farChallenge.ok, false);
+  assert.match(farChallenge.error, /50 metros/);
+  a.disconnect();
+  b.disconnect();
+});
 
 async function connect(url) {
   const socket = createClient(`${url}/pvp`, {

@@ -9,10 +9,17 @@ const User = require('../api/models/User');
 const Ufo = require('../api/models/Ufo');
 const PoliceConfig = require('../api/models/PoliceConfig');
 const { createPoliceRuntime } = require('../api/services/policeRuntime');
+const { createPoliceDirections } = require('../api/services/policeDirections');
+const { createUnitRuntime } = require('../api/services/unitRuntime');
 const { resolveBearerToken } = require('../api/services/authIdentity');
 const clanMembershipCache = require('../api/services/clanMembershipCache');
 const bountyService = require('../api/services/bountyService');
 const socialRealtime = require('../api/services/socialRealtime');
+const {
+  publicDuelStats,
+  shuffledCultureQuestions,
+  newDuelId,
+} = require('../api/services/duel.service');
 const {
   effectiveCard,
   upgradeLevelForUser,
@@ -64,6 +71,9 @@ module.exports = function(io, dependencies = {}) {
   const primarySocketByUser = new Map();
   const lastPresenceByUser = new Map();
   const pendingPresenceLeaves = new Map();
+  const duelInvites = new Map();
+  const duelSessions = new Map();
+  const activeDuelByUser = new Map();
   const presenceSequenceByUser = new Map();
   const lifeSequenceByUser = new Map();
   let snapshotVersion = 0;
@@ -78,6 +88,7 @@ module.exports = function(io, dependencies = {}) {
   const scheduledUfoZones = new Set();
   const pendingUfoTimers = new Map();
   let policeRuntime = null;
+  let unitRuntime = null;
   const TURRET_BULLET_SPEED = 80;
   const DEFAULT_TURRET_RANGE_M = 100;
   const DEFAULT_TURRET_DAMAGE = 10;
@@ -105,7 +116,7 @@ module.exports = function(io, dependencies = {}) {
     return Array.isArray(idle) && typeof idle[0] === 'string' ? idle[0] : '';
   };
   const loadAuthoritativeIdentityAndSkin = async (userId) => {
-    let query = UserModel.findById(userId).select('nickname skinSeleccionada gameModeEnabled');
+    let query = UserModel.findById(userId).select('nickname skinSeleccionada gameModeEnabled duelStats');
     if (typeof query.populate === 'function') {
       query = query.populate({
         path: 'skinSeleccionada',
@@ -265,6 +276,68 @@ module.exports = function(io, dependencies = {}) {
     lastSeen: player.lastSeen,
     presenceSessionId: player.presenceSessionId,
   });
+  const duelPresence = (player) => ({
+    duelStats: publicDuelStats(player.duelStats),
+  });
+  const primaryPlayer = (userId) => {
+    const socketId = primarySocketByUser.get(String(userId));
+    return socketId ? players.get(socketId) : null;
+  };
+  const emitToUser = (userId, event, payload) => {
+    for (const [socketId, player] of players) {
+      if (String(player.userId) === String(userId)) {
+        nsp.to(socketId).emit(event, payload);
+      }
+    }
+  };
+  const duelOpponent = (session, userId) =>
+    session.players.find((candidate) => candidate !== String(userId));
+  const updateCachedDuelStats = (userId, stats) => {
+    for (const player of players.values()) {
+      if (String(player.userId) === String(userId)) player.duelStats = stats;
+    }
+  };
+  const settleDuel = async (session, loserUserId, reason) => {
+    if (!session || session.status !== 'active') return;
+    session.status = 'settling';
+    const loserId = String(loserUserId);
+    const winnerId = duelOpponent(session, loserId);
+    if (!winnerId) return;
+    try {
+      await Promise.all([
+        UserModel.updateOne({ _id: winnerId }, { $inc: { 'duelStats.wins': 1 } }),
+        UserModel.updateOne({ _id: loserId }, { $inc: { 'duelStats.losses': 1 } }),
+      ]);
+      const winnerCurrent = primaryPlayer(winnerId)?.duelStats || {};
+      const loserCurrent = primaryPlayer(loserId)?.duelStats || {};
+      const winnerStats = publicDuelStats({
+        ...winnerCurrent,
+        wins: (Number(winnerCurrent.wins) || 0) + 1,
+      });
+      const loserStats = publicDuelStats({
+        ...loserCurrent,
+        losses: (Number(loserCurrent.losses) || 0) + 1,
+      });
+      updateCachedDuelStats(winnerId, winnerStats);
+      updateCachedDuelStats(loserId, loserStats);
+      const payload = {
+        duelId: session.id,
+        winnerUserId: winnerId,
+        loserUserId: loserId,
+        reason,
+        stats: { [winnerId]: winnerStats, [loserId]: loserStats },
+      };
+      emitToUser(winnerId, 'duel:finished', payload);
+      emitToUser(loserId, 'duel:finished', payload);
+    } catch (error) {
+      console.error(`[PVP][${instanceId}] duel settlement error`, error);
+      session.status = 'active';
+      return;
+    }
+    session.status = 'finished';
+    duelSessions.delete(session.id);
+    for (const userId of session.players) activeDuelByUser.delete(userId);
+  };
   const lifeMetadata = (userId) => ({
     lifeSeq: nextLifeSeq(userId),
     serverTimestamp: Date.now(),
@@ -394,6 +467,41 @@ module.exports = function(io, dependencies = {}) {
     return { protected: false, vida: nuevaVida, killed };
   }
 
+  const applyUnitDamageToTurret = async (
+    turretId,
+    damage,
+    attackerUserId,
+    _eventId,
+  ) => {
+    const turret = turrets.get(String(turretId));
+    if (!turret || turret.vida <= 0) {
+      return { applied: false, dead: true, vida: 0 };
+    }
+    turret.vida = Math.max(0, turret.vida - Math.max(0, Number(damage) || 0));
+    turret.seq = (Number(turret.seq) || 1) + 1;
+    await TurretModel.updateOne(
+      { _id: turretId },
+      { $set: { vida: turret.vida } },
+    ).catch(() => {});
+    if (turret.vida > 0) {
+      nsp.to(turret.zoneId).emit('turret:update', turretPayload(turret));
+      return { applied: true, dead: false, vida: turret.vida };
+    }
+    turrets.delete(String(turretId));
+    await TurretModel.deleteOne({ _id: turretId }).catch(() => {});
+    nsp.to(turret.zoneId).emit('turret:destroy', {
+      ...turretPayload(turret),
+      reason: 'destroyed',
+      attackerUserId: String(attackerUserId || ''),
+      playDeathAnimation: turret.renderType === 'flame_spritesheet' &&
+        Boolean(turret.deathSpritesheet?.url),
+    });
+    return { applied: true, dead: true, vida: 0 };
+  };
+
+  const sharedGroundRouteProvider = dependencies.UnitRouteProvider ||
+    dependencies.PoliceRouteProvider || createPoliceDirections();
+
   policeRuntime = createPoliceRuntime({
     nsp,
     geo,
@@ -401,7 +509,25 @@ module.exports = function(io, dependencies = {}) {
     applyPlayerDamage,
     playersForUser,
     primaryAlivePlayersInZone: (zoneId) => primaryAlivePlayersInZone(zoneId),
-    routeProvider: dependencies.PoliceRouteProvider,
+    routeProvider: sharedGroundRouteProvider,
+  });
+
+  unitRuntime = createUnitRuntime({
+    nsp,
+    geo,
+    routeProvider: sharedGroundRouteProvider,
+    getPlayersInZone: (zoneId) => primaryAlivePlayersInZone(zoneId),
+    getTurretsInZone: (zoneId) => [...turrets.values()]
+      .filter((turret) => turret.zoneId === zoneId && turret.vida > 0),
+    getPoliceUnitsInZone: (zoneId) => policeRuntime.getUnitsInZone(zoneId),
+    isPoliceHostileToUser: (unitId, userId) =>
+      policeRuntime.isUnitHostileToUser(unitId, userId),
+    areUsersAllied: (ownerUserId, candidateOwnerUserId) =>
+      ClanMembershipService.shareActiveClan(ownerUserId, candidateOwnerUserId),
+    applyPlayerDamage,
+    applyTurretDamage: applyUnitDamageToTurret,
+    applyPoliceDamage: (unitId, damage, attackerUserId, eventId) =>
+      policeRuntime.applyBulletDamage(unitId, damage, attackerUserId, eventId),
   });
 
   // Tick de balas (server-authoritative)
@@ -456,6 +582,7 @@ module.exports = function(io, dependencies = {}) {
       hitUserId: hit.userId || null,
       hitTurretId: hit.turretId || null,
       hitUfoId: hit.ufoId || null,
+      hitUnitId: hit.unitId || null,
       reason,
       lat: bullet.lat,
       lng: bullet.lng,
@@ -521,6 +648,7 @@ module.exports = function(io, dependencies = {}) {
       hitTurretId: hit.turretId || null,
       hitUfoId: hit.ufoId || null,
       policeUnitId: hit.policeUnitId || null,
+      unitId: hit.unitId || null,
       lat: bullet.lat,
       lng: bullet.lng,
     });
@@ -749,6 +877,20 @@ module.exports = function(io, dependencies = {}) {
         );
         if (impact) candidates.push({ type: 'police', target: unit, impact });
       }
+      for (const unit of unitRuntime.getUnitsInZone(b.zoneId)) {
+        if (unit.ownerUserId === b.byUserId ||
+            await ClanMembershipService.shareActiveClan(
+              b.byUserId,
+              unit.ownerUserId,
+            )) continue;
+        const impact = segmentCircleIntersection(
+          previous,
+          next,
+          unit,
+          Number(unit.hitRadiusMeters) || PLAYER_HIT_RADIUS_M,
+        );
+        if (impact) candidates.push({ type: 'unit', target: unit, impact });
+      }
       candidates.sort((a, c) => a.impact.t - c.impact.t);
       const collision = candidates[0];
       if (collision) {
@@ -761,6 +903,7 @@ module.exports = function(io, dependencies = {}) {
           turretId: collision.type === 'turret' ? collision.turretId : null,
           ufoId: collision.type === 'ufo' ? target.ufoId : null,
           policeUnitId: collision.type === 'police' ? target.unitId : null,
+          unitId: collision.type === 'unit' ? target.unitId : null,
         });
 
         if (collision.type === 'player') {
@@ -820,6 +963,14 @@ module.exports = function(io, dependencies = {}) {
           emitBulletExplosion(id, b, 'police', {
             policeUnitId: target.unitId,
           });
+        } else if (collision.type === 'unit') {
+          unitRuntime.applyDamage(
+            target.unitId,
+            b.dano,
+            b.byUserId,
+            `bullet:${id}:unit:${target.unitId}`,
+          );
+          emitBulletExplosion(id, b, 'unit', { unitId: target.unitId });
         } else {
           applyUfoDamage({
             state: target,
@@ -1001,7 +1152,24 @@ module.exports = function(io, dependencies = {}) {
           geo.distanceMeters(turret, unit) <= turret.alcance)
         .sort((a, b) => geo.distanceMeters(turret, a) - geo.distanceMeters(turret, b));
       const policeTarget = playerTarget || ufoTarget ? null : policeCandidates[0];
-      const target = playerTarget || ufoTarget || policeTarget;
+      const unitCandidates = [];
+      if (!playerTarget && !ufoTarget && !policeTarget) {
+        for (const unit of unitRuntime.getUnitsInZone(turret.zoneId)) {
+          if (String(unit.ownerUserId) === String(turret.ownerUserId) ||
+              geo.distanceMeters(turret, unit) > turret.alcance ||
+              await ClanMembershipService.shareActiveClan(
+                String(turret.ownerUserId),
+                String(unit.ownerUserId),
+              )) continue;
+          unitCandidates.push(unit);
+        }
+        unitCandidates.sort((a, b) =>
+          geo.distanceMeters(turret, a) - geo.distanceMeters(turret, b));
+      }
+      const unitTarget = playerTarget || ufoTarget || policeTarget
+        ? null
+        : unitCandidates[0];
+      const target = playerTarget || ufoTarget || policeTarget || unitTarget;
       if (!target) continue;
       turret.nextShotAt = new Date(now + turret.cadenciaDisparo * 1000);
       await TurretModel.updateOne({ _id: turretId }, { $set: { nextShotAt: turret.nextShotAt } }).catch(() => {});
@@ -1012,6 +1180,7 @@ module.exports = function(io, dependencies = {}) {
         targetUserId: playerTarget?.userId || null,
         targetUfoId: ufoTarget?.ufoId || null,
         targetPoliceUnitId: policeTarget?.unitId || null,
+        targetUnitId: unitTarget?.unitId || null,
         from: { lat: turret.lat, lng: turret.lng }, to: { lat: target.lat, lng: target.lng },
         speed: TURRET_BULLET_SPEED, dano: turret.dano,
         spriteUrl: turret.imagenesDisparo?.[0] || '', serverTimestamp: now,
@@ -1059,6 +1228,28 @@ module.exports = function(io, dependencies = {}) {
             shotId,
             turretId,
             targetPoliceUnitId: currentPolice.unitId,
+            lat: target.lat,
+            lng: target.lng,
+          });
+          return;
+        }
+        if (unitTarget) {
+          const currentUnit = unitRuntime.getUnitsInZone(turret.zoneId)
+            .find((unit) => unit.unitId === unitTarget.unitId);
+          if (!currentUnit || geo.distanceMeters(
+            currentUnit,
+            { lat: target.lat, lng: target.lng },
+          ) > (Number(currentUnit.hitRadiusMeters) || PLAYER_HIT_RADIUS_M)) return;
+          unitRuntime.applyDamage(
+            currentUnit.unitId,
+            turret.dano,
+            String(turret.ownerUserId),
+            `turret:${shotId}:unit:${currentUnit.unitId}`,
+          );
+          nsp.to(turret.zoneId).emit('turret:shot:explode', {
+            shotId,
+            turretId,
+            targetUnitId: currentUnit.unitId,
             lat: target.lat,
             lng: target.lng,
           });
@@ -1131,9 +1322,24 @@ module.exports = function(io, dependencies = {}) {
       mine.policeInside ||= new Set();
       const policeTargetId = targetEntry ? null : [...policeCurrentlyInside]
         .find((unitId) => !mine.policeInside.has(unitId));
-      if (!targetEntry && !policeTargetId) {
+      const unitsById = new Map();
+      for (const unit of unitRuntime.getUnitsInZone(mine.zoneId)) {
+        if (String(unit.ownerUserId) === String(mine.ownerUserId) ||
+            geo.distanceMeters(mine, unit) > mine.radioActivacion ||
+            await ClanMembershipService.shareActiveClan(
+              String(mine.ownerUserId),
+              String(unit.ownerUserId),
+            )) continue;
+        unitsById.set(unit.unitId, unit);
+      }
+      const unitsCurrentlyInside = new Set(unitsById.keys());
+      mine.unitsInside ||= new Set();
+      const unitTargetId = targetEntry || policeTargetId ? null :
+        [...unitsCurrentlyInside].find((unitId) => !mine.unitsInside.has(unitId));
+      if (!targetEntry && !policeTargetId && !unitTargetId) {
         mine.playersInside = currentlyInside;
         mine.policeInside = policeCurrentlyInside;
+        mine.unitsInside = unitsCurrentlyInside;
         continue;
       }
 
@@ -1144,13 +1350,22 @@ module.exports = function(io, dependencies = {}) {
       }
       mine.playersInside = currentlyInside;
       mine.policeInside = policeCurrentlyInside;
+      mine.unitsInside = unitsCurrentlyInside;
 
       const target = targetEntry ? candidatesByUser.get(targetEntry) : null;
       const policeTarget = policeTargetId ? policeById.get(policeTargetId) : null;
-      if (!target && !policeTarget) continue;
+      const unitTarget = unitTargetId ? unitsById.get(unitTargetId) : null;
+      if (!target && !policeTarget && !unitTarget) continue;
       mine.processing = true;
 
-      const damageResult = policeTarget
+      const damageResult = unitTarget
+        ? unitRuntime.applyDamage(
+          unitTarget.unitId,
+          mine.dano,
+          String(mine.ownerUserId),
+          `mine:${mineId}:unit:${unitTarget.unitId}`,
+        )
+        : policeTarget
         ? policeRuntime.applyBulletDamage(
           policeTarget.unitId,
           mine.dano,
@@ -1180,8 +1395,10 @@ module.exports = function(io, dependencies = {}) {
         ...minePayload(mine),
         targetUserId: target?.userId || null,
         targetPoliceUnitId: policeTarget?.unitId || null,
+        targetUnitId: unitTarget?.unitId || null,
         vida: damageResult?.vida ?? null,
         policeLife: damageResult?.life ?? null,
+        unitLife: unitTarget ? (damageResult?.life ?? 0) : null,
         protected: damageResult?.protected || false,
         removed: removeAfterTrigger,
       });
@@ -1273,6 +1490,26 @@ module.exports = function(io, dependencies = {}) {
         );
         hits.push({
           policeUnitId: policeTarget.unitId,
+          life: damageResult.life ?? 0,
+          dead: damageResult.dead === true,
+        });
+      }
+      for (const unitTarget of unitRuntime.getUnitsInZone(airstrike.zoneId)) {
+        if (unitTarget.life <= 0 ||
+            geo.distanceMeters(airstrike, unitTarget) > airstrike.radioExplosion ||
+            (String(unitTarget.ownerUserId) !== String(airstrike.ownerUserId) &&
+              await ClanMembershipService.shareActiveClan(
+                String(airstrike.ownerUserId),
+                String(unitTarget.ownerUserId),
+              ))) continue;
+        const damageResult = unitRuntime.applyDamage(
+          unitTarget.unitId,
+          airstrike.dano,
+          String(airstrike.ownerUserId),
+          `airstrike:${airstrikeId}:unit:${unitTarget.unitId}`,
+        );
+        hits.push({
+          unitId: unitTarget.unitId,
           life: damageResult.life ?? 0,
           dead: damageResult.dead === true,
         });
@@ -1401,6 +1638,7 @@ module.exports = function(io, dependencies = {}) {
         let skinDefinition = null;
         let skinId = '';
         let gameModeEnabled = true;
+        let duelStats = publicDuelStats();
         if (socket.data.authUserId) {
           const authoritative = await loadAuthoritativeIdentityAndSkin(userId);
           const user = authoritative.user;
@@ -1416,6 +1654,7 @@ module.exports = function(io, dependencies = {}) {
           authoritativeSkinUrl = authoritative.skinUrl;
           skinDefinition = authoritative.skinDefinition;
           skinId = authoritative.skinId;
+          duelStats = publicDuelStats(user.duelStats);
         }
 
         const zoneId = toZoneId(lat, lng);
@@ -1467,6 +1706,7 @@ module.exports = function(io, dependencies = {}) {
           vida,
           clanIds,
           bountyTotal,
+          duelStats,
           seq,
           lastSeen: now,
           connectedAt: now,
@@ -1508,6 +1748,7 @@ module.exports = function(io, dependencies = {}) {
               vida:p.vida??1000,
               clanIds:p.clanIds || [],
               bountyTotal:p.bountyTotal || 0,
+              ...duelPresence(p),
               ...presenceMetadata(p),
             });
           }
@@ -1533,6 +1774,7 @@ module.exports = function(io, dependencies = {}) {
           .map((projectile) => ufoProjectilePayload(projectile));
         await policeRuntime.ensureAmbientPatrol(playerState, { lat, lng });
         const policeSnapshot = policeRuntime.getSnapshot(zoneId);
+        const unitSnapshot = unitRuntime.getSnapshot(zoneId);
         const claimed = await UserModel.findOneAndUpdate(
           { _id: userId, stepcoinsTorretaPendientes: { $gt: 0 } },
           [{ $set: {
@@ -1551,6 +1793,7 @@ module.exports = function(io, dependencies = {}) {
           ufos: roomUfos,
           ufoProjectiles: roomUfoProjectiles,
           ...policeSnapshot,
+          ...unitSnapshot,
           claimedStepcoins,
           clanIds,
           bountyTotal,
@@ -1584,6 +1827,7 @@ module.exports = function(io, dependencies = {}) {
           vida,
           clanIds,
           bountyTotal,
+          ...duelPresence(playerState),
           ...presenceMetadata(playerState),
         });
       } catch (e) {
@@ -1681,6 +1925,7 @@ module.exports = function(io, dependencies = {}) {
         vida: p.vida,
         clanIds: p.clanIds || [],
         bountyTotal: p.bountyTotal || 0,
+        ...duelPresence(p),
         ...presenceMetadata(p),
       });
       log('presence move', {
@@ -1835,6 +2080,98 @@ module.exports = function(io, dependencies = {}) {
         cb?.({ ok: true, vida, vidaRecuperada, cooldownMs });
       } catch (error) {
         console.error(`[PVP][${instanceId}] life card error`, {
+          socketId: socket.id,
+          userId: p.userId,
+          cardId,
+          error: error.message,
+        });
+        cb?.({ ok: false, error: error.message });
+      }
+    });
+
+    socket.on('unit:place', async (payload, cb) => {
+      const p = players.get(socket.id);
+      if (!p) return cb?.({ ok: false, error: 'No player' });
+      const cardId = String(payload?.cardId || '');
+      const lat = Number(payload?.lat);
+      const lng = Number(payload?.lng);
+      try {
+        await assertGameModeEnabled(p.userId);
+        const baseCard = await CardModel.findById(cardId).lean();
+        if (!baseCard || baseCard.tipoArma !== 'TROPA') {
+          throw new Error('Carta TROPA invalida');
+        }
+        const owner = await UserModel.findOne({
+          _id: p.userId,
+          cartas: cardId,
+          mazo: cardId,
+        }).lean();
+        if (!owner) throw new Error('La carta no esta disponible en tu mazo');
+        const card = effectiveCard(
+          baseCard,
+          upgradeLevelForUser(owner, cardId),
+        );
+        const maximumPlacement = Number(card.distanciaMaximaColocacion);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) ||
+            !Number.isFinite(maximumPlacement) || maximumPlacement <= 0 ||
+            geo.distanceMeters(p, { lat, lng }) > maximumPlacement) {
+          throw new Error('Posicion de TROPA invalida');
+        }
+        const required = [
+          card.numeroUnidades,
+          card.rangoDeteccion,
+          card.rangoAtaque,
+          card.distanciaMaximaPersecucion,
+          card.vida,
+          card.velocidadMovimiento,
+          card.dano,
+          card.cooldownAtaque,
+          card.duracion,
+        ];
+        if (!required.every((value) => Number.isFinite(Number(value)) && Number(value) > 0) ||
+            !Number.isFinite(Number(card.separacionUnidades)) ||
+            Number(card.separacionUnidades) < 0 ||
+            !card.unitIdleSpritesheet?.url || !card.unitWalkSpritesheet?.url ||
+            !card.unitAttackSpritesheet?.url) {
+          throw new Error('La carta TROPA no tiene una configuracion valida');
+        }
+        const cooldownKey = `unit:${cardId}`;
+        const cooldownMs = Math.max(0, Number(card.tiempoEspera) || 0) * 1000;
+        const lastPlacedAt = p.lastShotByCard?.[cooldownKey] || 0;
+        if (Date.now() - lastPlacedAt < cooldownMs) {
+          throw new Error('Carta en tiempo de espera');
+        }
+        const spawned = unitRuntime.spawnGroup({
+          ownerUserId: p.userId,
+          cardId,
+          zoneId: toZoneId(lat, lng),
+          position: { lat, lng },
+          definition: {
+            unitCount: Number(card.numeroUnidades),
+            unitSpacingMeters: Number(card.separacionUnidades),
+            life: Number(card.vida),
+            detectionRangeMeters: Number(card.rangoDeteccion),
+            attackRangeMeters: Number(card.rangoAtaque),
+            maxPursuitDistanceMeters: Number(card.distanciaMaximaPersecucion),
+            speedMetersPerSecond: Number(card.velocidadMovimiento),
+            damage: Number(card.dano),
+            attackCooldownSeconds: Number(card.cooldownAtaque),
+            durationSeconds: Number(card.duracion),
+            idleSpritesheet: card.unitIdleSpritesheet,
+            walkSpritesheet: card.unitWalkSpritesheet,
+            attackSpritesheet: card.unitAttackSpritesheet,
+          },
+        });
+        const placedAt = Date.now();
+        for (const sameUser of playersForUser(p.userId)) {
+          sameUser.lastShotByCard = {
+            ...(sameUser.lastShotByCard || {}),
+            [cooldownKey]: placedAt,
+          };
+        }
+        cb?.({ ok: true, units: spawned, cooldownMs });
+      } catch (error) {
+        console.error(`[PVP][${instanceId}] unit placement error`, {
           socketId: socket.id,
           userId: p.userId,
           cardId,
@@ -2245,6 +2582,159 @@ module.exports = function(io, dependencies = {}) {
       }
     });
 
+    socket.on('duel:profile', (payload, cb) => {
+      const requester = players.get(socket.id);
+      const target = primaryPlayer(payload?.targetUserId);
+      if (!requester || !target) {
+        return cb?.({ ok: false, error: 'Jugador no disponible' });
+      }
+      cb?.({
+        ok: true,
+        userId: target.userId,
+        nickname: target.nickname,
+        ...duelPresence(target),
+      });
+    });
+
+    socket.on('duel:challenge', (payload, cb) => {
+      const challenger = players.get(socket.id);
+      const target = primaryPlayer(payload?.targetUserId);
+      if (!challenger || primarySocketByUser.get(challenger.userId) !== socket.id) {
+        return cb?.({ ok: false, error: 'Presencia no disponible' });
+      }
+      if (!target || target.userId === challenger.userId) {
+        return cb?.({ ok: false, error: 'Rival no disponible' });
+      }
+      if (geo.distanceMeters(challenger, target) >= 50) {
+        return cb?.({ ok: false, error: 'El rival debe estar a menos de 50 metros' });
+      }
+      const usersBusy = activeDuelByUser.has(challenger.userId) ||
+        activeDuelByUser.has(target.userId) ||
+        [...duelInvites.values()].some((invite) =>
+          invite.status === 'pending' && (
+            invite.players.includes(challenger.userId) ||
+            invite.players.includes(target.userId)
+          ));
+      if (usersBusy) return cb?.({ ok: false, error: 'Uno de los jugadores ya está ocupado' });
+
+      const invite = {
+        id: newDuelId('invite'),
+        challengerUserId: challenger.userId,
+        targetUserId: target.userId,
+        players: [challenger.userId, target.userId],
+        status: 'pending',
+        expiresAt: Date.now() + 20000,
+      };
+      duelInvites.set(invite.id, invite);
+      const publicInvite = {
+        inviteId: invite.id,
+        challengerUserId: challenger.userId,
+        challengerNickname: challenger.nickname,
+        targetUserId: target.userId,
+        expiresAt: invite.expiresAt,
+      };
+      emitToUser(target.userId, 'duel:challenge', publicInvite);
+      cb?.({ ok: true, ...publicInvite });
+      const timer = setTimeout(() => {
+        if (invite.status !== 'pending') return;
+        invite.status = 'expired';
+        duelInvites.delete(invite.id);
+        emitToUser(challenger.userId, 'duel:expired', { inviteId: invite.id });
+        emitToUser(target.userId, 'duel:expired', { inviteId: invite.id });
+      }, 20000);
+      timer.unref?.();
+    });
+
+    socket.on('duel:respond', (payload, cb) => {
+      const responder = players.get(socket.id);
+      const invite = duelInvites.get(String(payload?.inviteId || ''));
+      if (!responder || !invite || invite.targetUserId !== responder.userId ||
+          invite.status !== 'pending' || invite.expiresAt <= Date.now()) {
+        return cb?.({ ok: false, error: 'El reto ya no está disponible' });
+      }
+      invite.status = payload?.accept === true ? 'accepted' : 'rejected';
+      duelInvites.delete(invite.id);
+      if (invite.status === 'rejected') {
+        emitToUser(invite.challengerUserId, 'duel:declined', { inviteId: invite.id });
+        return cb?.({ ok: true, accepted: false });
+      }
+      if (!primaryPlayer(invite.challengerUserId) ||
+          activeDuelByUser.has(invite.challengerUserId) ||
+          activeDuelByUser.has(invite.targetUserId)) {
+        return cb?.({ ok: false, error: 'El rival ya no está disponible' });
+      }
+
+      const game = Math.random() < 0.5 ? 'culture' : 'space';
+      const questions = game === 'culture' ? shuffledCultureQuestions() : [];
+      const session = {
+        id: newDuelId(),
+        players: [...invite.players],
+        game,
+        status: 'active',
+        seed: Math.floor(Math.random() * 0x7fffffff),
+        questions,
+        questionIndexByUser: new Map(invite.players.map((userId) => [userId, 0])),
+        startedAt: Date.now(),
+      };
+      duelSessions.set(session.id, session);
+      for (const userId of session.players) activeDuelByUser.set(userId, session.id);
+      for (const userId of session.players) {
+        const opponent = primaryPlayer(duelOpponent(session, userId));
+        emitToUser(userId, 'duel:started', {
+          duelId: session.id,
+          game,
+          seed: session.seed,
+          opponentUserId: opponent?.userId,
+          opponentNickname: opponent?.nickname || 'Rival',
+          questions: questions.map(({ id, question, options }) => ({ id, question, options })),
+          startedAt: session.startedAt,
+        });
+      }
+      cb?.({ ok: true, accepted: true, duelId: session.id });
+    });
+
+    socket.on('duel:answer', (payload, cb) => {
+      const player = players.get(socket.id);
+      const session = duelSessions.get(String(payload?.duelId || ''));
+      if (!player || !session || session.status !== 'active' ||
+          session.game !== 'culture' || !session.players.includes(player.userId)) {
+        return cb?.({ ok: false, error: 'Sesión de duelo no válida' });
+      }
+      const expected = session.questionIndexByUser.get(player.userId) || 0;
+      if (Number(payload?.questionIndex) !== expected) {
+        return cb?.({ ok: false, error: 'Pregunta fuera de orden' });
+      }
+      const question = session.questions[expected % session.questions.length];
+      if (Number(payload?.optionIndex) !== question.correctIndex) {
+        cb?.({ ok: true, correct: false });
+        settleDuel(session, player.userId, 'wrong-answer');
+        return;
+      }
+      session.questionIndexByUser.set(player.userId, expected + 1);
+      cb?.({ ok: true, correct: true, nextQuestionIndex: expected + 1 });
+    });
+
+    socket.on('duel:death', (payload, cb) => {
+      const player = players.get(socket.id);
+      const session = duelSessions.get(String(payload?.duelId || ''));
+      if (!player || !session || session.game !== 'space' ||
+          !session.players.includes(player.userId)) {
+        return cb?.({ ok: false, error: 'Sesión de duelo no válida' });
+      }
+      cb?.({ ok: true });
+      settleDuel(session, player.userId, 'death');
+    });
+
+    socket.on('duel:forfeit', (payload, cb) => {
+      const player = players.get(socket.id);
+      const session = duelSessions.get(String(payload?.duelId || ''));
+      if (!player || !session || !session.players.includes(player.userId)) {
+        return cb?.({ ok: false, error: 'Sesión de duelo no válida' });
+      }
+      cb?.({ ok: true });
+      settleDuel(session, player.userId, 'forfeit');
+    });
+
     socket.on('police:leave', () => {
       const p = players.get(socket.id);
       if (p) policeRuntime.clearWanted(p.userId, 'client-background');
@@ -2290,9 +2780,12 @@ module.exports = function(io, dependencies = {}) {
             vida: replacement.vida,
             clanIds: replacement.clanIds || [],
             bountyTotal: replacement.bountyTotal || 0,
+            ...duelPresence(replacement),
             ...presenceMetadata(replacement),
           });
         } else {
+          const duelId = activeDuelByUser.get(p.userId);
+          if (duelId) settleDuel(duelSessions.get(duelId), p.userId, 'disconnect');
           policeRuntime.handleDisconnect(p.userId);
           primarySocketByUser.delete(p.userId);
           const oldTimer = pendingPresenceLeaves.get(p.userId);
@@ -2305,6 +2798,7 @@ module.exports = function(io, dependencies = {}) {
             if (primarySocketByUser.has(p.userId)) return;
             const seq = nextPresenceSeq(p.userId);
             lastPresenceByUser.delete(p.userId);
+            unitRuntime.removeOwner(p.userId, 'owner-left');
             nsp.to(p.zoneId).emit('presence:leave', {
               userId: p.userId,
               seq,

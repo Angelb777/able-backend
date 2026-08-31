@@ -11,7 +11,7 @@ const CardSchema = new mongoose.Schema({
   // Tipo de carta
   tipoArma: {
     type: String,
-    enum: ["Proyectil", "Arrastre", "Trampa", "Invocacion", "Vida", "Defensa"],
+    enum: ["Proyectil", "Arrastre", "Trampa", "Invocacion", "Vida", "Defensa", "TROPA"],
     required: true
   },
 
@@ -105,6 +105,18 @@ const CardSchema = new mongoose.Schema({
   airstrikeExplosionSpritesheet: cardSpritesheetSchema,
   radioExplosion: { type: Number, default: 1 },
   tiempoHastaAtaque: { type: Number, default: 0 },
+
+  // ===== TROPA =====
+  numeroUnidades: { type: Number, default: 1, min: 1 },
+  separacionUnidades: { type: Number, default: 3, min: 0 },
+  distanciaMaximaColocacion: { type: Number, default: 500, min: 1 },
+  rangoDeteccion: { type: Number, default: 100, min: 1 },
+  rangoAtaque: { type: Number, default: 2, min: 0.1 },
+  distanciaMaximaPersecucion: { type: Number, default: 250, min: 1 },
+  cooldownAtaque: { type: Number, default: 1, min: 0.1 },
+  unitIdleSpritesheet: cardSpritesheetSchema,
+  unitWalkSpritesheet: cardSpritesheetSchema,
+  unitAttackSpritesheet: cardSpritesheetSchema,
 
   // ===== Vida =====
   vidaQueDa: { type: Number, default: 0 },

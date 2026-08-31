@@ -470,6 +470,7 @@
     <option value="Invocacion">Invocación</option>
     <option value="Vida">Vida</option>
     <option value="Defensa">Defensa</option>
+    <option value="TROPA">TROPA</option>
   </select><br><br>
 
   <div id="comunCarta" style="display:none;">
@@ -721,6 +722,47 @@
   </div>
 
   <!-- ❤️ Vida -->
+  <div id="seccionTropa" style="display:none;">
+    <label>Número de unidades:</label>
+    <input type="number" name="numeroUnidades" min="1" value="1" required><br><br>
+    <label>Separación entre unidades (metros):</label>
+    <input type="number" name="separacionUnidades" min="0" step="0.1" value="3" required><br><br>
+    <label>Distancia máxima de colocación (metros):</label>
+    <input type="number" name="distanciaMaximaColocacion" min="1" value="500" required><br><br>
+    <label>Rango de detección (metros):</label>
+    <input type="number" name="rangoDeteccion" min="1" value="100" required><br><br>
+    <label>Rango de ataque cuerpo a cuerpo (metros):</label>
+    <input type="number" name="rangoAtaque" min="0.1" step="0.1" value="2" required><br><br>
+    <label>Distancia máxima de persecución desde el despliegue (metros):</label>
+    <input type="number" name="distanciaMaximaPersecucion" min="1" value="250" required><br><br>
+    <label>Vida por unidad:</label>
+    <input type="number" name="vida" min="1" value="100" required><br><br>
+    <label>Velocidad (metros/segundo):</label>
+    <input type="number" name="velocidadMovimiento" min="0.1" step="0.1" value="3" required><br><br>
+    <label>Daño por ataque:</label>
+    <input type="number" name="dano" min="1" value="10" required><br><br>
+    <label>Cooldown entre ataques (segundos):</label>
+    <input type="number" name="cooldownAtaque" min="0.1" step="0.1" value="1" required><br><br>
+    <label>Duración máxima en el mapa (minutos):</label>
+    <input type="number" name="duracion" min="1" value="5" required><br><br>
+
+    <fieldset>
+      <legend>Spritesheet Idle</legend>
+      <select id="unitIdleRenderType" name="unitIdleRenderType"><option value="flame_spritesheet">Spritesheet Flame</option></select>
+      <div id="unitIdleFlameFields"></div>
+    </fieldset><br>
+    <fieldset>
+      <legend>Spritesheet Walk</legend>
+      <select id="unitWalkRenderType" name="unitWalkRenderType"><option value="flame_spritesheet">Spritesheet Flame</option></select>
+      <div id="unitWalkFlameFields"></div>
+    </fieldset><br>
+    <fieldset>
+      <legend>Spritesheet Attack</legend>
+      <select id="unitAttackRenderType" name="unitAttackRenderType"><option value="flame_spritesheet">Spritesheet Flame</option></select>
+      <div id="unitAttackFlameFields"></div>
+    </fieldset>
+  </div>
+
   <div id="seccionVida" style="display:none;">
     <label>Imágenes del objeto de vida (máx 4):</label>
     <input type="file" id="imagenesVida" name="imagenesVida" accept="image/*" multiple><br>
