@@ -17,11 +17,13 @@ test('roulette preserves total weight and includes all four minigames', () => {
 });
 
 test('server scoring mirrors demanding Memory and Reflex thresholds', () => {
-  assert.equal(memoryScore(7400, 0), 10);
-  assert.equal(memoryScore(7400, 1), 9);
+  assert.equal(memoryScore(6400, 0), 10);
+  assert.equal(memoryScore(8000, 1), 5);
+  assert.equal(memoryScore(6400, 2), 4);
   assert.equal(memoryScore(60000, 20), 1);
-  assert.equal(reflexScore(169), 10);
-  assert.equal(reflexScore(220), 8);
+  assert.equal(reflexScore(159), 10);
+  assert.equal(reflexScore(210), 8);
+  assert.equal(reflexScore(3000), 1);
   assert.equal(reflexScore(1, true), 1);
 });
 

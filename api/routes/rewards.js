@@ -5,6 +5,7 @@ const multer = require("multer");
 const mongoose = require("mongoose");
 const Reward = require("../models/Reward");
 const User = require("../models/User");
+const StepcoinTransaction = require("../models/StepcoinTransaction");
 const Establishment = require("../models/Establishment");
 const CommercialRequest = require("../models/CommercialRequest");
 const { recordTransition } = require("../services/commercialWorkflow");
@@ -97,18 +98,23 @@ router.post(
       direccion,
       porcentaje,
       cantidadEuros,
-      stepcoins
+      stepcoins,
+      unidades
     } = req.body;
 
     const creadoPorAdmin = req.user.role === "admin";
     const parsedStepcoins = Number(stepcoins);
     const parsedPercentage = Number(porcentaje || 0);
     const parsedAmount = Number(cantidadEuros || 0);
+    const parsedUnits = Number(unidades);
     if (!["descuento", "premio"].includes(tipo) || !String(titulo || "").trim()) {
       return res.status(400).json({ error: "Tipo y título válidos son obligatorios" });
     }
     if (!Number.isFinite(parsedStepcoins) || parsedStepcoins < 0) {
       return res.status(400).json({ error: "Stepcoins no válidos" });
+    }
+    if (tipo === "premio" && (!Number.isInteger(parsedUnits) || parsedUnits < 0)) {
+      return res.status(400).json({ error: "Unidades no validas" });
     }
     if (tipo === "descuento" && (
       !Number.isFinite(parsedPercentage) || parsedPercentage < 0 || parsedPercentage > 100
@@ -132,6 +138,7 @@ router.post(
       porcentaje: parsedPercentage,
       cantidadEuros: parsedAmount,
       stepcoins: parsedStepcoins,
+      unidades: tipo === "premio" ? parsedUnits : null,
       imagenes,
       comercioId: creadoPorAdmin ? null : req.user.id,
       validado: creadoPorAdmin,
@@ -160,6 +167,7 @@ router.post(
             percentage: parsedPercentage,
             amountEuros: parsedAmount,
             stepcoins: parsedStepcoins,
+            unidades: tipo === "premio" ? parsedUnits : null,
           },
           materials: (req.files || []).map((file, index) => ({
             url: imagenes[index], originalName: file.originalname,
@@ -223,6 +231,7 @@ router.get("/validados", async (req, res) => {
         porcentaje: r.porcentaje,
         cantidadEuros: r.cantidadEuros,
         stepcoins: r.stepcoins,
+        unidades: r.unidades,
         imagenes: r.imagenes,
         prioridad,
         fechaCreacion: r.fechaCreacion || new Date(0), // fallback
@@ -361,6 +370,32 @@ router.patch("/:id/validar", ...adminOnly, async (req, res) => {
   }
 });
 
+// Actualizar el stock disponible de un premio (admin o comercio propietario).
+router.patch("/:id", verifyToken, requireRewardOwnerOrAdmin, async (req, res) => {
+  try {
+    const reward = req.reward;
+    if (reward.tipo !== "premio") {
+      return res.status(400).json({ error: "Las unidades solo se aplican a premios" });
+    }
+    const unidades = Number(req.body?.unidades);
+    if (!Number.isInteger(unidades) || unidades < 0) {
+      return res.status(400).json({ error: "Unidades no validas" });
+    }
+
+    reward.unidades = unidades;
+    await reward.save();
+    if (reward.commercialRequestId) {
+      await CommercialRequest.updateOne(
+        { _id: reward.commercialRequestId },
+        { $set: { "formData.unidades": unidades } }
+      );
+    }
+    res.json({ message: "Unidades actualizadas", unidades });
+  } catch (err) {
+    res.status(500).json({ error: "No se pudieron actualizar las unidades" });
+  }
+});
+
 // Eliminar reward (admin o comercio propietario)
 router.delete("/:id", verifyToken, async (req, res) => {
   try {
@@ -458,6 +493,10 @@ router.post("/:id/comprar", verifyToken, checkRole(["cliente"]), async (req, res
       return res.status(409).json({ error: "Reward no disponible" });
     }
 
+    if (Number.isFinite(reward.unidades) && reward.unidades <= 0) {
+      return res.status(409).json({ error: "Premio agotado" });
+    }
+
     const alreadyPending = (reward.compradores || []).some(
       (purchase) => String(purchase.userId) === String(userId) && !purchase.validado
     );
@@ -472,22 +511,66 @@ router.post("/:id/comprar", verifyToken, checkRole(["cliente"]), async (req, res
       return res.status(404).json({ error: "Usuario no encontrado" });
     }
 
-    if (user.stepcoins < reward.stepcoins) {
-      console.warn("❌ Stepcoins insuficientes:", user.stepcoins, "<", reward.stepcoins);
+    const debitedUser = await User.findOneAndUpdate(
+      { _id: userId, stepcoins: { $gte: reward.stepcoins } },
+      { $inc: { stepcoins: -reward.stepcoins } },
+      { new: true }
+    );
+    if (!debitedUser) {
       return res.status(400).json({ error: "No tienes suficientes stepcoins" });
     }
 
-    // Descontar y guardar
-    user.stepcoins -= reward.stepcoins;
-    await user.save();
+    const tracksStock = Number.isFinite(reward.unidades);
+    const rewardFilter = {
+      _id: rewardId,
+      $or: [{ validado: true }, { creadoPorAdmin: true }],
+      publicationStatus: { $nin: ["disabled", "retired"] },
+      compradores: { $not: { $elemMatch: { userId, validado: false } } },
+      ...(tracksStock ? { unidades: { $gt: 0 } } : {}),
+    };
+    const purchasedAt = new Date();
+    const rewardUpdate = {
+      $push: { compradores: { userId, validado: false, purchasedAt } },
+      ...(tracksStock ? { $inc: { unidades: -1 } } : {}),
+    };
 
-    // Guardar la compra
-    if (!reward.compradores) reward.compradores = [];
-    reward.compradores.push({ userId, validado: false, purchasedAt: new Date() });
-    await reward.save();
+    let purchasedReward;
+    try {
+      purchasedReward = await Reward.findOneAndUpdate(
+        rewardFilter,
+        rewardUpdate,
+        { new: true }
+      );
+    } catch (purchaseError) {
+      await User.updateOne({ _id: userId }, { $inc: { stepcoins: reward.stepcoins } });
+      throw purchaseError;
+    }
+    if (!purchasedReward) {
+      await User.updateOne({ _id: userId }, { $inc: { stepcoins: reward.stepcoins } });
+      return res.status(409).json({
+        error: tracksStock ? "Premio agotado o ya pendiente" : "Reward ya pendiente",
+      });
+    }
+
+    try {
+      await StepcoinTransaction.create({
+        userId,
+        cantidad: -reward.stepcoins,
+        tipo: "canje",
+        descripcion: `Canje de ${reward.tipo}: ${reward.titulo}`,
+        operationKey: `reward-purchase:${userId}:${rewardId}:${purchasedAt.getTime()}`,
+        metadata: { rewardId, rewardType: reward.tipo },
+      });
+    } catch (ledgerError) {
+      console.error("Compra completada, pero no se pudo registrar el movimiento Stepcoin:", ledgerError);
+    }
 
     console.log(`✅ Compra registrada. Usuario ${userId} compró reward ${rewardId}`);
-    res.json({ message: "✅ Compra realizada con éxito" });
+    res.json({
+      message: "✅ Compra realizada con éxito",
+      stepcoins: debitedUser.stepcoins,
+      unidades: purchasedReward.unidades,
+    });
   } catch (err) {
     console.error("❌ Error interno al procesar la compra:", err);
     res.status(500).json({ error: "Error interno al procesar la compra" });

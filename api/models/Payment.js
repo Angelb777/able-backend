@@ -5,6 +5,8 @@ const paymentSchema = new mongoose.Schema({
   nombre: { type: String, required: true },
   // Importe monetario del pago. El ticket medio se calcula por transaccion.
   cantidad: { type: Number, required: true, min: 0.01 },
+  // Stepcoins entregados por este cobro monetario (0 en pagos comerciales).
+  stepcoinsDelta: { type: Number, default: 0 },
   motivo: { type: String, maxlength: 240, default: '' },
   currency: { type: String, enum: ['EUR', 'USD'], default: 'EUR' },
   fecha: { type: Date, default: Date.now }, // ⬅️ esto genera una fecha válida

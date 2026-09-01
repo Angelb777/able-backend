@@ -19,10 +19,10 @@ const ROULETTE_OPTIONS = Object.freeze([
 ]);
 
 const MEMORY_TIME_THRESHOLDS_MS = Object.freeze([
-  7500, 9000, 11000, 14000, 17000, 21000, 26000, 32000, 40000,
+  6500, 7500, 8500, 10000, 12000, 15000, 19000, 24000, 32000,
 ]);
 const REFLEX_REACTION_THRESHOLDS_MS = Object.freeze([
-  170, 200, 230, 270, 320, 380, 460, 560, 700,
+  160, 185, 215, 250, 290, 340, 410, 500, 650,
 ]);
 const REFLEX_LIGHT_COUNT = 5;
 const REFLEX_LIGHT_INTERVAL_MS = 480;
@@ -39,8 +39,8 @@ function reflexDelay() {
 function memoryScore(durationMs, errors) {
   const index = MEMORY_TIME_THRESHOLDS_MS.findIndex((limit) => durationMs <= limit);
   const timeScore = index < 0 ? 1 : 10 - index;
-  const penalty = errors === 0 ? 0 : errors === 1 ? 1 : errors <= 3 ? 2 : errors <= 5 ? 3 : 4;
-  return Math.max(1, timeScore - penalty);
+  const errorCap = errors === 0 ? 10 : errors === 1 ? 5 : errors === 2 ? 4 : errors === 3 ? 3 : 2;
+  return Math.max(1, Math.min(timeScore, errorCap));
 }
 function reflexScore(reactionMs, falseStart = false) {
   if (falseStart) return 1;

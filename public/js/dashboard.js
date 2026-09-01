@@ -76,6 +76,28 @@ function bindUserManagementActions() {
   document.documentElement.dataset.userManagementActionsBound = "true";
 }
 
+function bindUserDashboardActions() {
+  if (document.documentElement.dataset.userDashboardActionsBound === "true") return;
+  document.addEventListener("click", async (event) => {
+    const button = event.target?.closest?.("[data-user-section], [data-user-action]");
+    if (!button || role !== "cliente") return;
+    event.preventDefault();
+    if (button.dataset.userSection) {
+      renderSection(button.dataset.userSection);
+      return;
+    }
+    const action = button.dataset.userAction;
+    if (action === "choose-skin") abrirPopupSeleccionSkins();
+    if (action === "purchase-skin") {
+      await comprarSkin(button.dataset.skinId, Number(button.dataset.skinPrice));
+    }
+    if (action === "redeem-reward") {
+      await canjearReward(button.dataset.rewardId, Number(button.dataset.rewardCost));
+    }
+  });
+  document.documentElement.dataset.userDashboardActionsBound = "true";
+}
+
 function bindCommercialActions() {
   if (document.documentElement.dataset.commercialActionsBound === "true") return;
   document.addEventListener("click", async (event) => {
@@ -1038,6 +1060,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   bindGameManagementActions();
   bindUserManagementActions();
   bindCommercialActions();
+  bindUserDashboardActions();
   try {
     const sessionResponse = await fetch('/api/auth/me');
     if (!sessionResponse.ok) throw new Error('invalid-session');
@@ -1055,8 +1078,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   userId = user.id;
+  user._id = commercialId(user) || userId;
   // El backend obtiene este rol de MongoDB; la cache del navegador no decide permisos.
   role = String(user.role || "").toLowerCase();
+  document.body.classList.toggle("role-cliente", role === "cliente");
   void registrarActividadDiaria();
 
   try {
@@ -1065,7 +1090,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const updatedUser = await res.json();
     user = { ...user, ...updatedUser };
+    user._id = commercialId(user) || userId;
+    user.id = userId;
     role = String(user.role || "").toLowerCase();
+    document.body.classList.toggle("role-cliente", role === "cliente");
     localStorage.setItem("user", JSON.stringify(user));
     console.log("✅ Usuario actualizado");
   } catch (err) {
@@ -1077,13 +1105,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     cliente: [
       "Inicio",
       "CSR (Cartas, Skins y Ruleta)",
-      "Able 73 – Visión Dios",
       "Rankings",
       "Descuentos y premios",
       "Retos",
-      "Mis pagos",
-      "Mis trayectos",
-      "Mis vehículos"
+      "Mis pagos"
     ],
     comercio: [
       "Inicio",
@@ -1118,6 +1143,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   items.forEach((item, index) => {
     const li = document.createElement("li");
     li.textContent = item;
+    li.dataset.section = item;
     li.addEventListener("click", () => renderSection(item));
     menu.appendChild(li);
 
@@ -1136,10 +1162,73 @@ function esperarElementoYMostrar(id, callback) {
   }
 }
 
+function renderCsrShell(sectionEl) {
+  sectionEl.classList.add("user-csr");
+  sectionEl.innerHTML = `
+    <header class="user-section-heading">
+      <div>
+        <span class="user-eyebrow">Colección y recompensas</span>
+        <h2>Cartas, skins y Roulette</h2>
+        <p>Prueba tu suerte, consulta tu colección y personaliza tu experiencia Able73.</p>
+      </div>
+      <div class="user-balance-chip" aria-label="Saldo actual">
+        <span>Saldo</span>
+        <strong><span id="stepcoinsContador">${formatStepcoins(user.stepcoins)}</span> Stepcoins</strong>
+      </div>
+    </header>
+    <div class="csr-feature-grid">
+      <article class="csr-panel csr-roulette-panel">
+        <div class="csr-panel-heading">
+          <span class="user-card-icon" aria-hidden="true">🎰</span>
+          <div><h3>Roulette</h3><p>Cada tirada cuesta 500 Stepcoins.</p></div>
+        </div>
+        <div class="ruleta-container">
+          <div class="flecha-indicador"></div>
+          <div class="ruleta" id="roulette"></div>
+          <button id="spinButton" type="button">Girar por 500 Stepcoins</button>
+          <div id="resultDisplay" role="status" aria-live="polite"></div>
+        </div>
+      </article>
+      <article class="csr-panel csr-collection-summary">
+        <span class="user-eyebrow">Tu colección</span>
+        <h3>Todo lo que has conseguido</h3>
+        <p>Revisa en un mismo lugar todas las cartas y skins que has conseguido.</p>
+      </article>
+    </div>
+    <div class="csr-panel csr-catalog-panel">
+      <div class="csr-panel-heading">
+        <span class="user-card-icon" aria-hidden="true">🃏</span>
+        <div><h3>Mis cartas</h3><p>Cartas obtenidas en tus partidas y tiradas.</p></div>
+      </div>
+      <div id="misCartasContainer" class="cartas-container"></div>
+    </div>
+    <div class="csr-panel csr-catalog-panel">
+      <div class="csr-panel-heading csr-panel-heading-actions">
+        <span class="user-card-icon" aria-hidden="true">🎨</span>
+        <div><h3>Mis skins</h3><p>Tu colección de aspectos disponibles.</p></div>
+        <button type="button" class="user-secondary-button" data-user-action="choose-skin">Elegir skin</button>
+      </div>
+      <div id="misSkinsCliente" class="lista-skins"></div>
+    </div>
+    <div class="csr-panel csr-catalog-panel">
+      <div class="csr-panel-heading">
+        <span class="user-card-icon" aria-hidden="true">🛍️</span>
+        <div><h3>Skins disponibles</h3><p>Compra nuevas skins con tu saldo actual.</p></div>
+      </div>
+      <div id="skinsDisponiblesCliente" class="lista-skins"></div>
+    </div>`;
+}
+
 // Renderizado de secciones
 function renderSection(section) {
   console.log(`📌 renderSection: ${section}, rol: ${role}`);
   document.querySelectorAll(".seccion").forEach((s) => (s.style.display = "none"));
+  document.querySelectorAll("#menu li").forEach((item) => {
+    const isActive = item.dataset.section === section;
+    item.classList.toggle("is-active", isActive);
+    if (isActive) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
+  });
 
   switch (section) {
     case "Mi establecimiento":
@@ -1227,20 +1316,12 @@ function renderSection(section) {
       if (role === "cliente") {
         const sectionEl = document.getElementById("csr");
         if (sectionEl) {
+          renderCsrShell(sectionEl);
           sectionEl.style.display = "block";
           renderSkinsCliente();
-          cargarCartas(); 
           cargarCartasCliente();
-          inicializarRuleta(); 
           renderMisSkinsCliente();
-          const options = [
-            "Tira de nuevo",
-            "20000 Stepcoins",
-            "Nada",
-            "500 Stepcoins",
-            "Carta aleatoria",
-            "Juego de cultura"
-          ];
+          inicializarRuleta();
           crearEtiquetas(options);
         }
       }
@@ -1422,112 +1503,198 @@ async function descargarExcel(tipo) {
   URL.revokeObjectURL(blobUrl);
 }
 
-function renderInicio() {
-  console.log("Ejecutando renderInicio()");
+function formatStepcoins(value) {
+  return new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0 }).format(Number(value) || 0);
+}
 
-  // ✅ Siempre cargar el usuario actualizado desde localStorage
+function userHomeActionCard(icon, title, description, section, label) {
+  return `<article class="user-action-card">
+    <span class="user-card-icon" aria-hidden="true">${icon}</span>
+    <h4>${title}</h4>
+    <p>${description}</p>
+    <button type="button" class="user-card-link" data-user-section="${commercialEscape(section)}">${label} <span aria-hidden="true">→</span></button>
+  </article>`;
+}
+
+async function renderInicio() {
   const userRaw = localStorage.getItem("user");
-  let user;
-
+  let storedUser;
   try {
-    user = JSON.parse(userRaw);
-  } catch (e) {
-    console.warn("⚠️ Error al parsear user en renderInicio()");
-    user = {};
+    storedUser = JSON.parse(userRaw);
+  } catch (_error) {
+    storedUser = null;
   }
+  if (!userId) return;
 
-  if (!user?._id) {
-    console.warn("⚠️ No hay usuario válido en localStorage.");
-    return;
-  }
-
+  user = { ...(user || {}), ...(storedUser || {}) };
+  user._id = commercialId(user) || userId;
+  user.id = userId;
   const section = document.getElementById("inicio");
-  if (!section) {
-    console.warn("⚠️ No se encontró la sección #inicio en el DOM.");
-    return;
-  }
-
-  // Mostrar solo esta sección y ocultar las demás
+  if (!section) return;
   document.querySelectorAll(".seccion").forEach(s => s.style.display = "none");
   section.style.display = "block";
+  section.innerHTML = '<div class="user-home-loading">Cargando tu espacio Able73…</div>';
 
+  let profile = {};
+  let socialProfile = {};
+  try {
+    const [profileResponse, socialResponse] = await Promise.all([
+      fetch(`/api/user/data?userId=${encodeURIComponent(userId)}`),
+      fetch("/api/social/me")
+    ]);
+    if (!profileResponse.ok) throw new Error("No se pudieron cargar los datos personales");
+    profile = await profileResponse.json();
+    if (socialResponse.ok) socialProfile = await socialResponse.json();
+  } catch (error) {
+    console.error("Error cargando el perfil compartido con Flutter:", error);
+  }
+
+  const displayName = user.nombre || user.nickname || "usuario";
   section.innerHTML = `
-    <h2>Inicio</h2>
-    <h3>Información del usuario</h3>
-    <label>Nombre: <input id="editNombre" value="${commercialEscape(user.nombre)}" /></label><br><br>
-    <label>Correo: <input class="readonly" value="${commercialEscape(user.email)}" readonly /></label><br><br>
-    <button onclick="guardarNombre()">Guardar cambios</button>
-    <br><br>
-    <div class="stepcoins">🪙 Stepcoins: ${user.stepcoins}</div>
+    <div class="user-home">
+      <header class="user-home-hero">
+        <div class="user-home-intro">
+          <span class="user-eyebrow">Tu espacio Able73</span>
+          <h2>Hola, ${commercialEscape(displayName)}</h2>
+          <p>Gestiona tus Stepcoins, entra en la Roulette y descubre todo lo que puedes hacer desde tu cuenta.</p>
+          <div class="user-hero-actions">
+            <button type="button" data-user-section="CSR (Cartas, Skins y Ruleta)">Abrir Roulette y skins</button>
+            <button type="button" class="user-secondary-button" data-user-section="Descuentos y premios">Ver premios</button>
+          </div>
+        </div>
+        <div class="user-balance-card">
+          <span>Saldo disponible</span>
+          <strong class="stepcoins"><span id="homeStepcoinsContador">${formatStepcoins(user.stepcoins)}</span></strong>
+          <small>Stepcoins</small>
+          <a href="#stepcoinStore" class="user-balance-link">Comprar Stepcoins ↓</a>
+        </div>
+      </header>
 
-    <h3 style="margin-top: 40px;">Tienda de Stepcoins</h3>
-    <div class="stepcoin-grid">
-      ${generarPaquetesStepcoins()}
-    </div>
-  `;
+      <section class="user-home-section" aria-labelledby="quickActionsTitle">
+        <div class="user-home-section-heading">
+          <div><span class="user-eyebrow">Accesos rápidos</span><h3 id="quickActionsTitle">¿Qué quieres hacer?</h3></div>
+        </div>
+        <div class="user-action-grid">
+          ${userHomeActionCard("🎰", "Roulette", "Prueba tu suerte y consigue Stepcoins, cartas y sorpresas.", "CSR (Cartas, Skins y Ruleta)", "Jugar ahora")}
+          ${userHomeActionCard("🎨", "Skins", "Consulta tus skins y descubre nuevos aspectos para comprar.", "CSR (Cartas, Skins y Ruleta)", "Ver skins")}
+          ${userHomeActionCard("🎁", "Premios", "Canjea tus Stepcoins por descuentos y recompensas.", "Descuentos y premios", "Explorar premios")}
+          ${userHomeActionCard("🏆", "Rankings", "Comprueba tu posición frente a la comunidad Able73.", "Rankings", "Ver ranking")}
+          ${userHomeActionCard("🎯", "Retos", "Consulta los retos activos y sigue progresando.", "Retos", "Ver retos")}
+        </div>
+      </section>
 
-  // 🔁 Escuchar clics en los botones de compra
-  document.querySelectorAll(".boton-compra").forEach(boton => {
+      <section id="stepcoinStore" class="user-home-section user-store-section" aria-labelledby="stepcoinStoreTitle">
+        <div class="user-home-section-heading">
+          <div><span class="user-eyebrow">Tienda</span><h3 id="stepcoinStoreTitle">Recarga tus Stepcoins</h3></div>
+          <p>Elige el pack que mejor encaje contigo.</p>
+        </div>
+        <div class="stepcoin-grid">${generarPaquetesStepcoins()}</div>
+      </section>
+
+      <section class="user-home-section user-account-section" aria-labelledby="accountTitle">
+        <div class="user-home-section-heading">
+          <div><span class="user-eyebrow">Tu cuenta</span><h3 id="accountTitle">Datos personales</h3></div>
+          <button type="button" class="user-text-button" data-user-section="Mis pagos">Consultar mis pagos</button>
+        </div>
+        <form id="userProfileForm" class="user-profile-form">
+          <label class="profile-field-full"><span>Nickname público</span><input name="nickname" value="${commercialEscape(socialProfile.hasChosenNickname ? socialProfile.nickname : "")}" placeholder="Nombre visible para otros jugadores" /></label>
+          <label><span>Nombre</span><input name="name" value="${commercialEscape(profile.name || "")}" required /></label>
+          <label><span>Apellidos</span><input name="lastName" value="${commercialEscape(profile.lastName || "")}" /></label>
+          <label class="profile-field-wide"><span>Dirección</span><input name="address" value="${commercialEscape(profile.address || "")}" /></label>
+          <label><span>Ciudad</span><input name="city" value="${commercialEscape(profile.city || "")}" /></label>
+          <label><span>País</span><input name="country" value="${commercialEscape(profile.country || "")}" /></label>
+          <div class="profile-documents profile-field-full">
+            <div class="profile-documents-heading"><strong>Documentación</strong><span>Los mismos campos guardados desde la app</span></div>
+            <label><span>DNI · anverso</span><input name="idCardFront" value="${commercialEscape(profile.idCardFront || "")}" placeholder="Ruta o imagen guardada" /></label>
+            <label><span>DNI · reverso</span><input name="idCardBack" value="${commercialEscape(profile.idCardBack || "")}" placeholder="Ruta o imagen guardada" /></label>
+            <label><span>Carnet · anverso</span><input name="licenseFront" value="${commercialEscape(profile.licenseFront || "")}" placeholder="Ruta o imagen guardada" /></label>
+            <label><span>Carnet · reverso</span><input name="licenseBack" value="${commercialEscape(profile.licenseBack || "")}" placeholder="Ruta o imagen guardada" /></label>
+          </div>
+          <div class="profile-field-full profile-form-actions">
+            <span id="profileSaveStatus" role="status" aria-live="polite"></span>
+            <button type="submit">Guardar cambios</button>
+          </div>
+        </form>
+      </section>
+    </div>`;
+
+  section.querySelector("#userProfileForm")?.addEventListener("submit", guardarPerfilUsuario);
+
+  section.querySelectorAll(".boton-compra").forEach(boton => {
     boton.addEventListener("click", async () => {
       const cantidad = parseInt(boton.dataset.cantidad);
-
+      const originalLabel = boton.textContent;
       try {
+        boton.disabled = true;
+        boton.textContent = "Procesando…";
         const requestId = `${user._id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         const res = await fetch("/api/payments/stepcoins/checkout", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            cantidad,
-            requestId,
-          })
+          body: JSON.stringify({ cantidad, requestId })
         });
-
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Error al procesar el pago");
-
         alert("✅ ¡Compra realizada con éxito!");
-
-        // ✅ Actualizar en localStorage
         user.stepcoins = Number(data.user.stepcoins);
         localStorage.setItem("user", JSON.stringify(user));
-
-        // 🔁 Volver a renderizar la sección con el nuevo saldo
         renderInicio();
       } catch (err) {
         console.error("❌ Error al comprar stepcoins:", err);
         alert("❌ Hubo un problema al procesar tu compra.");
+      } finally {
+        if (boton.isConnected) {
+          boton.disabled = false;
+          boton.textContent = originalLabel;
+        }
       }
     });
   });
 }
 
-async function guardarNombre() {
-  const nuevoNombre = document.getElementById("editNombre").value;
-  if (!nuevoNombre || nuevoNombre === user.nombre) return;
-
+async function guardarPerfilUsuario(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  const status = form.querySelector("#profileSaveStatus");
+  const fields = ["name", "lastName", "address", "city", "country", "idCardFront", "idCardBack", "licenseFront", "licenseBack"];
+  const payload = { userId };
+  fields.forEach((field) => { payload[field] = String(form.elements[field]?.value || "").trim(); });
+  if (!payload.name) {
+    status.textContent = "El nombre es obligatorio.";
+    form.elements.name.focus();
+    return;
+  }
   try {
-    const res = await fetch(`/api/users/${user._id}`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ nombre: nuevoNombre })
+    submit.disabled = true;
+    status.textContent = "Guardando…";
+    const nickname = String(form.elements.nickname?.value || "").trim();
+    if (nickname && nickname !== String(user.nickname || "")) {
+      const nicknameResponse = await fetch("/api/social/me/nickname", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nickname })
+      });
+      const nicknameData = await nicknameResponse.json().catch(() => ({}));
+      if (!nicknameResponse.ok) throw new Error(nicknameData.error || "No se pudo guardar el nickname");
+      user.nickname = nicknameData.nickname || nickname;
+      localStorage.setItem("user", JSON.stringify(user));
+    }
+    const res = await fetch("/api/user/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
     });
-
     if (!res.ok) {
-  const errorData = await res.json();
-  throw new Error(errorData.error || "Error al guardar en el servidor");
-}
-
-    const actualizado = await res.json();
-    user.nombre = actualizado.nombre;
-    localStorage.setItem("user", JSON.stringify(user));
-
-    alert("✅ Nombre actualizado correctamente.");
-    renderInicio();
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(errorData.error || "Error al guardar en el servidor");
+    }
+    status.textContent = "Datos guardados. Ya están sincronizados con la app.";
   } catch (err) {
-    console.error("❌ Error al guardar nombre:", err);
-    alert("❌ No se pudo actualizar el nombre.");
+    console.error("Error guardando el perfil compartido:", err);
+    status.textContent = err.message || "No se pudieron guardar los datos.";
+  } finally {
+    submit.disabled = false;
   }
 }
 
@@ -1538,14 +1705,22 @@ function generarPaquetesStepcoins() {
     { cantidad: 1000, precio: 7 },
     { cantidad: 2000, precio: 12 },
     { cantidad: 5000, precio: 25 },
+    { cantidad: 10000, precio: 45 },
+    { cantidad: 15000, precio: 65 },
+    { cantidad: 20000, precio: 80 },
+    { cantidad: 30000, precio: 110 },
+    { cantidad: 40000, precio: 130 },
+    { cantidad: 50000, precio: 150 },
+    { cantidad: 60000, precio: 180 },
   ];
 
   return paquetes.map(p =>
     `<div class="stepcoin-card">
-      <h3>${p.cantidad} Stepcoins</h3>
-      <p>💵 ${p.precio} €</p>
+      <span class="stepcoin-pack-label">Pack Stepcoins</span>
+      <h3>${formatStepcoins(p.cantidad)}</h3>
+      <p><strong>${p.precio} €</strong></p>
       <button class="boton-compra" data-cantidad="${p.cantidad}" data-precio="${p.precio}">
-        Comprar
+        Comprar pack
       </button>
     </div>`
   ).join("");
@@ -1554,6 +1729,12 @@ function generarPaquetesStepcoins() {
 async function renderMisPagos() {
   const section = document.getElementById("misPagos");
   section.style.display = "block";
+  section.innerHTML = `<h2>Mis pagos</h2>
+    <p>Pagos realizados con dinero. Los movimientos internos de Stepcoins no aparecen aquí.</p>
+    <div class="user-payments-summary" id="userPaymentsSummary"></div>
+    <div class="user-payments-table"><table><thead><tr>
+      <th>Fecha</th><th>Concepto</th><th>Importe</th>
+    </tr></thead><tbody></tbody></table></div>`;
 
   console.log("🧪 Intentando cargar pagos para:", userId); // Agregado
 
@@ -1566,16 +1747,21 @@ async function renderMisPagos() {
     tbody.innerHTML = "";
 
     if (pagos.length === 0) {
-      tbody.innerHTML = "<tr><td colspan='2'>No tienes pagos registrados.</td></tr>";
+      tbody.innerHTML = "<tr><td colspan='3'>Todavía no tienes pagos monetarios registrados.</td></tr>";
       return;
     }
 
+    const moneyPaid = pagos.reduce((total, pago) => total + Number(pago.cantidad || 0), 0);
+    document.getElementById("userPaymentsSummary").innerHTML = `
+      <div><span>Total pagado</span><strong>${moneyPaid.toFixed(2)} €</strong></div>`;
+
     pagos.forEach(pago => {
       const tr = document.createElement("tr");
-      const fecha = new Date(pago.fecha).toLocaleDateString("es-ES");
+      const fecha = new Date(pago.fecha).toLocaleString("es-ES");
       tr.innerHTML = `
         <td>${fecha}</td>
-        <td>${pago.cantidad} ${pago.currency || "EUR"} · ${commercialEscape(pago.motivo || "Pago")}</td>
+        <td>${commercialEscape(pago.motivo || "Pago")}</td>
+        <td>${paymentMovementLabel(pago)}</td>
       `;
       tbody.appendChild(tr);
     });
@@ -1584,6 +1770,16 @@ async function renderMisPagos() {
     console.error("❌ Error al mostrar pagos:", err);
     alert("No se pudieron cargar los pagos.");
   }
+}
+
+function paymentMovementLabel(payment) {
+  return `${Number(payment.cantidad || 0).toFixed(2)} ${commercialEscape(payment.currency || "EUR")}`;
+}
+
+function paymentSourceLabel(payment) {
+  if (payment.source === "platform_checkout") return "Checkout plataforma";
+  if (payment.source === "payment_provider") return "Pasarela";
+  return "Manual";
 }
 
 async function renderPagosComercio() {
@@ -1596,8 +1792,8 @@ async function renderPagosComercio() {
   }
 
   seccion.style.display = "block";
-  seccion.innerHTML = `<h2>Tus Pagos Realizados</h2><table><thead>
-    <tr><th>Cantidad (€)</th><th>Motivo</th><th>Fecha</th></tr></thead><tbody id="pagosComercioBody"></tbody></table>`;
+  seccion.innerHTML = `<h2>Tus pagos</h2><table><thead>
+    <tr><th>Importe</th><th>Motivo</th><th>Fecha</th></tr></thead><tbody id="pagosComercioBody"></tbody></table>`;
 
   try {
     const res = await fetch(`/api/payments/${userId}`);
@@ -1612,8 +1808,8 @@ async function renderPagosComercio() {
 
     tbody.innerHTML = pagos.map(p => `
       <tr>
-        <td>${p.cantidad}</td>
-        <td>${p.motivo || "-"}</td>
+        <td>${paymentMovementLabel(p)}</td>
+        <td>${commercialEscape(p.motivo || "-")}</td>
         <td>${new Date(p.fecha).toLocaleString()}</td>
       </tr>
     `).join("");
@@ -1635,7 +1831,7 @@ async function renderPagos() {
   seccion.style.display = "block";
 
   seccion.innerHTML = `
-    <h2>Lista de Pagos</h2>
+    <h2>Pagos monetarios</h2>
     <input type="text" id="searchInput" placeholder="Buscar por usuario, concepto o cantidad" />
     <table>
       <thead><tr><th>Usuario</th><th>Importe</th><th>Concepto</th><th>Origen</th><th>Fecha</th></tr></thead>
@@ -1652,10 +1848,10 @@ async function renderPagos() {
     function renderLista(filtrados) {
       tbody.innerHTML = filtrados.map(p =>
         `<tr>
-          <td>${p.nombre}</td>
-          <td>${p.cantidad} ${p.currency || "EUR"}</td>
+          <td>${commercialEscape(p.nombre || "Usuario")}</td>
+          <td>${paymentMovementLabel(p)}</td>
           <td>${commercialEscape(p.motivo || "-")}</td>
-          <td>${p.source === "platform_checkout" ? "Checkout simulado" : p.source === "payment_provider" ? "Pasarela" : "Manual"}</td>
+          <td>${paymentSourceLabel(p)}</td>
           <td>${new Date(p.fecha).toLocaleString()}</td>
         </tr>`).join("");
     }
@@ -1847,6 +2043,11 @@ async function renderRewardsSection() {
       <label for="stepcoins">Precio en Stepcoins:</label>
       <input type="number" id="stepcoins" name="stepcoins" required>
 
+      <div id="premioCampos">
+        <label for="unidades">Unidades disponibles:</label>
+        <input type="number" id="unidades" name="unidades" min="0" step="1" value="1">
+      </div>
+
       <label for="imagenes">Imágenes (hasta 3):</label>
       <input type="file" id="imagenes" name="imagenes" accept="image/*" multiple required>
 
@@ -1889,7 +2090,11 @@ function ordenarRewardsParaGestion(rewards) {
 function actualizarCampos() {
   const tipo = document.getElementById("tipo").value;
   const campos = document.getElementById("descuentoCampos");
+  const premioCampos = document.getElementById("premioCampos");
+  const unidades = document.getElementById("unidades");
   campos.style.display = tipo === "descuento" ? "block" : "none";
+  premioCampos.style.display = tipo === "premio" ? "block" : "none";
+  unidades.required = tipo === "premio";
 }
 
 async function crearReward(e) {
@@ -1963,6 +2168,7 @@ async function cargarMisRewards() {
         <p><strong>${r.tipo === 'descuento' ? 'Descuento' : 'Premio'}</strong></p>
         <p>${commercialEscape(r.descripcion)}</p>
         <p>🎯 Stepcoins: ${r.stepcoins}</p>
+        ${r.tipo === 'premio' && r.unidades != null ? `<p>📦 Unidades: ${r.unidades}</p>` : ""}
         ${r.porcentaje ? `<p>💸 Descuento: ${r.porcentaje}%</p>` : ""}
         ${r.cantidadEuros ? `<p>💶 Descuento: ${r.cantidadEuros}€</p>` : ""}
         <p>📍 ${commercialEscape(r.direccion)}</p>
@@ -1973,6 +2179,7 @@ async function cargarMisRewards() {
           <button type="button" onclick="moverRewardCatalogo('${r._id}', -1)" ${posicion === 0 ? "disabled" : ""}>&#8593; Subir</button>
           <button type="button" onclick="moverRewardCatalogo('${r._id}', 1)" ${posicion === publicados.length - 1 ? "disabled" : ""}>&#8595; Bajar</button>
         </div>` : ""}
+        ${r.tipo === 'premio' ? `<button type="button" onclick="editarUnidadesReward('${r._id}', ${r.unidades == null ? 0 : r.unidades})">Editar unidades</button>` : ""}
         <button onclick="eliminarReward('${r._id}')">🗑️ Eliminar</button>
       </div>
     `; }).join("");
@@ -2011,6 +2218,28 @@ async function moverRewardCatalogo(id, desplazamiento) {
   }
 }
 
+async function editarUnidadesReward(id, unidadesActuales) {
+  const value = prompt("Unidades disponibles:", String(unidadesActuales));
+  if (value === null) return;
+  const unidades = Number(value);
+  if (!Number.isInteger(unidades) || unidades < 0) {
+    alert("Indica un numero entero de unidades igual o mayor que cero.");
+    return;
+  }
+  try {
+    const res = await fetch(`/api/rewards/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ unidades }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "No se pudieron actualizar las unidades");
+    await cargarMisRewards();
+  } catch (error) {
+    alert(error.message || "No se pudieron actualizar las unidades");
+  }
+}
+
 async function renderValidarRewards() {
   document.querySelectorAll(".seccion").forEach(s => s.style.display = "none");
 
@@ -2041,6 +2270,7 @@ async function renderValidarRewards() {
         <p><strong>${r.tipo === 'descuento' ? 'Descuento' : 'Premio'}</strong></p>
         <p>${commercialEscape(r.descripcion)}</p>
         <p>🎯 Stepcoins: ${r.stepcoins}</p>
+        ${r.tipo === 'premio' && r.unidades != null ? `<p>📦 Unidades: ${r.unidades}</p>` : ""}
         ${r.porcentaje ? `<p>💸 Descuento: ${r.porcentaje}%</p>` : ""}
         ${r.cantidadEuros ? `<p>💶 Descuento: ${r.cantidadEuros}€</p>` : ""}
         <p>📍 ${commercialEscape(r.direccion)}</p>
@@ -2101,53 +2331,63 @@ async function validarReward(id) {
 }
 
 async function renderVistaClienteRewards() {
-  console.log("Ejecutando renderVistaClienteRewards()");
-
   const seccion = document.getElementById("vistaClienteRewards");
   if (!seccion) {
-    console.warn("❌ No se encontró la sección #vistaClienteRewards en el DOM.");
     return;
   }
-
-  // Ocultar todas las secciones
   document.querySelectorAll(".seccion").forEach(s => s.style.display = "none");
   seccion.style.display = "block";
-
-  const contenedor = document.getElementById("rewardsDisponiblesCliente");
-  contenedor.innerHTML = "<p>Cargando...</p>";
+  seccion.innerHTML = `<div class="user-rewards-page">
+    <header class="user-section-heading">
+      <div><span class="user-eyebrow">Tienda Able73</span><h2>Descuentos y premios</h2><p>Canjea Stepcoins aquí y la compra aparecerá también en Mis descuentos de Flutter.</p></div>
+      <div class="user-balance-chip"><span>Tu saldo</span><strong><span id="rewardsStepcoinsContador">${formatStepcoins(user.stepcoins)}</span> Stepcoins</strong></div>
+    </header>
+    <section class="rewards-user-section"><div class="rewards-section-title"><div><span class="user-eyebrow">Disponibles</span><h3>Elige tu recompensa</h3></div></div><div id="rewardsDisponiblesCliente" class="user-rewards-grid"><p>Cargando…</p></div></section>
+    <section class="rewards-user-section"><div class="rewards-section-title"><div><span class="user-eyebrow">Tu cartera</span><h3>Mis descuentos y premios</h3></div><p>Pendientes de utilizar o validar.</p></div><div id="rewardsCompradosCliente" class="user-rewards-grid"><p>Cargando…</p></div></section>
+  </div>`;
+  const contenedor = seccion.querySelector("#rewardsDisponiblesCliente");
+  const compradosContenedor = seccion.querySelector("#rewardsCompradosCliente");
 
   try {
-    const res = await fetch("/api/rewards/validados"); // ✅ usa orden por prioridad
+    const [res, purchasesResponse] = await Promise.all([
+      fetch("/api/rewards/validados"),
+      fetch("/api/rewards/mis-compras")
+    ]);
     const rewards = await res.json();
+    const purchases = purchasesResponse.ok ? await purchasesResponse.json() : [];
 
     if (!Array.isArray(rewards) || rewards.length === 0) {
       contenedor.innerHTML = "<p>No hay descuentos ni premios disponibles todavía.</p>";
-      return;
+    } else {
+      contenedor.innerHTML = rewards.map(r => rewardClienteCard(r, false)).join("");
     }
-
-    contenedor.innerHTML = rewards.map(r => `
-      <div class="reward-card" style="border:1px solid #ccc; padding:12px; margin-bottom:15px; border-radius:10px; background:#f9f9f9">
-        <h4 style="margin-top:0;">${commercialEscape(r.titulo)}</h4>
-        <p><strong>${r.tipo === 'descuento' ? 'Descuento' : 'Premio'}</strong></p>
-        <p>${commercialEscape(r.descripcion)}</p>
-        <p>🎯 Stepcoins: <strong>${r.stepcoins}</strong></p>
-        ${r.porcentaje ? `<p>💸 ${r.porcentaje}% de descuento</p>` : ""}
-        ${r.cantidadEuros ? `<p>💶 ${r.cantidadEuros}€ de descuento</p>` : ""}
-        <p>📍 ${commercialEscape(r.direccion)}</p>
-        <div style="margin-top:8px; margin-bottom:8px;">
-          ${r.imagenes.map(img => `
-            <img src="${commercialEscape(img)}" width="100" style="margin:5px; border-radius:6px;" onerror="this.style.display='none';">
-          `).join("")}
-        </div>
-        <button onclick="canjearReward('${r._id}', ${r.stepcoins})" style="padding:6px 12px; background:#ece537; border:none; border-radius:6px; cursor:pointer;">
-          Canjear por ${r.stepcoins} 🪙
-        </button>
-      </div>
-    `).join("");
+    compradosContenedor.innerHTML = Array.isArray(purchases) && purchases.length
+      ? purchases.map(r => rewardClienteCard(r, true)).join("")
+      : '<div class="user-empty-state">Todavía no tienes descuentos ni premios pendientes.</div>';
   } catch (err) {
-    console.error("❌ Error cargando rewards validados:", err);
-    contenedor.innerHTML = "<p>❌ Error al cargar los descuentos</p>";
+    console.error("Error cargando descuentos y compras:", err);
+    contenedor.innerHTML = "<p>No se pudieron cargar los descuentos.</p>";
   }
+}
+
+function rewardClienteCard(reward, purchased) {
+  const images = Array.isArray(reward.imagenes) ? reward.imagenes : [];
+  const image = images[0]
+    ? `<img class="reward-card-image" src="${commercialEscape(images[0])}" alt="" onerror="this.style.display='none'">`
+    : '<div class="reward-card-placeholder" aria-hidden="true">🎁</div>';
+  return `<article class="reward-card user-reward-card">
+    ${image}<div class="reward-card-content">
+      <span class="reward-type">${reward.tipo === "descuento" ? "Descuento" : "Premio"}</span>
+      <h4>${commercialEscape(reward.titulo || "Recompensa")}</h4>
+      <p>${commercialEscape(reward.descripcion || "")}</p>
+      ${reward.porcentaje ? `<strong class="reward-value">${reward.porcentaje}% de descuento</strong>` : ""}
+      ${reward.cantidadEuros ? `<strong class="reward-value">${reward.cantidadEuros} € de descuento</strong>` : ""}
+      <span class="reward-address">📍 ${commercialEscape(reward.direccion || "Consulta las condiciones")}</span>
+      ${purchased
+        ? '<span class="reward-owned">✓ En tus descuentos</span>'
+        : `<button type="button" data-user-action="redeem-reward" data-reward-id="${commercialEscape(reward._id)}" data-reward-cost="${Number(reward.stepcoins) || 0}" ${reward.unidades === 0 ? "disabled" : ""}>${reward.unidades === 0 ? "Agotado" : `Canjear · ${formatStepcoins(reward.stepcoins)} SC`}</button>`}
+    </div>
+  </article>`;
 }
 
 async function promocionarReward(id, nivel) {
@@ -2194,7 +2434,7 @@ async function promocionarReward(id, nivel) {
 }
 
 async function canjearReward(id, coste) {
-  const userId = user._id;
+  const currentUserId = commercialId(user) || userId;
 
   if (user.stepcoins < coste) {
     alert("❌ No tienes suficientes Stepcoins");
@@ -2209,7 +2449,7 @@ async function canjearReward(id, coste) {
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ userId })
+      body: JSON.stringify({ userId: currentUserId })
     });
 
     const data = await res.json();
@@ -2217,46 +2457,14 @@ async function canjearReward(id, coste) {
 
     alert("✅ Canje exitoso");
 
-    // Actualizar variable global `user`
-    user = await fetch(`/api/users/${userId}`).then(res => res.json());
+    user.stepcoins = Number(data.stepcoins ?? user.stepcoins);
     localStorage.setItem("user", JSON.stringify(user));
-    renderVistaClienteRewards();
+    await renderVistaClienteRewards();
   } catch (err) {
     alert("❌ Error al canjear: " + err.message);
     console.error("Detalles del error:", err);
   }
 }
-
-document.addEventListener("click", async (e) => {
-  if (e.target.classList.contains("boton-compra")) {
-    const cantidad = parseInt(e.target.dataset.cantidad);
-    const precio = parseFloat(e.target.dataset.precio);
-
-    try {
-      const res = await fetch("/api/stepcoins/adjust", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: user._id,
-          cantidad,
-          tipo: "compra",
-          descripcion: `Compra de ${cantidad} stepcoins por ${precio} €`
-        })
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-
-      alert("✅ Compra realizada");
-      user = data.user;
-      localStorage.setItem("user", JSON.stringify(user));
-      renderInicio(); // Actualiza el contador en pantalla
-
-    } catch (err) {
-      alert("❌ Error al procesar compra: " + err.message);
-    }
-  }
-});
 
 async function renderMisPromociones() {
   const seccion = document.getElementById("promociones");
@@ -3247,8 +3455,14 @@ async function eliminarSkin(id) {
 
 async function renderSkinsCliente() {
   try {
-    const res = await fetch("/api/skins");
-    const skins = await res.json();
+    const currentUserId = commercialId(user) || userId;
+    const [catalogResponse, ownedResponse] = await Promise.all([
+      fetch("/api/skins"),
+      fetch(`/api/users/${encodeURIComponent(currentUserId)}/skins`)
+    ]);
+    const skins = await catalogResponse.json();
+    const ownedData = ownedResponse.ok ? await ownedResponse.json() : { skins: [] };
+    const ownedIds = new Set((ownedData.skins || []).map((skin) => String(skin._id || skin)));
 
     const contenedor = document.getElementById("skinsDisponiblesCliente");
     contenedor.innerHTML = "";
@@ -3259,14 +3473,15 @@ async function renderSkinsCliente() {
     }
 
     skins.forEach(skin => {
+      const isOwned = ownedIds.has(String(skin._id));
       const div = document.createElement("div");
-      div.className = "tarjeta-skin"; // Cambiado de skin-card a tarjeta-skin para estilo tipo carta
+      div.className = `tarjeta-skin${isOwned ? " is-owned" : ""}`;
       div.innerHTML = `
         <img src="${commercialEscape(skin.portada)}" alt="${commercialEscape(skin.titulo)}" />
         <h4>${commercialEscape(skin.titulo)}</h4>
         <p>${commercialEscape(skin.descripcion)}</p>
         <p><strong>${skin.precio} 🪙</strong></p>
-        <button onclick="comprarSkin('${skin._id}', ${skin.precio})">Comprar</button>
+        <button type="button" ${isOwned ? "disabled" : `data-user-action="purchase-skin" data-skin-id="${commercialEscape(skin._id)}" data-skin-price="${Number(skin.precio) || 0}"`}>${isOwned ? "Ya es tuya" : "Comprar skin"}</button>
       `;
       contenedor.appendChild(div);
     });
@@ -3278,20 +3493,18 @@ async function renderSkinsCliente() {
 async function comprarSkin(skinId, precio) {
   if (!confirm(`¿Quieres comprar esta skin por ${precio} Stepcoins?`)) return;
 
-  const userRaw = localStorage.getItem("user");
-  if (!userRaw) {
+  const currentUserId = commercialId(user) || userId;
+  if (!currentUserId) {
     alert("❌ No se ha encontrado el usuario");
     return;
   }
-
-  user = JSON.parse(userRaw); // 🔄 sin "const", usa la variable global
 
   try {
     const response = await fetch("/api/stepcoins/comprar-skin", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        userId: user._id,
+        userId: currentUserId,
         skinId: skinId
       })
     });
@@ -3301,10 +3514,7 @@ async function comprarSkin(skinId, precio) {
     if (response.ok) {
       alert("✅ Skin comprada con éxito");
 
-      // 🔄 Recargar usuario actualizado desde el backend
-      const resUser = await fetch(`/api/users/${user._id}`);
-      const updatedUser = await resUser.json();
-      user = updatedUser;
+      user.stepcoins = Number(data.userActualizado?.stepcoins ?? user.stepcoins);
       localStorage.setItem("user", JSON.stringify(user));
 
       // 🔄 Actualizar marcador o recargar Inicio
@@ -3320,7 +3530,7 @@ async function comprarSkin(skinId, precio) {
         }
       }
 
-      await renderSkinsCliente();
+      await Promise.all([renderMisSkinsCliente(), renderSkinsCliente()]);
     } else {
       alert("❌ " + (data.error || "Error al comprar skin"));
     }
@@ -3500,7 +3710,13 @@ async function renderPromoLocal() {
 }
 
 // ✅ Esto es lo que te falta — ponlo arriba del todo, antes de usarlo
-class NegocioOverlay extends google.maps.OverlayView {
+let negocioOverlayClass = null;
+function getNegocioOverlayClass() {
+  if (negocioOverlayClass) return negocioOverlayClass;
+  if (!window.google?.maps?.OverlayView) {
+    throw new Error("Google Maps todavía no está disponible");
+  }
+  negocioOverlayClass = class NegocioOverlay extends google.maps.OverlayView {
   constructor({ position, imagenBase, logo, map, width = 100, height = 100 }) {
     super();
     this.position = position;
@@ -3581,6 +3797,8 @@ class NegocioOverlay extends google.maps.OverlayView {
       this.div = null;
     }
   }
+  };
+  return negocioOverlayClass;
 }
 
 let negociosActivosOverlays = []; // para poder limpiarlos al refrescar
@@ -3621,6 +3839,7 @@ async function renderNegociosActivos(map) {
         return;
       }
 
+      const NegocioOverlay = getNegocioOverlayClass();
       const overlay = new NegocioOverlay({
         position: { lat: c.lat, lng: c.lng },
         imagenBase: c.imagenBase,
@@ -3715,11 +3934,16 @@ async function eliminarCarta(id) {
 async function cargarCartasCliente() {
   const contenedor = document.getElementById("misCartasContainer");
   if (!contenedor) return;
+  const currentUserId = commercialId(user) || userId;
+  if (!currentUserId) {
+    contenedor.innerHTML = "<p>No se pudo identificar tu cuenta.</p>";
+    return;
+  }
 
   contenedor.innerHTML = "<p>Cargando cartas...</p>";
 
   try {
-    const res = await fetch(`/api/cards/user-cards/${user._id}`);
+    const res = await fetch(`/api/cards/user-cards/${currentUserId}`);
     if (!res.ok) throw new Error("Error al cargar cartas");
 
     const cartas = await res.json();
@@ -3750,67 +3974,28 @@ async function cargarCartasCliente() {
 let currentRotation = 0;
 let isSpinning = false;
 
+// Mismas opciones visibles y mismo orden que roulette_screen.dart. El sorteo
+// siempre lo decide el backend; esta lista solo representa su resultado.
 const options = [
-  "Tira de nuevo",        // 0
-  "20000 Stepcoins",      // 1
-  "Nada",                 // 2
-  "500 Stepcoins",        // 3
-  "Carta aleatoria",      // 4
-  "Juego de cultura"      // 5
+  "Tirar otra vez",
+  "Nada",
+  "Juego de Cultura",
+  "Armas",
+  "Memory Game",
+  "Reflex Game",
+  "Gana 20000 Stepcoins",
+  "Pierde 20000 Stepcoins"
 ];
 
 const rotationPerSlice = 360 / options.length;
 
-function obtenerIndiceResultadoRuleta() {
-  const weightedOptions = [
-    { label: "Tira de nuevo", weight: 10 },
-    { label: "20000 Stepcoins", weight: 5 },
-    { label: "Nada", weight: 30 },
-    { label: "500 Stepcoins", weight: 20 },
-    { label: "Carta aleatoria", weight: 20 },
-    { label: "Juego de cultura", weight: 15 }
-  ];
-
-  const total = weightedOptions.reduce((acc, o) => acc + o.weight, 0);
-  const r = Math.random() * total;
-  let acumulado = 0;
-  for (let i = 0; i < weightedOptions.length; i++) {
-    acumulado += weightedOptions[i].weight;
-    if (r < acumulado) return i;
-  }
-  return 0;
-}
-
 function inicializarRuleta() {
   const roulette = document.getElementById('roulette');
   if (!roulette) return;
-  roulette.innerHTML = '';
-
-  options.forEach((option, index) => {
-    const slice = document.createElement('div');
-    slice.className = 'slice';
-    slice.style.transform = `rotate(${rotationPerSlice * index}deg)`;
-    slice.style.backgroundColor = index % 2 === 0 ? '#2e7d32' : '#1b5e20';
-
-    const text = document.createElement('div');
-    text.textContent = option;
-    text.style.transform = `rotate(-${rotationPerSlice * index}deg) translate(60px, 10px)`;
-    text.style.transformOrigin = 'center center';
-    text.style.color = 'white';
-    text.style.fontSize = '12px';
-    text.style.fontWeight = 'bold';
-    text.style.textAlign = 'center';
-    text.style.width = '100px';
-    text.style.position = 'absolute';
-    text.style.left = '0';
-    text.style.top = '50%';
-
-    slice.appendChild(text);
-    roulette.appendChild(slice);
-  });
-
-  // ❌ Quitar cualquier compensación de rotación inicial
-  roulette.style.transform = `rotate(0deg)`;
+  currentRotation = 0;
+  isSpinning = false;
+  roulette.style.transition = "none";
+  roulette.style.transform = "rotate(0deg)";
 }
 
 document.addEventListener("click", async (e) => {
@@ -3835,7 +4020,8 @@ document.addEventListener("click", async (e) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          requestId: `${user._id}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+          requestId: `${user._id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          clientSurface: "web"
         })
       });
       spinData = await response.json();
@@ -3849,16 +4035,25 @@ document.addEventListener("click", async (e) => {
     const resultadoFinal = spinData.resultado === 'Carta aleatoria'
       ? 'Armas'
       : spinData.resultado;
-    const indexFinal = Math.max(0, options.indexOf(resultadoFinal));
+    const indexFinal = options.indexOf(resultadoFinal);
+    if (indexFinal < 0) {
+      console.error("Resultado de ruleta no representado:", resultadoFinal);
+      isSpinning = false;
+      e.target.disabled = false;
+      return;
+    }
 
     // 🧠 Ángulo por porción
     const sliceAngle = 360 / options.length;
 
     // 👉 Ángulo al centro del slice
-    const angleToSliceCenter = sliceAngle * indexFinal + sliceAngle / 2;
-
-    // 🎯 Total con vueltas extra
-    const totalRotation = 360 * 5 + angleToSliceCenter;
+    const angleToSliceCenter = sliceAngle * (indexFinal + 0.5);
+    // CSS conic-gradient parte de las 12. Giramos en sentido horario hasta
+    // colocar el centro real del sector bajo el indicador superior.
+    const targetModulo = (360 - angleToSliceCenter) % 360;
+    const currentModulo = ((currentRotation % 360) + 360) % 360;
+    const delta = (targetModulo - currentModulo + 360) % 360;
+    const totalRotation = currentRotation + (360 * 5) + delta;
 
     // Animar ruleta
     const roulette = document.getElementById("roulette");
@@ -3872,11 +4067,7 @@ document.addEventListener("click", async (e) => {
       if (display) display.textContent = `🎁 Resultado: ${resultadoFinal}`;
       await procesarResultadoRuleta(resultadoFinal, spinData);
 
-      // ❗ Dejar ruleta fija en el sector correcto
-      if (roulette) {
-        roulette.style.transition = "none";
-        roulette.style.transform = `rotate(${angleToSliceCenter}deg)`;
-      }
+      currentRotation = totalRotation;
 
       isSpinning = false;
       e.target.disabled = false;
@@ -3891,7 +4082,8 @@ async function procesarResultadoRuleta(resultado, authoritativeData = null) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        requestId: `${user._id}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        requestId: `${user._id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        clientSurface: "web"
       })
     });
 
@@ -3899,13 +4091,19 @@ async function procesarResultadoRuleta(resultado, authoritativeData = null) {
 
     if (authoritativeData || res.ok) {
       resultado = data.resultado || resultado;
-      // 🎯 SI ES JUEGO DE CULTURA → abrir popup y salir
+      user.stepcoins = Number(data.nuevosStepcoins ?? user.stepcoins);
+      localStorage.setItem("user", JSON.stringify(user));
+      document.querySelectorAll("#stepcoinsContador, #homeStepcoinsContador").forEach((node) => {
+        node.textContent = formatStepcoins(user.stepcoins);
+      });
+
       if (resultado === "Juego de Cultura") {
-        window.open(
-          `/juego-cultura.html?userId=${user._id}`,
-          "_blank",
-          "width=500,height=700"
-        );
+        mostrarLanzadorCultura(data.miniGameSessionId);
+        return;
+      }
+
+      if (resultado === "Memory Game" || resultado === "Reflex Game") {
+        await abrirMiniJuegoRuleta(resultado, data.miniGameSessionId);
         return;
       }
 
@@ -3917,31 +4115,11 @@ async function procesarResultadoRuleta(resultado, authoritativeData = null) {
       const contador = document.getElementById("stepcoinsContador");
       if (contador) contador.textContent = user.stepcoins;
 
-      // 🃏 Añadir nueva carta si la hay
+      // El backend devuelve imagenPortada. Recargamos desde la misma ruta que
+      // pinta la colección para que la carta nueva tenga exactamente el mismo
+      // marcado y estilos que después de refrescar la página.
       if (data.nuevaCarta) {
-        // Render en listaCartas (si existe)
-        const lista = document.getElementById("listaCartas");
-        if (lista) {
-          const div = document.createElement("div");
-          div.className = "carta";
-          div.innerHTML = `
-            <img src="${data.nuevaCarta.imagen}" alt="${data.nuevaCarta.titulo}">
-            <p><strong>${data.nuevaCarta.titulo}</strong></p>
-          `;
-          lista.appendChild(div);
-        }
-
-        // Render en misCartasContainer (CRS)
-        const misCartas = document.getElementById("misCartasContainer");
-        if (misCartas) {
-          const div = document.createElement("div");
-          div.className = "carta";
-          div.innerHTML = `
-            <img src="${data.nuevaCarta.imagen}" alt="${data.nuevaCarta.titulo}">
-            <p><strong>${data.nuevaCarta.titulo}</strong></p>
-          `;
-          misCartas.appendChild(div);
-        }
+        await cargarCartasCliente();
       }
     } else {
       alert("❌ " + (data.error || "Error al procesar resultado"));
@@ -3952,32 +4130,205 @@ async function procesarResultadoRuleta(resultado, authoritativeData = null) {
   }
 }
 
+const MEMORY_TIME_THRESHOLDS_MS = [6500, 7500, 8500, 10000, 12000, 15000, 19000, 24000, 32000];
+const REFLEX_REACTION_THRESHOLDS_MS = [160, 185, 215, 250, 290, 340, 410, 500, 650];
+
+function puntuacionMemory(durationMs, errors) {
+  const index = MEMORY_TIME_THRESHOLDS_MS.findIndex((limit) => durationMs <= limit);
+  const timeScore = index < 0 ? 1 : 10 - index;
+  const errorCap = errors === 0 ? 10 : errors === 1 ? 5 : errors === 2 ? 4 : errors === 3 ? 3 : 2;
+  return Math.max(1, Math.min(timeScore, errorCap));
+}
+
+function puntuacionReflex(reactionMs, falseStart = false) {
+  if (falseStart) return 1;
+  const index = REFLEX_REACTION_THRESHOLDS_MS.findIndex((limit) => reactionMs <= limit);
+  return index < 0 ? 1 : 10 - index;
+}
+
+function cerrarMiniJuego() {
+  document.getElementById("rouletteMiniGame")?.remove();
+}
+
+function crearModalMiniJuego(title, subtitle) {
+  cerrarMiniJuego();
+  const modal = document.createElement("div");
+  modal.id = "rouletteMiniGame";
+  modal.className = "mini-game-overlay";
+  modal.innerHTML = `<section class="mini-game-dialog" role="dialog" aria-modal="true" aria-labelledby="miniGameTitle">
+    <button class="mini-game-close" type="button" aria-label="Cerrar">×</button>
+    <span class="user-eyebrow">Premio de la Roulette</span>
+    <h3 id="miniGameTitle">${commercialEscape(title)}</h3>
+    <p class="mini-game-subtitle">${commercialEscape(subtitle)}</p>
+    <div class="mini-game-stage"></div>
+    <div class="mini-game-status" role="status" aria-live="polite"></div>
+  </section>`;
+  modal.querySelector(".mini-game-close").addEventListener("click", cerrarMiniJuego);
+  document.body.appendChild(modal);
+  return modal;
+}
+
+async function enviarResultadoMiniJuego(payload, status) {
+  const response = await fetch("/api/stepcoins/minigame-result", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "No se pudo registrar la partida");
+  user.stepcoins = Number(data.nuevosStepcoins ?? user.stepcoins);
+  localStorage.setItem("user", JSON.stringify(user));
+  document.querySelectorAll("#stepcoinsContador, #homeStepcoinsContador").forEach((node) => {
+    node.textContent = formatStepcoins(user.stepcoins);
+  });
+  status.innerHTML = `<strong>Partida registrada · +${formatStepcoins(data.reward || 0)} Stepcoins</strong>`;
+}
+
+async function abrirMiniJuegoRuleta(resultado, sessionId) {
+  if (!sessionId) {
+    alert("No se recibió una sesión válida para el minijuego.");
+    return;
+  }
+  if (resultado === "Memory Game") iniciarMemoryGame(sessionId);
+  else iniciarReflexGame(sessionId);
+}
+
+function mostrarLanzadorCultura(sessionId) {
+  const modal = crearModalMiniJuego(
+    "Juego de Cultura",
+    "Has desbloqueado el juego. Ábrelo ahora para empezar por el nivel 1."
+  );
+  const stage = modal.querySelector(".mini-game-stage");
+  const status = modal.querySelector(".mini-game-status");
+  stage.innerHTML = '<div class="culture-launch-icon" aria-hidden="true">🧠</div><button type="button" class="culture-launch-button">Jugar ahora</button>';
+  const button = stage.querySelector(".culture-launch-button");
+  button.addEventListener("click", () => {
+    const url = `/juego-cultura.html?userId=${encodeURIComponent(user._id)}&sessionId=${encodeURIComponent(sessionId || "")}`;
+    const gameWindow = window.open(url, "able73-culture", "width=560,height=760");
+    if (!gameWindow) {
+      status.textContent = "El navegador bloqueó la ventana. Abriendo el juego en esta pestaña…";
+      window.location.assign(url);
+      return;
+    }
+    cerrarMiniJuego();
+    gameWindow.focus();
+  });
+}
+
+function iniciarMemoryGame(sessionId) {
+  const modal = crearModalMiniJuego("Memory Game", "Encuentra las cuatro parejas. Menos tiempo y menos errores dan más recompensa.");
+  const stage = modal.querySelector(".mini-game-stage");
+  const status = modal.querySelector(".mini-game-status");
+  const icons = ["⚡", "🎯", "🚀", "🛡️"];
+  const deck = [...icons, ...icons].map((icon, i) => ({ icon, key: `${icon}-${i}` })).sort(() => Math.random() - 0.5);
+  let first = null;
+  let locked = false;
+  let matches = 0;
+  let errors = 0;
+  const startedAt = performance.now();
+  stage.innerHTML = `<div class="memory-board">${deck.map((card, index) => `<button type="button" class="memory-card" data-index="${index}" aria-label="Carta oculta">?</button>`).join("")}</div>`;
+  status.textContent = "Parejas: 0/4 · Errores: 0";
+  stage.addEventListener("click", async (event) => {
+    const button = event.target.closest(".memory-card");
+    if (!button || locked || button.classList.contains("is-found") || button === first) return;
+    const card = deck[Number(button.dataset.index)];
+    button.textContent = card.icon;
+    button.classList.add("is-open");
+    if (!first) { first = button; return; }
+    const firstCard = deck[Number(first.dataset.index)];
+    if (firstCard.icon === card.icon) {
+      first.classList.add("is-found");
+      button.classList.add("is-found");
+      first = null;
+      matches++;
+      status.textContent = `Parejas: ${matches}/4 · Errores: ${errors}`;
+      if (matches === 4) {
+        const durationMs = Math.round(performance.now() - startedAt);
+        const score = puntuacionMemory(durationMs, errors);
+        stage.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+        status.textContent = `Completado en ${(durationMs / 1000).toFixed(1)} s · ${score}/10`;
+        try {
+          await enviarResultadoMiniJuego({ game: "memory", sessionId, score, durationMs, errors, reactionMs: 0, falseStart: false }, status);
+        } catch (error) { status.textContent = error.message; }
+      }
+      return;
+    }
+    errors++;
+    locked = true;
+    status.textContent = `Parejas: ${matches}/4 · Errores: ${errors}`;
+    setTimeout(() => {
+      first.textContent = "?";
+      button.textContent = "?";
+      first.classList.remove("is-open");
+      button.classList.remove("is-open");
+      first = null;
+      locked = false;
+    }, 650);
+  });
+}
+
+function iniciarReflexGame(sessionId) {
+  const modal = crearModalMiniJuego("Reflex Game", "Espera a que las cinco luces se enciendan y pulsa solo cuando aparezca la señal verde.");
+  const stage = modal.querySelector(".mini-game-stage");
+  const status = modal.querySelector(".mini-game-status");
+  stage.innerHTML = `<div class="reflex-lights">${Array.from({ length: 5 }, () => '<span></span>').join("")}</div><button type="button" class="reflex-pad">ESPERA</button>`;
+  const pad = stage.querySelector(".reflex-pad");
+  const lights = [...stage.querySelectorAll(".reflex-lights span")];
+  let readyAt = 0;
+  let finished = false;
+  let sequenceTimer;
+  let greenTimer;
+  const startedAt = performance.now();
+  status.textContent = "Prepárate…";
+  lights.forEach((light, index) => {
+    sequenceTimer = setTimeout(() => light.classList.add("is-on"), 500 + index * 480);
+  });
+  greenTimer = setTimeout(() => {
+    lights.forEach((light) => light.classList.remove("is-on"));
+    lights.forEach((light) => light.classList.add("is-go"));
+    pad.textContent = "¡AHORA!";
+    pad.classList.add("is-go");
+    readyAt = performance.now();
+    status.textContent = "¡Pulsa!";
+  }, 500 + (5 * 480) + 900 + Math.floor(Math.random() * 1501));
+  pad.addEventListener("click", async () => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(sequenceTimer);
+    clearTimeout(greenTimer);
+    const falseStart = readyAt === 0;
+    const reactionMs = falseStart ? 0 : Math.round(performance.now() - readyAt);
+    const durationMs = Math.round(performance.now() - startedAt);
+    const score = puntuacionReflex(reactionMs, falseStart);
+    pad.disabled = true;
+    status.textContent = falseStart ? "Salida anticipada · 1/10" : `${reactionMs} ms · ${score}/10`;
+    try {
+      await enviarResultadoMiniJuego({ game: "reflex", sessionId, score, durationMs, errors: 0, reactionMs, falseStart }, status);
+    } catch (error) { status.textContent = error.message; }
+  });
+}
+
 let rotacion = 0;
 
 function crearEtiquetas(opciones) {
   const ruleta = document.querySelector(".ruleta");
+  if (!ruleta) return;
   ruleta.innerHTML = ""; // Limpia etiquetas anteriores
 
   const numSectores = opciones.length;
   const anguloPorSector = 360 / numSectores;
 
-  // Fondo visual en conic-gradient
-  ruleta.style.background = `conic-gradient(
-    #2e9e4d 0deg ${anguloPorSector}deg,
-    #1e7c3d ${anguloPorSector}deg ${2 * anguloPorSector}deg,
-    #2e9e4d ${2 * anguloPorSector}deg ${3 * anguloPorSector}deg,
-    #1e7c3d ${3 * anguloPorSector}deg ${4 * anguloPorSector}deg,
-    #2e9e4d ${4 * anguloPorSector}deg ${5 * anguloPorSector}deg,
-    #1e7c3d ${5 * anguloPorSector}deg 360deg
-  )`;
+  const colores = ["#203b2a", "#2c9c52", "#35443a", "#87d233", "#26693f", "#4faf4b", "#473c27", "#1f7d45", "#57645c"];
+  const stops = opciones.map((_, i) => `${colores[i % colores.length]} ${i * anguloPorSector}deg ${(i + 1) * anguloPorSector}deg`);
+  ruleta.style.background = `conic-gradient(${stops.join(",")})`;
 
   opciones.forEach((texto, i) => {
     const label = document.createElement("div");
     label.className = "etiqueta-sector";
     label.textContent = texto;
 
-    const angulo = i * anguloPorSector;
-    label.style.transform = `rotate(${angulo}deg) translate(130px) rotate(-${angulo}deg)`;
+    const angulo = (i + 0.5) * anguloPorSector;
+    label.style.transform = `rotate(${angulo - 90}deg) translate(112px) rotate(${90 - angulo}deg)`;
 
     ruleta.appendChild(label);
   });
@@ -4587,6 +4938,7 @@ listenerMouseDown = mapaUsuario.addListener("mousedown", (e) => {
     overlayArrow = null;
   }
 
+  const ArrowOverlay = getArrowOverlayClass();
   overlayArrow = new ArrowOverlay(skinLatLng, 0);
   overlayArrow.setMap(mapaUsuario);
 });
@@ -4766,7 +5118,13 @@ listenerMouseUp = mapaUsuario.addListener("mouseup", (e) => {
 
   actualizarUI();
 
-class ArrowOverlay extends google.maps.OverlayView {
+let arrowOverlayClass = null;
+function getArrowOverlayClass() {
+  if (arrowOverlayClass) return arrowOverlayClass;
+  if (!window.google?.maps?.OverlayView) {
+    throw new Error("Google Maps todavía no está disponible");
+  }
+  arrowOverlayClass = class ArrowOverlay extends google.maps.OverlayView {
   constructor(position, angle) {
     super();
     this.position = position;
@@ -4816,6 +5174,8 @@ class ArrowOverlay extends google.maps.OverlayView {
     this.position = position;
     this.draw();
   }
+  };
+  return arrowOverlayClass;
 }
 
   // 🌍 Visibilidad en el mapa: botón "Hacerme visible"
@@ -4963,17 +5323,23 @@ function detenerCompartirUbicacion() {
 async function renderMisSkinsCliente() {
   const contenedor = document.getElementById("misSkinsCliente");
   if (!contenedor) return;
+  const currentUserId = commercialId(user) || userId;
+  if (!currentUserId) {
+    contenedor.innerHTML = "<p>No se pudo identificar tu cuenta.</p>";
+    return;
+  }
 
   contenedor.innerHTML = "<p>Cargando tus skins...</p>";
 
   let misSkins = [];
 
   try {
-    // 1) Trae el usuario con skins pobladas
-    const res = await fetch(`/api/users/${user._id}`);
+    // Misma ruta que consume Flutter: colección poblada y persistida en User.
+    const res = await fetch(`/api/users/${currentUserId}/skins`);
     const data = await res.json();
 
-    const compradas = Array.isArray(data.skinsCompradas) ? data.skinsCompradas : [];
+    if (!res.ok) throw new Error(data.error || "No se pudieron cargar tus skins");
+    const compradas = Array.isArray(data.skins) ? data.skins : [];
 
     if (compradas.length === 0) {
       contenedor.innerHTML = "<p>No has comprado ninguna skin todavía.</p>";

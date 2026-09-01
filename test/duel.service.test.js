@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { publicDuelStats, shuffledCultureQuestions } = require('../api/services/duel.service');
+const { normalizeWager } = require('../api/services/duelWagerService');
 
 test('duel rank thresholds depend only on accumulated wins', () => {
   assert.equal(publicDuelStats({ wins: 0, losses: 0 }).rank, null);
@@ -21,4 +22,12 @@ test('culture duel question payload can hide authoritative answers', () => {
   assert.ok(questions.length >= 20);
   assert.equal(new Set(questions.map((question) => question.id)).size, questions.length);
   assert.ok(questions.every((question) => Number.isInteger(question.correctIndex)));
+});
+
+test('duel wager only accepts safe non-negative integer Stepcoins', () => {
+  assert.equal(normalizeWager(undefined), 0);
+  assert.equal(normalizeWager(1000), 1000);
+  assert.throws(() => normalizeWager(-1), /no válida/);
+  assert.throws(() => normalizeWager(10.5), /no válida/);
+  assert.throws(() => normalizeWager(Number.MAX_SAFE_INTEGER), /no válida/);
 });

@@ -15,8 +15,8 @@ test('the dashboard exposes direct multi-location map subscriptions', () => {
 
   assert.match(server, /express\.static\(path\.join\(__dirname,\s*['"]public['"]\)\)/);
   assert.match(server, /app\.use\(['"]\/api\/commercial['"]/);
-  assert.match(html, /<link rel="stylesheet" href="css\/dashboard\.css\?v=commerce-proximity-home-1" \/>/);
-  assert.match(html, /<script src="js\/dashboard\.js\?v=commerce-proximity-home-1"><\/script>/);
+  assert.match(html, /<link rel="stylesheet" href="css\/dashboard\.css\?v=[^"]+" \/>/);
+  assert.match(html, /<script src="js\/dashboard\.js\?v=[^"]+"><\/script>/);
 
   for (const id of [
     'commerceHome',

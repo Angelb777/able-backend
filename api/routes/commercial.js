@@ -559,8 +559,12 @@ router.post('/requests', ...commerceOnly, uploadFields, async (req, res) => {
     if (type === 'reward') {
       const rewardType = subtype === 'prize' ? 'premio' : 'descuento';
       const stepcoins = Number(formData.stepcoins);
+      const unidades = Number(formData.unidades);
       if (!Number.isFinite(stepcoins) || stepcoins < 0) {
         return res.status(400).json({ error: 'Stepcoins no válidos' });
+      }
+      if (rewardType === 'premio' && (!Number.isInteger(unidades) || unidades < 0)) {
+        return res.status(400).json({ error: 'Unidades no validas' });
       }
       if (rewardType === 'descuento') {
         const percentage = Number(formData.percentage || 0);
@@ -574,6 +578,7 @@ router.post('/requests', ...commerceOnly, uploadFields, async (req, res) => {
         }
       }
       formData.rewardType = rewardType;
+      formData.unidades = rewardType === 'premio' ? unidades : null;
     }
 
     const materials = await storeFiles(req.files?.materials, 'commercial/materials');
@@ -598,6 +603,7 @@ router.post('/requests', ...commerceOnly, uploadFields, async (req, res) => {
         porcentaje: formData.rewardType === 'descuento' ? Number(formData.percentage || 0) : undefined,
         cantidadEuros: formData.rewardType === 'descuento' ? Number(formData.amountEuros || 0) : undefined,
         stepcoins: Number(formData.stepcoins),
+        unidades: formData.rewardType === 'premio' ? Number(formData.unidades) : null,
         imagenes: materials.filter((item) => item.mimeType.startsWith('image/')).map((item) => item.url),
         validado: false, creadoPorAdmin: false,
         commercialRequestId: request._id, publicationStatus: 'pending',

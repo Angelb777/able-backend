@@ -15,6 +15,7 @@ const { resolveBearerToken } = require('../api/services/authIdentity');
 const clanMembershipCache = require('../api/services/clanMembershipCache');
 const bountyService = require('../api/services/bountyService');
 const socialRealtime = require('../api/services/socialRealtime');
+const duelWagerService = require('../api/services/duelWagerService');
 const {
   publicDuelStats,
   shuffledCultureQuestions,
@@ -62,6 +63,17 @@ module.exports = function(io, dependencies = {}) {
           claimForKill: async () => ({ paid: 0, claimed: 0 }),
         }
       : bountyService);
+  const DuelWagerService = dependencies.DuelWagerService ||
+    (hasInjectedDependencies
+      ? {
+          normalizeWager: (amount) => Math.max(0, Number(amount) || 0),
+          maxWagerFor: async () => 0,
+          assertWagerAvailable: async (_, amount) => ({ amount: Math.max(0, Number(amount) || 0) }),
+          lockWager: async ({ amount }) => ({ amount, potTotal: amount * 2, balances: new Map() }),
+          refundWager: async () => ({ balances: new Map() }),
+          payPot: async ({ amount }) => ({ potTotal: amount * 2, winnerBalance: 0 }),
+        }
+      : duelWagerService);
   const nsp = io.of('/pvp');
   const requireSocketAuth = dependencies.requireAuth ?? !hasInjectedDependencies;
   const instanceId =
@@ -315,6 +327,13 @@ module.exports = function(io, dependencies = {}) {
     const winnerId = duelOpponent(session, loserId);
     if (!winnerId) return;
     try {
+      const payout = await DuelWagerService.payPot({
+        duelId: session.id,
+        winnerUserId: winnerId,
+        loserUserId: loserId,
+        amount: session.wagerPerPlayer || 0,
+        reason,
+      });
       await Promise.all([
         UserModel.updateOne({ _id: winnerId }, { $inc: { 'duelStats.wins': 1 } }),
         UserModel.updateOne({ _id: loserId }, { $inc: { 'duelStats.losses': 1 } }),
@@ -336,8 +355,18 @@ module.exports = function(io, dependencies = {}) {
         winnerUserId: winnerId,
         loserUserId: loserId,
         reason,
+        wagerPerPlayer: session.wagerPerPlayer || 0,
+        potTotal: payout.potTotal || 0,
         stats: { [winnerId]: winnerStats, [loserId]: loserStats },
       };
+      if ((session.wagerPerPlayer || 0) > 0) {
+        emitToUser(winnerId, 'duel:wager-balance', {
+          duelId: session.id,
+          balance: payout.winnerBalance,
+          delta: payout.potTotal,
+          reason: 'pot-paid',
+        });
+      }
       emitToUser(winnerId, 'duel:finished', payload);
       emitToUser(loserId, 'duel:finished', payload);
     } catch (error) {
@@ -2593,21 +2622,30 @@ module.exports = function(io, dependencies = {}) {
       }
     });
 
-    socket.on('duel:profile', (payload, cb) => {
+    socket.on('duel:profile', async (payload, cb) => {
       const requester = players.get(socket.id);
       const target = primaryPlayer(payload?.targetUserId);
       if (!requester || !target) {
         return cb?.({ ok: false, error: 'Jugador no disponible' });
       }
-      cb?.({
-        ok: true,
-        userId: target.userId,
-        nickname: target.nickname,
-        ...duelPresence(target),
-      });
+      try {
+        const maxWager = await DuelWagerService.maxWagerFor([
+          requester.userId,
+          target.userId,
+        ]);
+        cb?.({
+          ok: true,
+          userId: target.userId,
+          nickname: target.nickname,
+          maxWager,
+          ...duelPresence(target),
+        });
+      } catch (_) {
+        cb?.({ ok: false, error: 'No se pudo consultar el saldo disponible' });
+      }
     });
 
-    socket.on('duel:challenge', (payload, cb) => {
+    socket.on('duel:challenge', async (payload, cb) => {
       const challenger = players.get(socket.id);
       const target = primaryPlayer(payload?.targetUserId);
       if (!challenger || primarySocketByUser.get(challenger.userId) !== socket.id) {
@@ -2628,6 +2666,17 @@ module.exports = function(io, dependencies = {}) {
           ));
       if (usersBusy) return cb?.({ ok: false, error: 'Uno de los jugadores ya está ocupado' });
 
+      let wagerPerPlayer;
+      try {
+        const wager = await DuelWagerService.assertWagerAvailable(
+          [challenger.userId, target.userId],
+          payload?.wagerPerPlayer,
+        );
+        wagerPerPlayer = wager.amount;
+      } catch (error) {
+        return cb?.({ ok: false, error: error.message });
+      }
+
       const invite = {
         id: newDuelId('invite'),
         challengerUserId: challenger.userId,
@@ -2635,6 +2684,7 @@ module.exports = function(io, dependencies = {}) {
         players: [challenger.userId, target.userId],
         status: 'pending',
         expiresAt: Date.now() + 20000,
+        wagerPerPlayer,
       };
       duelInvites.set(invite.id, invite);
       const publicInvite = {
@@ -2643,6 +2693,8 @@ module.exports = function(io, dependencies = {}) {
         challengerNickname: challenger.nickname,
         targetUserId: target.userId,
         expiresAt: invite.expiresAt,
+        wagerPerPlayer,
+        potTotal: wagerPerPlayer * 2,
       };
       emitToUser(target.userId, 'duel:challenge', publicInvite);
       cb?.({ ok: true, ...publicInvite });
@@ -2656,7 +2708,7 @@ module.exports = function(io, dependencies = {}) {
       timer.unref?.();
     });
 
-    socket.on('duel:respond', (payload, cb) => {
+    socket.on('duel:respond', async (payload, cb) => {
       const responder = players.get(socket.id);
       const invite = duelInvites.get(String(payload?.inviteId || ''));
       if (!responder || !invite || invite.targetUserId !== responder.userId ||
@@ -2675,50 +2727,114 @@ module.exports = function(io, dependencies = {}) {
         return cb?.({ ok: false, error: 'El rival ya no está disponible' });
       }
 
-      const game = duelGameChooser();
-      const questions = game === 'culture' ? shuffledCultureQuestions() : [];
-      const startsAt = Date.now() + duelStartDelayMs;
-      const releaseAt = game === 'reflex'
-        ? startsAt + (reflexSequenceDelayMs ??
-          REFLEX_LIGHT_COUNT * REFLEX_LIGHT_INTERVAL_MS + reflexDelay())
-        : null;
-      const session = {
-        id: newDuelId(),
-        players: [...invite.players],
-        game,
-        status: 'active',
-        seed: Math.floor(Math.random() * 0x7fffffff),
-        questions,
-        questionIndexByUser: new Map(invite.players.map((userId) => [userId, 0])),
-        startedAt: Date.now(),
-        startsAt,
-        releaseAt,
-        reflexResults: new Map(),
-      };
-      if (game === 'reflex') {
-        session.resultTimer = setTimeout(() => {
-          if (session.status !== 'active') return;
-          const missing = session.players.find((userId) => !session.reflexResults.has(userId));
-          if (missing) settleDuel(session, missing, 'reaction-timeout');
-        }, Math.max(1, releaseAt + 10000 - Date.now()));
-      }
-      duelSessions.set(session.id, session);
-      for (const userId of session.players) activeDuelByUser.set(userId, session.id);
-      for (const userId of session.players) {
-        const opponent = primaryPlayer(duelOpponent(session, userId));
-        emitToUser(userId, 'duel:started', {
-          duelId: session.id,
-          game,
-          seed: session.seed,
-          opponentUserId: opponent?.userId,
-          opponentNickname: opponent?.nickname || 'Rival',
-          questions: questions.map(({ id, question, options }) => ({ id, question, options })),
-          startedAt: session.startedAt,
-          startsAt: session.startsAt,
-          releaseAt: session.releaseAt,
+      const duelId = newDuelId();
+      let wagerLock;
+      let startedSession;
+      try {
+        wagerLock = await DuelWagerService.lockWager({
+          inviteId: invite.id,
+          duelId,
+          userIds: invite.players,
+          amount: invite.wagerPerPlayer,
         });
+
+        const game = duelGameChooser();
+        const questions = game === 'culture' ? shuffledCultureQuestions() : [];
+        const startsAt = Date.now() + duelStartDelayMs;
+        const releaseAt = game === 'reflex'
+          ? startsAt + (reflexSequenceDelayMs ??
+            REFLEX_LIGHT_COUNT * REFLEX_LIGHT_INTERVAL_MS + reflexDelay())
+          : null;
+        const session = {
+          id: duelId,
+          inviteId: invite.id,
+          players: [...invite.players],
+          game,
+          status: 'active',
+          wagerPerPlayer: wagerLock.amount,
+          potTotal: wagerLock.potTotal,
+          seed: Math.floor(Math.random() * 0x7fffffff),
+          questions,
+          questionIndexByUser: new Map(invite.players.map((userId) => [userId, 0])),
+          startedAt: Date.now(),
+          startsAt,
+          releaseAt,
+          reflexResults: new Map(),
+        };
+        startedSession = session;
+        if (game === 'reflex') {
+          session.resultTimer = setTimeout(() => {
+            if (session.status !== 'active') return;
+            const missing = session.players.find((userId) => !session.reflexResults.has(userId));
+            if (missing) settleDuel(session, missing, 'reaction-timeout');
+          }, Math.max(1, releaseAt + 10000 - Date.now()));
+        }
+        duelSessions.set(session.id, session);
+        for (const userId of session.players) activeDuelByUser.set(userId, session.id);
+        for (const userId of session.players) {
+          const balance = wagerLock.balances.get(String(userId));
+          if (balance != null && wagerLock.amount > 0) {
+            emitToUser(userId, 'duel:wager-balance', {
+              duelId: session.id,
+              balance,
+              delta: -wagerLock.amount,
+              reason: 'stake-locked',
+            });
+          }
+          const opponent = primaryPlayer(duelOpponent(session, userId));
+          emitToUser(userId, 'duel:started', {
+            duelId: session.id,
+            game,
+            seed: session.seed,
+            wagerPerPlayer: session.wagerPerPlayer,
+            potTotal: session.potTotal,
+            opponentUserId: opponent?.userId,
+            opponentNickname: opponent?.nickname || 'Rival',
+            questions: questions.map(({ id, question, options }) => ({ id, question, options })),
+            startedAt: session.startedAt,
+            startsAt: session.startsAt,
+            releaseAt: session.releaseAt,
+          });
+        }
+        cb?.({ ok: true, accepted: true, duelId: session.id });
+      } catch (error) {
+        if (startedSession) {
+          if (startedSession.resultTimer) clearTimeout(startedSession.resultTimer);
+          duelSessions.delete(startedSession.id);
+          for (const userId of startedSession.players) activeDuelByUser.delete(userId);
+        }
+        if (wagerLock) {
+          try {
+            const refund = await DuelWagerService.refundWager({
+              inviteId: invite.id,
+              duelId,
+              userIds: invite.players,
+              amount: invite.wagerPerPlayer,
+              reason: 'start-error',
+            });
+            for (const userId of invite.players) {
+              const balance = refund.balances.get(String(userId));
+              if (balance != null) emitToUser(userId, 'duel:wager-balance', {
+                duelId,
+                balance,
+                delta: invite.wagerPerPlayer,
+                reason: 'start-refund',
+              });
+            }
+          } catch (refundError) {
+            console.error(`[PVP][${instanceId}] duel wager refund error`, refundError);
+          }
+        }
+        emitToUser(invite.challengerUserId, 'duel:cancelled', {
+          inviteId: invite.id,
+          error: error.message || 'No se pudo iniciar el duelo',
+        });
+        emitToUser(invite.targetUserId, 'duel:cancelled', {
+          inviteId: invite.id,
+          error: error.message || 'No se pudo iniciar el duelo',
+        });
+        cb?.({ ok: false, error: error.message || 'No se pudo iniciar el duelo' });
       }
-      cb?.({ ok: true, accepted: true, duelId: session.id });
     });
 
     socket.on('duel:answer', (payload, cb) => {

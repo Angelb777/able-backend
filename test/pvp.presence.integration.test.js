@@ -122,6 +122,74 @@ test('duel request is proximity-gated and accepted session is server authoritati
   b.disconnect();
 });
 
+test('duel wager is advertised, locked before start and paid once to the winner', async (t) => {
+  const calls = { checked: [], locked: [], paid: [] };
+  const DuelWagerService = {
+    maxWagerFor: async () => 800,
+    assertWagerAvailable: async (userIds, amount) => {
+      calls.checked.push({ userIds, amount });
+      return { amount };
+    },
+    lockWager: async (input) => {
+      calls.locked.push(input);
+      return {
+        amount: input.amount,
+        potTotal: input.amount * 2,
+        balances: new Map(input.userIds.map((id) => [id, 600])),
+      };
+    },
+    refundWager: async () => ({ balances: new Map() }),
+    payPot: async (input) => {
+      calls.paid.push(input);
+      return { potTotal: input.amount * 2, winnerBalance: 1400 };
+    },
+  };
+  const server = await startServer(40, {
+    chooseDuelGame: () => 'space',
+    DuelWagerService,
+  });
+  t.after(() => server.close());
+  const a = await connect(server.url);
+  const b = await connect(server.url);
+  await hello(a, 'wager-a');
+  await hello(b, 'wager-b');
+
+  const incoming = once(b, 'duel:challenge');
+  const challenge = await ack(a, 'duel:challenge', {
+    targetUserId: 'wager-b', wagerPerPlayer: 400,
+  });
+  assert.equal(challenge.ok, true);
+  const invite = await incoming;
+  assert.equal(invite.wagerPerPlayer, 400);
+  assert.equal(invite.potTotal, 800);
+
+  const balanceA = once(a, 'duel:wager-balance');
+  const balanceB = once(b, 'duel:wager-balance');
+  const startedA = once(a, 'duel:started');
+  const startedB = once(b, 'duel:started');
+  await ack(b, 'duel:respond', { inviteId: invite.inviteId, accept: true });
+  const [lockedA, lockedB, sessionA, sessionB] = await Promise.all([
+    balanceA, balanceB, startedA, startedB,
+  ]);
+  assert.equal(lockedA.balance, 600);
+  assert.equal(lockedB.balance, 600);
+  assert.equal(sessionA.wagerPerPlayer, 400);
+  assert.equal(sessionB.potTotal, 800);
+  assert.equal(calls.locked.length, 1);
+
+  const winnerBalance = once(b, 'duel:wager-balance');
+  const finished = once(b, 'duel:finished');
+  await ack(a, 'duel:forfeit', { duelId: sessionA.duelId });
+  const [paidBalance, result] = await Promise.all([winnerBalance, finished]);
+  assert.equal(paidBalance.balance, 1400);
+  assert.equal(result.winnerUserId, 'wager-b');
+  assert.equal(result.potTotal, 800);
+  assert.equal(calls.paid.length, 1);
+  assert.equal(calls.paid[0].winnerUserId, 'wager-b');
+  a.disconnect();
+  b.disconnect();
+});
+
 test('all four duel games share server selection, seed, timing and settlement', async () => {
   for (const game of ['culture', 'space', 'memory', 'reflex']) {
     const server = await startServer(40, {

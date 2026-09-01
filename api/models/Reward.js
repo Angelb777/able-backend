@@ -9,6 +9,9 @@ const rewardSchema = new mongoose.Schema({
   porcentaje: Number, // si es descuento %
   cantidadEuros: Number, // si es descuento en €
   stepcoins: { type: Number, required: true },
+  // null mantiene sin limite los rewards antiguos; los premios nuevos
+  // siempre guardan un numero entero de unidades disponibles.
+  unidades: { type: Number, min: 0, default: null },
   imagenes: [String], // rutas locales o URLs
   validado: { type: Boolean, default: false },
   fechaCreacion: { type: Date, default: Date.now },

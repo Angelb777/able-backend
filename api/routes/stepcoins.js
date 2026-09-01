@@ -16,11 +16,11 @@ const {
   reflexScore,
 } = require('../services/miniGameConfig');
 
-function rouletteOutcome() {
-  const total = ROULETTE_OPTIONS.reduce((sum, option) => sum + option[1], 0);
+function rouletteOutcome(options = ROULETTE_OPTIONS) {
+  const total = options.reduce((sum, option) => sum + option[1], 0);
   const draw = randomInt(total);
   let cumulative = 0;
-  for (const [label, weight] of ROULETTE_OPTIONS) {
+  for (const [label, weight] of options) {
     cumulative += weight;
     if (draw < cumulative) return label;
   }
@@ -233,7 +233,12 @@ router.post("/ruleta", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "Saldo insuficiente" });
     }
 
-    let applied = rouletteOutcome();
+    // Flutter conserva los cuatro juegos. La web declara su superficie para
+    // no recibir Nave Espacial mientras esa experiencia no exista allí.
+    const rouletteOptions = req.body?.clientSurface === 'web'
+      ? ROULETTE_OPTIONS.filter(([label]) => label !== MINI_GAMES.space.rouletteLabel)
+      : ROULETTE_OPTIONS;
+    let applied = rouletteOutcome(rouletteOptions);
 
     // Regla anti-pérdida: si no llega a 30k, convertir a "Nada"
     if (applied === "Pierde 20000 Stepcoins" && saldoInicial < MIN_BALANCE_BIG_LOSS) {

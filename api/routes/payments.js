@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const Payment = require("../models/Payment");
+const StepcoinTransaction = require("../models/StepcoinTransaction");
 const User = require("../models/User");
 const mongoose = require("mongoose");
 const {
@@ -10,6 +11,17 @@ const {
 } = require('../middlewares/authMiddleware');
 
 const adminOnly = [verifyToken, checkRole(['admin'])];
+
+function paymentEntry(payment) {
+  return { ...payment, entryType: 'money', stepcoinsDelta: Number(payment.stepcoinsDelta || 0) };
+}
+
+async function monetaryHistory(userId) {
+  const paymentFilter = userId ? { userId } : {};
+  const payments = await Payment.find(paymentFilter).lean();
+  return payments.map(paymentEntry)
+    .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+}
 
 // Catálogo autoritativo del checkout provisional. El cliente solo envía la
 // cantidad elegida; nunca decide el importe monetario que se registra.
@@ -94,6 +106,7 @@ router.post('/stepcoins/checkout', verifyToken, checkRole(['cliente']), async (r
         userId,
         nombre: user.nombre || user.nickname || user.email || 'Usuario',
         cantidad: price,
+        stepcoinsDelta: cantidad,
         motivo: `Compra simulada de ${cantidad} Stepcoins`,
         currency: 'EUR',
         fecha: new Date(),
@@ -101,6 +114,14 @@ router.post('/stepcoins/checkout', verifyToken, checkRole(['cliente']), async (r
         verifiedAt: new Date(),
         source: 'platform_checkout',
         providerReference,
+      }], { session });
+      await StepcoinTransaction.create([{
+        userId,
+        cantidad,
+        tipo: 'compra',
+        descripcion: `Compra de ${cantidad} Stepcoins`,
+        operationKey: `stepcoin-pack:${providerReference}`,
+        metadata: { paymentId: payment._id, providerReference, price, currency: 'EUR' },
       }], { session });
     });
 
@@ -131,8 +152,7 @@ router.post('/stepcoins/checkout', verifyToken, checkRole(['cliente']), async (r
 // Obtener pagos
 router.get("/", ...adminOnly, async (req, res) => {
   try {
-    const pagos = await Payment.find().sort({ fecha: -1 }); // ⬅️ usamos "fecha"
-    res.json(pagos);
+    res.json(await monetaryHistory());
   } catch (err) {
     console.error("❌ Error al obtener pagos:", err);
     res.status(500).json({ error: "Error interno" });
@@ -148,8 +168,7 @@ router.get("/:userId", verifyToken, requireSelfOrAdmin('userId'), async (req, re
   }
 
   try {
-    const pagos = await Payment.find({ userId: new mongoose.Types.ObjectId(userId) }).sort({ fecha: -1 });
-    res.json(pagos);
+    res.json(await monetaryHistory(new mongoose.Types.ObjectId(userId)));
   } catch (err) {
     console.error("❌ Error al obtener pagos del cliente:", err);
     res.status(500).json({ error: "Error interno del servidor" });

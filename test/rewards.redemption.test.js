@@ -102,6 +102,7 @@ test('the Flutter catalog honors the order chosen by the superadmin', async (t) 
     },
     {
       _id: 'first', titulo: 'Primero', validado: true, ordenCatalogo: 0,
+      unidades: 5,
       fechaCreacion: new Date('2026-08-19T10:00:00Z'), imagenes: [],
     },
   ];
@@ -123,4 +124,17 @@ test('the Flutter catalog honors the order chosen by the superadmin', async (t) 
   assert.deepEqual(catalog.map((reward) => reward.titulo), [
     'Primero', 'Segundo', 'Legacy',
   ]);
+  assert.equal(catalog[0].unidades, 5);
+});
+
+test('reward stock only accepts non-negative quantities', () => {
+  const invalid = new Reward({
+    tipo: 'premio', titulo: 'Bici', stepcoins: 1000, unidades: -1,
+  });
+  assert.ok(invalid.validateSync()?.errors.unidades);
+
+  const valid = new Reward({
+    tipo: 'premio', titulo: 'Bici', stepcoins: 1000, unidades: 5,
+  });
+  assert.equal(valid.validateSync(), undefined);
 });
