@@ -152,6 +152,35 @@ function bindCommercialActions() {
   document.documentElement.dataset.commercialActionsBound = "true";
 }
 
+function bindRewardManagementActions() {
+  if (document.documentElement.dataset.rewardManagementActionsBound === "true") return;
+  document.addEventListener("click", async (event) => {
+    const button = event.target?.closest?.("button[data-reward-management-action]");
+    if (!button) return;
+
+    const action = button.dataset.rewardManagementAction;
+    const id = button.dataset.rewardId || "";
+    if (!id) return;
+
+    event.preventDefault();
+    button.disabled = true;
+    try {
+      if (action === "move") {
+        await moverRewardCatalogo(id, Number(button.dataset.direction));
+      } else if (action === "edit-units") {
+        await editarUnidadesReward(id, Number(button.dataset.currentUnits));
+      } else if (action === "delete") {
+        await eliminarReward(id);
+      } else if (action === "validate") {
+        await validarReward(id);
+      }
+    } finally {
+      if (button.isConnected) button.disabled = false;
+    }
+  });
+  document.documentElement.dataset.rewardManagementActionsBound = "true";
+}
+
 function commercialEscape(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -1060,6 +1089,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   bindGameManagementActions();
   bindUserManagementActions();
   bindCommercialActions();
+  bindRewardManagementActions();
   bindUserDashboardActions();
   try {
     const sessionResponse = await fetch('/api/auth/me');
@@ -2176,11 +2206,11 @@ async function cargarMisRewards() {
         ${(r.imagenes || []).map(img => `<img src="${commercialEscape(img)}" width="100" style="margin:5px;">`).join("")}
         <br>
         ${role === "admin" && publicado ? `<div class="catalog-order-actions">
-          <button type="button" onclick="moverRewardCatalogo('${r._id}', -1)" ${posicion === 0 ? "disabled" : ""}>&#8593; Subir</button>
-          <button type="button" onclick="moverRewardCatalogo('${r._id}', 1)" ${posicion === publicados.length - 1 ? "disabled" : ""}>&#8595; Bajar</button>
+          <button type="button" data-reward-management-action="move" data-reward-id="${commercialEscape(r._id)}" data-direction="-1" ${posicion === 0 ? "disabled" : ""}>&#8593; Subir</button>
+          <button type="button" data-reward-management-action="move" data-reward-id="${commercialEscape(r._id)}" data-direction="1" ${posicion === publicados.length - 1 ? "disabled" : ""}>&#8595; Bajar</button>
         </div>` : ""}
-        ${r.tipo === 'premio' ? `<button type="button" onclick="editarUnidadesReward('${r._id}', ${r.unidades == null ? 0 : r.unidades})">Editar unidades</button>` : ""}
-        <button onclick="eliminarReward('${r._id}')">🗑️ Eliminar</button>
+        ${r.tipo === 'premio' ? `<button type="button" data-reward-management-action="edit-units" data-reward-id="${commercialEscape(r._id)}" data-current-units="${r.unidades == null ? 0 : Number(r.unidades)}">Editar unidades</button>` : ""}
+        <button type="button" data-reward-management-action="delete" data-reward-id="${commercialEscape(r._id)}">🗑️ Eliminar</button>
       </div>
     `; }).join("");
   } catch (err) {
@@ -2276,8 +2306,8 @@ async function renderValidarRewards() {
         <p>📍 ${commercialEscape(r.direccion)}</p>
         ${r.imagenes.map(img => `<img src="${commercialEscape(img)}" width="100" style="margin:5px;">`).join("")}
         <br>
-        <button onclick="validarReward('${r._id}')">✅ Validar</button>
-        <button onclick="eliminarReward('${r._id}')">🗑️ Eliminar</button>
+        <button type="button" data-reward-management-action="validate" data-reward-id="${commercialEscape(r._id)}">✅ Validar</button>
+        <button type="button" data-reward-management-action="delete" data-reward-id="${commercialEscape(r._id)}">🗑️ Eliminar</button>
       </div>
     `).join("");
   } catch (err) {
