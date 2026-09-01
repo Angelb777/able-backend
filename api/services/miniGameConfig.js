@@ -9,12 +9,13 @@ const MINI_GAMES = Object.freeze({
 const MINI_GAME_IDS = Object.freeze(Object.keys(MINI_GAMES));
 const LEGACY_LEVEL_REWARD_GAMES = Object.freeze(['culture', 'space']);
 
-// Preserva el peso combinado original de minijuegos: 2.987 / 10.000.
+// Cartas baja del 15 % al 12 % y esos 300 puntos se reparten por igual
+// entre los cuatro minijuegos. El total se mantiene en 10.000.
 const ROULETTE_OPTIONS = Object.freeze([
   ['Tirar otra vez', 3000], ['Nada', 2500],
-  [MINI_GAMES.culture.rouletteLabel, 1200], ['Carta aleatoria', 1500],
-  [MINI_GAMES.space.rouletteLabel, 600], [MINI_GAMES.memory.rouletteLabel, 600],
-  [MINI_GAMES.reflex.rouletteLabel, 587],
+  [MINI_GAMES.culture.rouletteLabel, 1275], ['Carta aleatoria', 1200],
+  [MINI_GAMES.space.rouletteLabel, 675], [MINI_GAMES.memory.rouletteLabel, 675],
+  [MINI_GAMES.reflex.rouletteLabel, 662],
   ['Gana 20000 Stepcoins', 5], ['Pierde 20000 Stepcoins', 8],
 ]);
 

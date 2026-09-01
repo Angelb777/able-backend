@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  MINI_GAMES,
   MINI_GAME_IDS,
   ROULETTE_OPTIONS,
   chooseDuelGame,
@@ -11,6 +12,10 @@ const User = require('../api/models/User');
 
 test('roulette preserves total weight and includes all four minigames', () => {
   assert.equal(ROULETTE_OPTIONS.reduce((sum, entry) => sum + entry[1], 0), 10000);
+  assert.equal(ROULETTE_OPTIONS.find(([label]) => label === 'Carta aleatoria')[1], 1200);
+  assert.equal(ROULETTE_OPTIONS
+    .filter(([label]) => Object.values(MINI_GAMES).some((game) => game.rouletteLabel === label))
+    .reduce((sum, entry) => sum + entry[1], 0), 3287);
   assert.deepEqual(MINI_GAME_IDS, ['culture', 'space', 'memory', 'reflex']);
   assert.deepEqual([0, .25, .5, .999].map((value) => chooseDuelGame(() => value)),
     MINI_GAME_IDS);
