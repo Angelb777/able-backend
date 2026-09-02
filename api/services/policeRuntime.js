@@ -1,5 +1,3 @@
-const { createPoliceDirections } = require('./policeDirections');
-
 const MAX_STARS = 5;
 const PROJECTILE_TICK_MS = 50;
 
@@ -29,7 +27,7 @@ function createPoliceRuntime({
   let configLoadedAt = 0;
   let lastLogicAt = 0;
   let serial = 0;
-  const directions = routeProvider || createPoliceDirections();
+  const directions = routeProvider || { getRoute: async () => [] };
 
   const defaults = () => PoliceConfigModel?.defaults?.() || ({ enabled: false, stars: [], units: {} });
   const loadConfig = async (force = false) => {
@@ -329,7 +327,7 @@ function createPoliceRuntime({
       // An arbitrary geographic point can fall inside a building, water or an
       // otherwise unreachable walking area. Do not retry that same point
       // forever: the next patrol tick will choose a fresh destination, while
-      // routeRetryAt keeps failures from hammering the Directions service.
+      // routeRetryAt keeps failures from hammering the ground-routing service.
       incident.ambientPatrolTarget = null;
     }
   };

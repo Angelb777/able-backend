@@ -3097,7 +3097,7 @@ function renderPoliceSavedConfig(config) {
   ).join("");
   target.innerHTML = `<section style="border:1px solid #777;padding:12px;margin:12px 0">
     <h3>Configuración policial guardada</h3>
-    ${config.routingConfigured ? "" : '<p style="color:#a00"><strong>Directions no configurado:</strong> las unidades road no podrán calcular calles hasta definir GOOGLE_MAPS_SERVER_API_KEY en el servidor.</p>'}
+    ${config.routingConfigured ? "" : '<p style="color:#a00"><strong>Valhalla no configurado:</strong> las unidades road no podrán calcular calles hasta definir GROUND_ROUTING_PROVIDER=valhalla y VALHALLA_BASE_URL en el servidor.</p>'}
     <div style="display:flex;gap:10px;flex-wrap:wrap">${unitCards}</div>
     <div style="margin-top:10px">${waves}</div>
     <button type="button" data-action="edit-police-config" style="margin-top:10px">Editar esta configuración</button>

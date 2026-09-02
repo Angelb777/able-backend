@@ -2,7 +2,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const geo = require('../utils/geo');
 const { createPoliceRuntime } = require('../api/services/policeRuntime');
-const { createPoliceDirections, decodePolyline } = require('../api/services/policeDirections');
 
 const baseConfig = () => ({
   enabled: true, reuseRadiusMeters: 2000, maxActiveIncidents: 10,
@@ -355,18 +354,4 @@ test('ending the last pursuit restores only the initial ambient foot patrol', as
     [...incident.units.values()].map((unit) => unit.unitType),
     ['foot', 'foot'],
   );
-});
-
-test('Directions polyline decoding and cache avoid duplicate Google calls', async () => {
-  assert.deepEqual(decodePolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@'), [
-    { lat: 38.5, lng: -120.2 }, { lat: 40.7, lng: -120.95 }, { lat: 43.252, lng: -126.453 },
-  ]);
-  let calls = 0;
-  const provider = createPoliceDirections({ apiKey: 'test', fetchImpl: async () => {
-    calls += 1; return { ok: true, json: async () => ({ routes: [{ overview_polyline: {
-      points: '_p~iF~ps|U_ulLnnqC_mqNvxq`@' } }] }) };
-  } });
-  const from = { lat: 38.5, lng: -120.2 }; const to = { lat: 43.252, lng: -126.453 };
-  await provider.getRoute(from, to, 'driving'); await provider.getRoute(from, to, 'driving');
-  assert.equal(calls, 1); provider.clear();
 });

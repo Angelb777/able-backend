@@ -178,6 +178,7 @@ app.use('/api/clans', require('./api/routes/clans'));
 app.use('/api/social', require('./api/routes/social'));
 app.use('/api/ubicaciones', require('./api/routes/ubicaciones'));
 app.use('/api/mobility', require('./api/routes/mobility'));
+app.use('/api/google-maps', require('./api/routes/googleMaps'));
 app.use('/api/weather', require('./api/routes/weather'));
 app.use('/api/ufo', require('./api/routes/ufo'));
 app.use('/api/police', require('./api/routes/police'));

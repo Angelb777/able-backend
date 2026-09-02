@@ -22,16 +22,16 @@ Cada usuario conserva su propio nivel (0-5), secuencia y estado de escape.
 
 ## Movimiento
 
-- `road`: el servidor solicita una ruta real a Google Directions una sola vez,
+- `road`: el servidor solicita una ruta real a Valhalla sobre OpenStreetMap,
   recorre su polyline localmente y recalcula únicamente si el objetivo se mueve
   más que el umbral configurado o se agota la ruta. Peticiones iguales comparten
   caché e in-flight promise.
 - `air`: interpola directamente mediante distancia, bearing y velocidad, sin
   llamadas de ruta.
 
-Para `road` se requiere `GOOGLE_MAPS_SERVER_API_KEY` con Directions API
-habilitada y restricciones de servidor. Sin la clave, las unidades road se
-mantienen quietas de forma segura; nunca intentan inferir calles por colores.
+Para `road` se requiere `GROUND_ROUTING_PROVIDER=valhalla` y
+`VALHALLA_BASE_URL`. Si Valhalla no esta disponible, las unidades road se
+mantienen quietas de forma segura y no existe fallback automatico a Google.
 
 ## Eventos Socket.IO
 

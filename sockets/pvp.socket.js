@@ -9,7 +9,7 @@ const User = require('../api/models/User');
 const Ufo = require('../api/models/Ufo');
 const PoliceConfig = require('../api/models/PoliceConfig');
 const { createPoliceRuntime } = require('../api/services/policeRuntime');
-const { createPoliceDirections } = require('../api/services/policeDirections');
+const { createGroundRouteProvider } = require('../api/services/groundRouteProvider');
 const { createUnitRuntime } = require('../api/services/unitRuntime');
 const { resolveBearerToken } = require('../api/services/authIdentity');
 const clanMembershipCache = require('../api/services/clanMembershipCache');
@@ -540,7 +540,7 @@ module.exports = function(io, dependencies = {}) {
   };
 
   const sharedGroundRouteProvider = dependencies.UnitRouteProvider ||
-    dependencies.PoliceRouteProvider || createPoliceDirections();
+    dependencies.PoliceRouteProvider || createGroundRouteProvider();
 
   policeRuntime = createPoliceRuntime({
     nsp,

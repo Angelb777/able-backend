@@ -10,6 +10,7 @@
     "test:pvp:stress": "node --test test/pvp.presence.stress.test.js",
     "test:pvp:ufo-stress": "node --test test/pvp.ufo-authority.stress.test.js",
     "test:police": "node --test --test-concurrency=1 test/police.runtime.test.js test/pvp.police.integration.test.js",
+    "test:routing": "node --test --test-concurrency=1 test/ground-routing.test.js test/police.runtime.test.js test/unit.runtime.test.js test/pvp.police.integration.test.js test/pvp.unit.integration.test.js",
     "test:social": "node --test test/nickname.test.js test/nickname-migration.test.js test/auth-nickname.integration.test.js test/privacy.routes.integration.test.js test/clans.routes.integration.test.js test/taunts.routes.integration.test.js test/bounty.service.test.js test/pvp.socket.integration.test.js",
     "nicknames:audit": "node scripts/migrate-nicknames.js",
     "nicknames:migrate": "node scripts/migrate-nicknames.js --apply",

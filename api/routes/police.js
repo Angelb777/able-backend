@@ -55,7 +55,8 @@ router.get('/', ...adminOnly, async (_req, res) => {
     const stored = await PoliceConfig.findOne({ key: 'global' }).lean();
     const normalized = stored ? parseConfig({ config: JSON.stringify(stored) }) : PoliceConfig.defaults();
     return res.json({ ...normalized,
-      routingConfigured: Boolean(process.env.GOOGLE_MAPS_SERVER_API_KEY || process.env.GOOGLE_MAPS_API_KEY) });
+      routingConfigured: String(process.env.GROUND_ROUTING_PROVIDER || 'valhalla').toLowerCase() === 'valhalla' &&
+        Boolean(process.env.VALHALLA_BASE_URL) });
   } catch (_) {
     return res.status(500).json({ error: 'No se pudo cargar la configuración policial' });
   }
