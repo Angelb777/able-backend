@@ -399,6 +399,10 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.equal(spawnedBullet.clientShotId, 'shot-a-1');
   assert.equal(spawnedBullet.byUserId, '507f1f77bcf86cd799439011');
   assert.deepEqual(spawnedBullet.from, { lat: 41.656715, lng: -0.8785 });
+  assert.equal(typeof spawnedBullet.createdAt, 'number');
+  assert.equal(typeof spawnedBullet.startsAt, 'number');
+  assert.equal(typeof spawnedBullet.serverTimestamp, 'number');
+  assert.ok(spawnedBullet.startsAt >= spawnedBullet.createdAt);
   assert.deepEqual(spawnedBullet.explosionFrames, [
     'https://example.test/explosion.png',
   ]);
@@ -411,6 +415,9 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.deepEqual(explodedA, explodedB);
   assert.equal(explodedA.reason, 'hit');
   assert.equal(explodedA.hitUserId, '507f191e810c19729de860ea');
+  assert.equal(typeof explodedA.impactAt, 'number');
+  assert.equal(typeof explodedA.serverTimestamp, 'number');
+  assert.equal(explodedA.startsAt, spawnedBullet.startsAt);
 
   await new Promise((resolve) => setTimeout(resolve, 150));
   assert.equal(lifeEventsA, 1);

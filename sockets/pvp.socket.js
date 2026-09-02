@@ -615,6 +615,7 @@ module.exports = function(io, dependencies = {}) {
   };
 
   const emitBulletExplosion = (bulletId, bullet, reason, hit = {}) => {
+    const serverTimestamp = Date.now();
     nsp.to(bullet.zoneId).emit('bullet:explode', {
       bulletId,
       clientShotId: bullet.clientShotId,
@@ -630,6 +631,9 @@ module.exports = function(io, dependencies = {}) {
       explosionFrames: bullet.explosionFrames,
       explosionRenderType: bullet.explosionRenderType,
       explosionSpritesheet: bullet.explosionSpritesheet,
+      startsAt: bullet.startsAt,
+      impactAt: serverTimestamp,
+      serverTimestamp,
     });
   };
 
@@ -680,6 +684,7 @@ module.exports = function(io, dependencies = {}) {
   };
 
   const emitBulletImpact = (bulletId, bullet, hit = {}) => {
+    const serverTimestamp = Date.now();
     nsp.to(bullet.zoneId).emit('bullet:impact', {
       bulletId,
       clientShotId: bullet.clientShotId,
@@ -691,6 +696,9 @@ module.exports = function(io, dependencies = {}) {
       unitId: hit.unitId || null,
       lat: bullet.lat,
       lng: bullet.lng,
+      startsAt: bullet.startsAt,
+      impactAt: serverTimestamp,
+      serverTimestamp,
     });
   };
 
@@ -855,13 +863,22 @@ module.exports = function(io, dependencies = {}) {
     });
   };
 
+  let bulletTickRunning = false;
   const bulletTimer = setInterval(async () => {
-    for (const [id, b] of bullets) {
-      if (Date.now() < b.startsAt || b.processing) continue;
+    if (bulletTickRunning) return;
+    bulletTickRunning = true;
+    const tickNow = Date.now();
+    try {
+      for (const [id, b] of bullets) {
+        if (tickNow < b.startsAt || b.processing) continue;
 
-      const previous = { lat: b.lat, lng: b.lng };
-      const remainingM = Math.max(0, b.alcance - (b.recorrido || 0));
-      const stepM = Math.min(b.speed * (TICK_MS / 1000), remainingM);
+        const previous = { lat: b.lat, lng: b.lng };
+        const remainingM = Math.max(0, b.alcance - (b.recorrido || 0));
+        const previousTickAt = Math.max(b.lastAdvancedAt || b.startsAt, b.startsAt);
+        const elapsedMs = Math.max(0, tickNow - previousTickAt);
+        if (elapsedMs <= 0) continue;
+        b.lastAdvancedAt = tickNow;
+        const stepM = Math.min(b.speed * (elapsedMs / 1000), remainingM);
       const next = geo.computeOffset(previous, stepM, b.heading);
 
       // Resuelve todos los candidatos del segmento y conserva solo el primero.
@@ -1039,6 +1056,9 @@ module.exports = function(io, dependencies = {}) {
           alcance: b.alcance,
         });
       }
+      }
+    } finally {
+      bulletTickRunning = false;
     }
   }, TICK_MS);
   bulletTimer.unref?.();
@@ -2543,6 +2563,8 @@ module.exports = function(io, dependencies = {}) {
         const normalizedExplosionFrames = Array.isArray(authoritativeExplosionFrames)
           ? authoritativeExplosionFrames.filter((frame) => typeof frame === 'string' && frame.trim())
           : [];
+        const createdAt = Date.now();
+        const startsAt = createdAt + BULLET_START_DELAY_MS;
         bullets.set(bulletId, {
           clientShotId: normalizedClientShotId,
           byUserId: p.userId,
@@ -2559,8 +2581,9 @@ module.exports = function(io, dependencies = {}) {
           explosionRenderType: validated.explosionRenderType,
           projectileSpritesheet: validated.projectileSpritesheet,
           explosionSpritesheet: validated.explosionSpritesheet,
-          createdAt: Date.now(),
-          startsAt: Date.now() + BULLET_START_DELAY_MS,
+          createdAt,
+          startsAt,
+          lastAdvancedAt: startsAt,
         });
         policeRuntime.onPlayerShot(p, authoritativeFrom).catch((error) => {
           console.error(`[PVP][${instanceId}] police trigger error`, error);
@@ -2582,15 +2605,24 @@ module.exports = function(io, dependencies = {}) {
           projectileSpritesheet: validated.projectileSpritesheet,
           explosionSpritesheet: validated.explosionSpritesheet,
           startDelayMs: BULLET_START_DELAY_MS,
+          createdAt,
+          startsAt,
+          serverTimestamp: Date.now(),
         });
 
         const acceptedAck = {
           ok:true,
           bulletId,
           clientShotId: normalizedClientShotId,
+          from: authoritativeFrom,
+          heading: authoritativeHeading,
+          speed: authoritativeSpeed,
           alcance: validated.alcance,
           dano: validated.dano,
           startDelayMs: BULLET_START_DELAY_MS,
+          createdAt,
+          startsAt,
+          serverTimestamp: Date.now(),
         };
         acceptedClientShots.set(shotKey, acceptedAck);
         const forgetShot = setTimeout(

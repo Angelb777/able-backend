@@ -53,7 +53,8 @@ router.post("/adjust", verifyToken, async (req, res) => {
   const clientSource = String(source || '').trim();
   const normalizedClaimId = String(claimId || '').trim();
   if (req.user.role !== 'admin') {
-    const validPedometer = clientSource === 'pedometer' && cantidad <= 500;
+    const validPedometer = ['pedometer', 'walking_pedometer', 'cycling_gps']
+      .includes(clientSource) && cantidad <= 500;
     const validMiniGame = LEGACY_LEVEL_REWARD_GAMES.includes(clientSource) &&
       cantidad === 100 && Number.isInteger(level) && level >= 1 && level <= 100;
     if ((!validPedometer && !validMiniGame) ||
@@ -62,32 +63,47 @@ router.post("/adjust", verifyToken, async (req, res) => {
     }
   }
 
+  let session;
   try {
     const operationKey = req.user.role === 'admin'
       ? undefined
       : `client-reward:${targetUserId}:${clientSource}:${normalizedClaimId}`;
+    session = await User.startSession();
+    session.startTransaction();
     if (operationKey) {
-      const previous = await StepcoinTransaction.findOne({ operationKey }).lean();
+      const previous = await StepcoinTransaction
+        .findOne({ operationKey })
+        .session(session)
+        .lean();
       if (previous) {
-        const current = await User.findById(targetUserId).select('stepcoins').lean();
+        const current = await User.findById(targetUserId)
+          .select('stepcoins')
+          .session(session)
+          .lean();
+        await session.abortTransaction();
         return res.json({
           message: 'Recompensa ya procesada',
           user: current,
           duplicate: true,
+          claimId: normalizedClaimId,
         });
       }
     }
-    const user = await User.findById(targetUserId);
-    if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
+    const user = await User.findById(targetUserId).session(session);
+    if (!user) {
+      await session.abortTransaction();
+      return res.status(404).json({ error: "Usuario no encontrado" });
+    }
 
     // Evitar saldo negativo
     if (user.stepcoins + cantidad < 0) {
+      await session.abortTransaction();
       return res.status(400).json({ error: "Saldo insuficiente" });
     }
 
     // Actualizar saldo
     user.stepcoins += cantidad;
-    await user.save();
+    await user.save({ session });
 
     // Registrar transacción
     const trans = new StepcoinTransaction({
@@ -98,19 +114,38 @@ router.post("/adjust", verifyToken, async (req, res) => {
       operationKey,
       metadata: { requestedType: tipo, source: clientSource, level },
     });
-    await trans.save();
+    await trans.save({ session });
 
     if (LEGACY_LEVEL_REWARD_GAMES.includes(clientSource)) {
       await User.updateOne(
         { _id: targetUserId },
         { $inc: { [`miniGameStats.${clientSource}.rewards`]: cantidad } },
+        { session },
       );
     }
 
-    res.json({ message: "Stepcoins actualizados correctamente", user });
+    await session.commitTransaction();
+    return res.json({
+      message: "Stepcoins actualizados correctamente",
+      user,
+      duplicate: false,
+      claimId: normalizedClaimId || undefined,
+    });
   } catch (err) {
+    if (session?.inTransaction()) await session.abortTransaction();
+    if (err?.code === 11000) {
+      const current = await User.findById(targetUserId).select('stepcoins').lean();
+      return res.json({
+        message: 'Recompensa ya procesada',
+        user: current,
+        duplicate: true,
+        claimId: normalizedClaimId || undefined,
+      });
+    }
     console.error("❌ Error ajustando stepcoins:", err);
-    res.status(500).json({ error: "Error interno del servidor" });
+    return res.status(500).json({ error: "Error interno del servidor" });
+  } finally {
+    if (session) await session.endSession();
   }
 });
 
@@ -456,7 +491,7 @@ router.get("/ranking", async (req, res) => {
       { $eq: ['$userId', '$$userId'] },
       { $gt: ['$cantidad', 0] },
       { $eq: ['$tipo', 'recompensa'] },
-      { $eq: ['$metadata.source', 'pedometer'] },
+      { $in: ['$metadata.source', ['pedometer', 'walking_pedometer', 'cycling_gps']] },
       ...(since ? [{ $gte: ['$fecha', since] }] : []),
     ];
 
