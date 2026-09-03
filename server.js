@@ -211,6 +211,7 @@ app.use('/api/skins', require('./api/routes/skins'));
 app.use('/api/cards', require('./api/routes/cards'));
 app.use('/api/life', require('./api/routes/life'));
 app.use('/api/clans', require('./api/routes/clans'));
+app.use('/api/rankings', require('./api/routes/rankings'));
 app.use('/api/social', require('./api/routes/social'));
 app.use('/api/ubicaciones', require('./api/routes/ubicaciones'));
 app.use('/api/mobility', require('./api/routes/mobility'));

@@ -41,15 +41,20 @@ function requestKey(req) {
 }
 
 async function ensureDefaultTaunts() {
-  if (await Taunt.exists({ active: true })) return;
   await Taunt.updateOne(
     { key: 'saludo-pixel' },
-    { $setOnInsert: { name: 'Saludo pixel', price: 25, durationMs: 3000, active: true, imageUrl: '' } },
+    {
+      $set: { price: 50 },
+      $setOnInsert: { name: 'Saludo pixel', durationMs: 3000, active: true, imageUrl: '' },
+    },
     { upsert: true }
   );
   await Taunt.updateOne(
     { key: 'reto-pixel' },
-    { $setOnInsert: { name: 'Te reto', price: 50, durationMs: 3500, active: true, imageUrl: '' } },
+    {
+      $set: { price: 250 },
+      $setOnInsert: { name: 'Te reto', durationMs: 3500, active: true, imageUrl: '' },
+    },
     { upsert: true }
   );
 }

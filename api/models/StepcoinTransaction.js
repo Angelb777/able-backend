@@ -18,5 +18,6 @@ stepcoinTransactionSchema.index(
   { operationKey: 1 },
   { unique: true, partialFilterExpression: { operationKey: { $type: "string" } } }
 );
+stepcoinTransactionSchema.index({ userId: 1, fecha: -1 });
 
 module.exports = mongoose.model("StepcoinTransaction", stepcoinTransactionSchema);

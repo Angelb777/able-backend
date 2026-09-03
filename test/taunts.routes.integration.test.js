@@ -27,7 +27,7 @@ test('taunts use server price, atomic balance checks, cooldown and realtime deli
   const targetId = new mongoose.Types.ObjectId();
   const tauntId = new mongoose.Types.ObjectId();
   const users = new Map([
-    [String(senderId), { _id: senderId, nickname: 'Sender', stepcoins: 100 }],
+    [String(senderId), { _id: senderId, nickname: 'Sender', stepcoins: 300 }],
     [String(poorSenderId), { _id: poorSenderId, nickname: 'Poor', stepcoins: 5 }],
     [String(targetId), { _id: targetId, nickname: 'Target', stepcoins: 100 }],
   ]);
@@ -66,7 +66,7 @@ test('taunts use server price, atomic balance checks, cooldown and realtime deli
   };
   Taunt.findOne = (query) => new FakeQuery(
     String(query._id) === String(tauntId) && query.active
-      ? { _id: tauntId, name: 'Reto', price: 25, durationMs: 2500, active: true }
+      ? { _id: tauntId, name: 'Reto', price: 250, durationMs: 2500, active: true }
       : null
   );
   StepcoinTransaction.findOne = (query) => new FakeQuery(ledger.get(query.operationKey) || null);
@@ -120,9 +120,9 @@ test('taunts use server price, atomic balance checks, cooldown and realtime deli
     requestKey: 'send-1',
   });
   assert.equal(sent.status, 200);
-  assert.equal(sent.data.balance, 75);
-  assert.equal(users.get(String(senderId)).stepcoins, 75);
-  assert.equal(ledger.get(`taunt:${senderId}:send-1`).cantidad, -25);
+  assert.equal(sent.data.balance, 50);
+  assert.equal(users.get(String(senderId)).stepcoins, 50);
+  assert.equal(ledger.get(`taunt:${senderId}:send-1`).cantidad, -250);
   assert.equal(received.filter((item) => item.event === 'taunt:received').length, 1);
 
   const cooldown = await call(senderId, {
@@ -131,7 +131,7 @@ test('taunts use server price, atomic balance checks, cooldown and realtime deli
     requestKey: 'send-2',
   });
   assert.equal(cooldown.status, 429);
-  assert.equal(users.get(String(senderId)).stepcoins, 75);
+  assert.equal(users.get(String(senderId)).stepcoins, 50);
 
   const insufficient = await call(poorSenderId, {
     targetUserId: String(targetId),
