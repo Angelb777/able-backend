@@ -13,7 +13,11 @@ const http = require('http');                // ✅ NUEVO
 const { Server } = require('socket.io');     // ✅ NUEVO
 
 
-const { createLimiter, integerEnv } = require('./api/middlewares/securityLimits');
+const {
+  createLimiter,
+  createSocketHandshakeLimiter,
+  integerEnv,
+} = require('./api/middlewares/securityLimits');
 
 const app = express();
 app.disable('x-powered-by');
@@ -179,10 +183,9 @@ const io = new Server(server, {
   }),
   perMessageDeflate: false,
 });
-io.engine.use(createLimiter({
+io.engine.use(createSocketHandshakeLimiter({
   windowMs: 60 * 1000,
   limit: integerEnv('SOCKET_HANDSHAKE_REQUESTS_PER_MINUTE', 120),
-  code: 'SOCKET_RATE_LIMITED',
 }));
 
 // 👉 Conectar tu namespace de PVP
