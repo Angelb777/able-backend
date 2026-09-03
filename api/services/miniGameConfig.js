@@ -9,14 +9,14 @@ const MINI_GAMES = Object.freeze({
 const MINI_GAME_IDS = Object.freeze(Object.keys(MINI_GAMES));
 const LEGACY_LEVEL_REWARD_GAMES = Object.freeze(['culture', 'space']);
 
-// Cartas baja del 15 % al 12 % y esos 300 puntos se reparten por igual
-// entre los cuatro minijuegos. El total se mantiene en 10.000.
+// Los cuatro minijuegos tienen exactamente la misma probabilidad. Se usan
+// 40.000 puntos para conservar sin cambios el porcentaje de los demás premios.
 const ROULETTE_OPTIONS = Object.freeze([
-  ['Tirar otra vez', 3000], ['Nada', 2500],
-  [MINI_GAMES.culture.rouletteLabel, 1275], ['Carta aleatoria', 1200],
-  [MINI_GAMES.space.rouletteLabel, 675], [MINI_GAMES.memory.rouletteLabel, 675],
-  [MINI_GAMES.reflex.rouletteLabel, 662],
-  ['Gana 20000 Stepcoins', 5], ['Pierde 20000 Stepcoins', 8],
+  ['Tirar otra vez', 12000], ['Nada', 10000],
+  [MINI_GAMES.culture.rouletteLabel, 3287], ['Carta aleatoria', 4800],
+  [MINI_GAMES.space.rouletteLabel, 3287], [MINI_GAMES.memory.rouletteLabel, 3287],
+  [MINI_GAMES.reflex.rouletteLabel, 3287],
+  ['Gana 20000 Stepcoins', 20], ['Pierde 20000 Stepcoins', 32],
 ]);
 
 const MEMORY_TIME_THRESHOLDS_MS = Object.freeze([

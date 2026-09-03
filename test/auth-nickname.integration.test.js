@@ -16,6 +16,8 @@ test('login never generates a nickname or returns the private name', async (t) =
     email: 'legacy@example.test',
     password: 'hash',
     role: 'cliente',
+    termsVersionAccepted: '1.0',
+    termsAcceptedAt: new Date(),
   };
   User.findOne = async () => stored;
   bcrypt.compare = async () => true;

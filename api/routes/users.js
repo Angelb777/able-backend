@@ -200,7 +200,7 @@ router.put('/:id', verifyToken, requireSelfOrAdmin, async (req, res) => {
 });
 
 // 🆕 Skin activa con fallback que persiste y añade a "Mis Skins"
-router.get('/:id/skin', async (req, res) => {
+router.get('/:id/skin', verifyToken, requireSelfOrAdmin, async (req, res) => {
   try {
     const userId = req.params.id;
 

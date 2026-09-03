@@ -2,6 +2,11 @@ const express = require('express');
 const { rateLimit } = require('express-rate-limit');
 const { verifyToken } = require('../middlewares/authMiddleware');
 const {
+  authenticatedUserKey,
+  createLimiter,
+  integerEnv,
+} = require('../middlewares/securityLimits');
+const {
   GoogleMapsMobileServiceError,
   createGoogleMapsMobileService,
   validCoordinate,
@@ -9,17 +14,26 @@ const {
 
 const DIRECTIONS_MODES = new Set(['walking', 'bicycling', 'driving', 'transit']);
 
-function limiter(limit) {
+function userLimiter(limit, windowMs = 60 * 1000) {
   return rateLimit({
-    windowMs: 60 * 1000,
+    windowMs,
     limit,
     standardHeaders: 'draft-8',
     legacyHeaders: false,
-    keyGenerator: (req) => String(req.user.id),
+    keyGenerator: authenticatedUserKey,
     handler: (_req, res) => res.status(429).json({
       error: 'RATE_LIMIT_EXCEEDED',
       message: 'Demasiadas solicitudes de mapas. Intentalo de nuevo en un minuto.',
     }),
+  });
+}
+
+function ipLimiter(limit, windowMs = 60 * 1000) {
+  return createLimiter({
+    windowMs,
+    limit,
+    code: 'MAPS_IP_RATE_LIMIT_EXCEEDED',
+    message: 'Demasiadas solicitudes de mapas desde esta red. Intentalo mas tarde.',
   });
 }
 
@@ -37,11 +51,24 @@ function createGoogleMapsRouter({
   const router = express.Router();
   router.use(authenticate);
 
-  const applyLimit = (value) => disableRateLimit
-    ? (_req, _res, next) => next()
-    : limiter(value);
+  const noLimit = (_req, _res, next) => next();
+  const applyLimits = (name, minuteDefault, dailyDefault, ipMultiplier = 4) => {
+    if (disableRateLimit) return [noLimit];
+    const minuteLimit = Number(limits[name]) || integerEnv(
+      `GOOGLE_MAPS_${name.toUpperCase()}_PER_MINUTE`, minuteDefault,
+    );
+    const dailyLimit = integerEnv(
+      `GOOGLE_MAPS_${name.toUpperCase()}_PER_DAY`, dailyDefault,
+    );
+    return [
+      ipLimiter(minuteLimit * ipMultiplier),
+      userLimiter(minuteLimit),
+      ipLimiter(dailyLimit * ipMultiplier, 24 * 60 * 60 * 1000),
+      userLimiter(dailyLimit, 24 * 60 * 60 * 1000),
+    ];
+  };
 
-  router.post('/directions', applyLimit(limits.directions || 60), async (req, res) => {
+  router.post('/directions', ...applyLimits('directions', 15, 150), async (req, res) => {
     const origin = {
       lat: Number(req.body?.origin?.lat),
       lng: Number(req.body?.origin?.lng),
@@ -65,7 +92,7 @@ function createGoogleMapsRouter({
     }
   });
 
-  router.post('/places/autocomplete', applyLimit(limits.autocomplete || 120), async (req, res) => {
+  router.post('/places/autocomplete', ...applyLimits('autocomplete', 90, 1500), async (req, res) => {
     const input = text(req.body?.input, 200);
     const sessionToken = text(req.body?.sessionToken, 128);
     const rawOrigin = req.body?.origin;
@@ -86,7 +113,7 @@ function createGoogleMapsRouter({
     }
   });
 
-  router.post('/places/details', applyLimit(limits.details || 30), async (req, res) => {
+  router.post('/places/details', ...applyLimits('details', 20, 300), async (req, res) => {
     const placeId = text(req.body?.placeId, 512);
     const sessionToken = text(req.body?.sessionToken, 128);
     if (!placeId || !sessionToken) {

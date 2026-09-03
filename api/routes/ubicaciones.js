@@ -4,12 +4,25 @@ const express = require("express");
 const router = express.Router();
 const UbicacionVisible = require("../models/UbicacionVisible");
 const { publicNickname } = require('../utils/publicIdentity');
+const { verifyToken, requireSelfOrAdmin } = require('../middlewares/authMiddleware');
+const { authenticatedUserKey, createLimiter } = require('../middlewares/securityLimits');
+
+router.use(verifyToken);
+router.use(createLimiter({
+  windowMs: 60 * 1000,
+  limit: 120,
+  keyGenerator: authenticatedUserKey,
+  message: 'Demasiadas actualizaciones de ubicacion.',
+}));
 
 // 👉 POST /api/ubicaciones/compartir → Crear o actualizar tu ubicación visible
 router.post("/compartir", async (req, res) => {
   try {
-    const { userId, lat, lng } = req.body;
-    if (!userId || lat == null || lng == null) {
+    const userId = String(req.user.id);
+    const lat = Number(req.body?.lat);
+    const lng = Number(req.body?.lng);
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90 ||
+        !Number.isFinite(lng) || lng < -180 || lng > 180) {
       return res.status(400).json({ error: "Faltan campos requeridos" });
     }
 
@@ -51,7 +64,7 @@ router.get("/", async (req, res) => {
 });
 
 // 👉 DELETE /api/ubicaciones/:userId → Dejar de compartir ubicación
-router.delete("/:userId", async (req, res) => {
+router.delete("/:userId", requireSelfOrAdmin('userId'), async (req, res) => {
   try {
     await UbicacionVisible.findOneAndDelete({ userId: req.params.userId });
     res.json({ ok: true });

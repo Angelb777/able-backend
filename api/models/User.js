@@ -64,6 +64,7 @@ const miniGameSessionSchema = new mongoose.Schema({
   issuedAt: { type: Date, required: true },
   expiresAt: { type: Date, required: true },
   claimed: { type: Boolean, default: false },
+  rewardedLevels: { type: [Number], default: [] },
 }, { _id: false });
 
 const userSchema = new mongoose.Schema({

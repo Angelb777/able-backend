@@ -78,7 +78,7 @@ async function lockWager({ inviteId, duelId, userIds, amount: rawAmount }) {
         descripcion: `Apuesta bloqueada para el duelo ${duelId}`,
         operationKey: `duel-stake:${inviteId}:${userId}`,
         metadata: { inviteId, duelId, wagerPerPlayer: amount, potTotal: amount * 2 },
-      })), { session });
+      })), { session, ordered: true });
 
       result = {
         amount,
@@ -119,7 +119,7 @@ async function refundWager({ inviteId, duelId, userIds, amount: rawAmount, reaso
         descripcion: `Reembolso de apuesta del duelo ${duelId}`,
         operationKey: `duel-refund:${inviteId}:${userId}`,
         metadata: { inviteId, duelId, reason, wagerPerPlayer: amount },
-      })), { session });
+      })), { session, ordered: true });
       result = { balances: await balancesFor(userIds, session), duplicate: false };
     });
     return result;
@@ -160,7 +160,7 @@ async function payPot({ duelId, winnerUserId, loserUserId, amount: rawAmount, re
         descripcion: `Bote ganado en el duelo ${duelId}`,
         operationKey,
         metadata: { duelId, loserUserId, reason, wagerPerPlayer: amount, potTotal },
-      }], { session });
+      }], { session, ordered: true });
       result = { potTotal, winnerBalance: winner.stepcoins, duplicate: false };
     });
     return result;

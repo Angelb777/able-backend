@@ -54,7 +54,10 @@ async function renewExpiredMapSubscriptions() {
   }).lean();
 
   for (const current of expired) {
-    if (!current.autoRenew || current.cancelAtPeriodEnd) {
+    // Nunca renovar ni registrar cobros ficticios en produccion. La futura
+    // integracion del proveedor debera confirmar el cargo antes de extender.
+    if (process.env.NODE_ENV === 'production' ||
+        !current.autoRenew || current.cancelAtPeriodEnd) {
       await PromocionComprada.updateOne(
         { _id: current._id, status: 'published', fechaFin: current.fechaFin },
         { $set: { activo: false, status: 'expired' } },

@@ -57,7 +57,7 @@ test('Firebase registration creates a profile with uid, nickname and public role
   const router = createAuthRouter({
     UserModel: FakeUser,
     firebaseAuth: firebaseAuth({
-      uid: 'firebase-new', email: 'new@example.test', email_verified: false,
+      uid: 'firebase-new', email: 'new@example.test', email_verified: true,
       firebase: { sign_in_provider: 'password' },
     }),
     disableRateLimit: true,

@@ -1,4 +1,8 @@
 // server.js
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -9,17 +13,13 @@ const http = require('http');                // ✅ NUEVO
 const { Server } = require('socket.io');     // ✅ NUEVO
 
 
-const usersRouter = require('./api/routes/users');
-
-if (process.env.NODE_ENV !== 'production') {
-  require('dotenv').config();
-}
+const { createLimiter, integerEnv } = require('./api/middlewares/securityLimits');
 
 const app = express();
 app.disable('x-powered-by');
 
 // Render/Proxies
-app.set('trust proxy', 1);
+app.set('trust proxy', integerEnv('TRUST_PROXY_HOPS', 1, { min: 0, max: 10 }));
 
 /* =========================
    CORS con whitelist (.env: ALLOWED_ORIGINS=...)
@@ -74,8 +74,17 @@ app.use(helmet({
 /* =========================
    Middlewares globales
 ========================= */
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '100kb', strict: true }));
+app.use(express.urlencoded({
+  extended: true,
+  limit: process.env.FORM_BODY_LIMIT || '100kb',
+  parameterLimit: 100,
+}));
+app.use('/api', createLimiter({
+  windowMs: 15 * 60 * 1000,
+  limit: integerEnv('API_REQUESTS_PER_15_MINUTES', 1500),
+  code: 'API_RATE_LIMITED',
+}));
 
 /* =========================
    Uploads: base única (local vs prod)
@@ -135,6 +144,18 @@ app.get('/admin/pedidos', (_req, res) => {
    HTTP Server + Socket.IO
 ========================= */
 const server = http.createServer(app);
+server.requestTimeout = integerEnv('HTTP_REQUEST_TIMEOUT_MS', 30 * 1000, {
+  min: 5000,
+  max: 120000,
+});
+server.headersTimeout = integerEnv('HTTP_HEADERS_TIMEOUT_MS', 15 * 1000, {
+  min: 5000,
+  max: 60000,
+});
+server.keepAliveTimeout = integerEnv('HTTP_KEEP_ALIVE_TIMEOUT_MS', 5000, {
+  min: 1000,
+  max: 30000,
+});
 
 // CORS para Socket.IO: usa tu whitelist si existe; si no, abierto (útil para móvil)
 const io = new Server(server, {
@@ -148,9 +169,21 @@ const io = new Server(server, {
         },
         credentials: true,
       }
-    : { origin: '*', credentials: true },
+    : process.env.NODE_ENV === 'production'
+      ? { origin: false, credentials: true }
+      : { origin: '*', credentials: true },
   transports: ['websocket', 'polling'],
+  maxHttpBufferSize: integerEnv('SOCKET_MAX_PAYLOAD_BYTES', 64 * 1024, {
+    min: 4096,
+    max: 1024 * 1024,
+  }),
+  perMessageDeflate: false,
 });
+io.engine.use(createLimiter({
+  windowMs: 60 * 1000,
+  limit: integerEnv('SOCKET_HANDSHAKE_REQUESTS_PER_MINUTE', 120),
+  code: 'SOCKET_RATE_LIMITED',
+}));
 
 // 👉 Conectar tu namespace de PVP
 require('./sockets/pvp.socket')(io);
@@ -212,6 +245,22 @@ app.use('/api/paypal', require('./api/routes/paypal'));
 const adminOrdersRoutes = require('./api/routes/adminOrders');
 app.use('/api/admin', adminOrdersRoutes);
 
+app.use((error, _req, res, next) => {
+  if (res.headersSent) return next(error);
+  if (error?.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'PAYLOAD_TOO_LARGE' });
+  }
+  if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
+    return res.status(400).json({ error: 'INVALID_JSON' });
+  }
+  console.error('Error HTTP no controlado:', error?.message || error);
+  return res.status(error?.status || 500).json({
+    error: error?.status && error.status < 500
+      ? error.message
+      : 'Error interno del servidor',
+  });
+});
+
 /* =========================
    MongoDB + Start
 ========================= */
@@ -223,9 +272,21 @@ const uri = uriRaw.trim();
 console.log('🔧 NODE_ENV:', process.env.NODE_ENV);
 console.log('🔧 PORT:', PORT);
 console.log('🔧 MONGO_URI presente:', !!uri);
-if (uri) console.log('🔧 MONGO_URI inicio:', uri.slice(0, 40) + '...');
 if (!process.env.JWT_SECRET) {
   console.warn('⚠️  JWT_SECRET no está definida. Algunas rutas podrían fallar.');
+}
+if (process.env.NODE_ENV === 'production') {
+  if (String(process.env.JWT_SECRET || '').length < 32) {
+    console.error('JWT_SECRET debe tener al menos 32 caracteres en produccion.');
+    process.exit(1);
+  }
+  if (!rawOrigins.length) {
+    console.error('ALLOWED_ORIGINS es obligatorio en produccion.');
+    process.exit(1);
+  }
+  if (process.env.PAYPAL_ENV !== 'live') {
+    console.warn('PayPal no esta en modo live; no se aceptaran pagos reales.');
+  }
 }
 if (!uri || (!uri.startsWith('mongodb://') && !uri.startsWith('mongodb+srv://'))) {
   console.error('❌ MONGO_URI inválida. Debe empezar por mongodb:// o mongodb+srv://');

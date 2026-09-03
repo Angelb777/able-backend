@@ -13,7 +13,7 @@ const Payment = require('../models/Payment');
 const User = require('../models/User');
 const MapPlan = require('../models/MapPlan');
 const MapPromoCode = require('../models/MapPromoCode');
-const { saveImage } = require('../utils/mediaStorage');
+const { saveImage, saveMaterial } = require('../utils/mediaStorage');
 const {
   addMonths, ensureDefaultMapPlans, renewExpiredMapSubscriptions,
 } = require('../services/mapSubscriptions');
@@ -69,7 +69,7 @@ function requestJson(request) {
 
 async function storeFiles(files, folder) {
   return Promise.all((files || []).map(async (file) => ({
-    url: await saveImage(file, folder),
+    url: await saveMaterial(file, folder),
     originalName: file.originalname,
     mimeType: file.mimetype,
     size: file.size,
@@ -273,6 +273,12 @@ router.get('/map-plans', ...commerceOnly, async (_req, res, next) => {
 
 router.post('/locations/:id/subscribe', ...commerceOnly, async (req, res) => {
   try {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(503).json({
+        error: 'La contratacion requiere confirmacion de un proveedor de pago real',
+        code: 'VERIFIED_PAYMENT_REQUIRED',
+      });
+    }
     const location = await Establishment.findOne({
       _id: req.params.id, ownerId: req.user.id, archived: { $ne: true },
     });
@@ -675,6 +681,12 @@ async function payableCommercialRequest(requestId, ownerId) {
 // punto que habrá que sustituir por la confirmación firmada del proveedor.
 router.post('/requests/:id/pay', ...commerceOnly, async (req, res) => {
   try {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(503).json({
+        error: 'El pago comercial requiere confirmacion de un proveedor real',
+        code: 'VERIFIED_PAYMENT_REQUIRED',
+      });
+    }
     const request = await payableCommercialRequest(req.params.id, req.user.id);
     if (request.status === 'published') {
       return res.json({ status: 'published', request: requestJson(request) });

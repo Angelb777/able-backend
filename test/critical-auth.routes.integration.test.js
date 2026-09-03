@@ -12,6 +12,10 @@ const skinsRouter = require('../api/routes/skins');
 const ufoRouter = require('../api/routes/ufo');
 const challengesRouter = require('../api/routes/challenges');
 const paymentsRouter = require('../api/routes/payments');
+const ordersRouter = require('../api/routes/orders');
+const profileRouter = require('../api/routes/profile');
+const projectilesRouter = require('../api/routes/projectiles');
+const locationsRouter = require('../api/routes/ubicaciones');
 
 test('critical economy, life, deck and admin routes enforce JWT ownership', async (t) => {
   const previousSecret = process.env.JWT_SECRET;
@@ -34,6 +38,10 @@ test('critical economy, life, deck and admin routes enforce JWT ownership', asyn
   app.use('/api/ufo', ufoRouter);
   app.use('/api/retos', challengesRouter);
   app.use('/api/payments', paymentsRouter);
+  app.use('/api/orders', ordersRouter);
+  app.use('/api/profile', profileRouter);
+  app.use('/api/projectiles', projectilesRouter);
+  app.use('/api/ubicaciones', locationsRouter);
   const server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -95,4 +103,26 @@ test('critical economy, life, deck and admin routes enforce JWT ownership', asyn
   })).status, 403);
   assert.equal((await call('/api/payments')).status, 403);
   assert.equal((await call('/api/payments/' + otherId)).status, 403);
+  assert.equal((await call('/api/orders/paid', { authenticated: false })).status, 401);
+  assert.equal((await call('/api/profile/' + otherId, {
+    method: 'PATCH', body: { nombre: 'Ataque' },
+  })).status, 403);
+  assert.equal((await call('/api/projectiles', {
+    method: 'POST', authenticated: false, body: {},
+  })).status, 401);
+  assert.equal((await call('/api/ubicaciones/compartir', {
+    method: 'POST', authenticated: false, body: { userId: otherId, lat: 0, lng: 0 },
+  })).status, 401);
+  assert.equal((await call('/api/ubicaciones/' + otherId, {
+    method: 'DELETE',
+  })).status, 403);
+
+  const previousNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  const simulatedCheckout = await call('/api/payments/stepcoins/checkout', {
+    method: 'POST', body: { cantidad: 100, requestId: 'request-production-1' },
+  });
+  if (previousNodeEnv == null) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = previousNodeEnv;
+  assert.equal(simulatedCheckout.status, 503);
 });

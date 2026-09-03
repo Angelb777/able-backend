@@ -915,11 +915,21 @@ router.put("/user-cards/:userId", verifyToken, requireSelfOrAdmin(), async (req,
       return res.status(400).json({ error: "El mazo debe tener exactamente 4 cartas" });
     }
 
-    const user = await User.findByIdAndUpdate(
-      req.params.userId,
-      { mazo },
+    const cardIds = mazo.map(String);
+    if (new Set(cardIds).size !== cardIds.length ||
+        !cardIds.every((id) => mongoose.isValidObjectId(id))) {
+      return res.status(400).json({ error: 'El mazo contiene cartas no validas o duplicadas' });
+    }
+
+    const user = await User.findOneAndUpdate(
+      { _id: req.params.userId, cartas: { $all: cardIds } },
+      { mazo: cardIds },
       { new: true }
     ).populate("mazo");
+
+    if (!user) {
+      return res.status(403).json({ error: 'Solo puedes equipar cartas que posees' });
+    }
 
     res.json({ message: "✅ Mazo actualizado", mazo: user.mazo });
   } catch (err) {

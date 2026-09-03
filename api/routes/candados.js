@@ -86,6 +86,11 @@ router.post("/log", verifyToken, async (req, res) => {
   try {
     const { candadoId, accion, lat, lng, detalle } = req.body;
 
+    const candado = await Candado.findOne({ _id: candadoId, creadoPor: req.user.id });
+    if (!candado) return res.status(404).json({ error: 'Candado no encontrado' });
+    if (!['abrir', 'cerrar', 'conectar', 'desconectar', 'posicion'].includes(accion)) {
+      return res.status(400).json({ error: 'Accion no valida' });
+    }
     await CandadoLog.create({
       candadoId,
       accion,
@@ -96,8 +101,7 @@ router.post("/log", verifyToken, async (req, res) => {
     });
 
     if (accion === "abrir" && lat != null && lng != null) {
-      const candado = await Candado.findById(candadoId);
-      if (candado && String(candado.creadoPor) === req.user.id) {
+      if (candado) {
         candado.lastLat = lat;
         candado.lastLng = lng;
         candado.lastSeenAt = new Date();
@@ -114,6 +118,8 @@ router.post("/log", verifyToken, async (req, res) => {
 // ✅ Obtener logs por candado
 router.get("/log/:id", verifyToken, async (req, res) => {
   try {
+    const owned = await Candado.exists({ _id: req.params.id, creadoPor: req.user.id });
+    if (!owned) return res.status(404).json({ error: 'Candado no encontrado' });
     const logs = await CandadoLog.find({ candadoId: req.params.id })
       .populate("usuarioId", "nickname")
       .sort({ createdAt: -1 });
@@ -131,7 +137,8 @@ router.post("/:mac/posicion", verifyToken, async (req, res) => {
 
     lat = Number(lat);
     lng = Number(lng);
-    if (Number.isNaN(lat) || Number.isNaN(lng)) {
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90 ||
+        !Number.isFinite(lng) || lng < -180 || lng > 180) {
       return res.status(400).json({ error: "Faltan lat/lng válidos" });
     }
 

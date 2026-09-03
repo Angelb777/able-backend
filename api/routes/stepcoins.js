@@ -1,4 +1,5 @@
 const express = require("express");
+const mongoose = require('mongoose');
 const router = express.Router();
 const User = require("../models/User");
 const StepcoinTransaction = require("../models/StepcoinTransaction");
@@ -6,6 +7,7 @@ const Card = require("../models/Card");
 const { publicNickname } = require('../utils/publicIdentity');
 const { randomInt, randomUUID } = require('crypto');
 const { verifyToken, requireSelfOrAdmin } = require('../middlewares/authMiddleware');
+const { authenticatedUserKey, createLimiter, integerEnv } = require('../middlewares/securityLimits');
 const { findRandomUnownedCard, publicCard } = require('../services/randomCardService');
 const {
   MINI_GAME_IDS,
@@ -33,8 +35,40 @@ function authenticatedTarget(req) {
     : String(req.user.id);
 }
 
+const economyWriteLimiter = createLimiter({
+  windowMs: 60 * 1000,
+  limit: 30,
+  keyGenerator: authenticatedUserKey,
+  code: 'ECONOMY_RATE_LIMITED',
+  message: 'Demasiadas operaciones de economia. Intentalo de nuevo en un minuto.',
+});
+
+const rouletteLimiter = createLimiter({
+  windowMs: 60 * 1000,
+  limit: 10,
+  keyGenerator: authenticatedUserKey,
+  code: 'ROULETTE_RATE_LIMITED',
+  message: 'Demasiadas tiradas. Espera un minuto antes de continuar.',
+});
+
+async function positiveClientRewardsSince(userId, source, since, session) {
+  const [result] = await StepcoinTransaction.aggregate([
+    {
+      $match: {
+        userId: new mongoose.Types.ObjectId(userId),
+        cantidad: { $gt: 0 },
+        tipo: 'recompensa',
+        'metadata.source': source,
+        fecha: { $gte: since },
+      },
+    },
+    { $group: { _id: null, total: { $sum: '$cantidad' } } },
+  ]).session(session);
+  return Number(result?.total || 0);
+}
+
 // Añadir o quitar stepcoins (positivo o negativo)
-router.post("/adjust", verifyToken, async (req, res) => {
+router.post("/adjust", verifyToken, economyWriteLimiter, async (req, res) => {
   const { userId, cantidad, tipo, descripcion, source, claimId, level } = req.body;
   const targetUserId = authenticatedTarget(req);
 
@@ -56,7 +90,9 @@ router.post("/adjust", verifyToken, async (req, res) => {
     const validPedometer = ['pedometer', 'walking_pedometer', 'cycling_gps']
       .includes(clientSource) && cantidad <= 500;
     const validMiniGame = LEGACY_LEVEL_REWARD_GAMES.includes(clientSource) &&
-      cantidad === 100 && Number.isInteger(level) && level >= 1 && level <= 100;
+      cantidad === 100 && Number.isInteger(level) &&
+      ((clientSource === 'culture' && level >= 1 && level <= 10) ||
+       (clientSource === 'space' && level >= 2 && level <= 11));
     if ((!validPedometer && !validMiniGame) ||
         normalizedClaimId.length < 4 || normalizedClaimId.length > 160) {
       return res.status(403).json({ error: 'Recompensa de cliente no valida' });
@@ -89,6 +125,72 @@ router.post("/adjust", verifyToken, async (req, res) => {
         });
       }
     }
+
+    if (req.user.role !== 'admin' && LEGACY_LEVEL_REWARD_GAMES.includes(clientSource)) {
+      const expectedSuffix = `-level-${level}`;
+      const miniGameSessionId = normalizedClaimId.endsWith(expectedSuffix)
+        ? normalizedClaimId.slice(0, -expectedSuffix.length)
+        : '';
+      const rewarded = await User.findOneAndUpdate(
+        {
+          _id: targetUserId,
+          miniGameSessions: {
+            $elemMatch: {
+              id: miniGameSessionId,
+              game: clientSource,
+              claimed: false,
+              expiresAt: { $gt: new Date() },
+              rewardedLevels: { $ne: level },
+            },
+          },
+        },
+        {
+          $inc: {
+            stepcoins: cantidad,
+            [`miniGameStats.${clientSource}.rewards`]: cantidad,
+          },
+          $addToSet: { 'miniGameSessions.$.rewardedLevels': level },
+        },
+        { new: true, session },
+      ).select('stepcoins');
+      if (!rewarded) {
+        await session.abortTransaction();
+        return res.status(409).json({
+          error: 'Sesion de minijuego invalida, caducada o nivel ya premiado',
+          code: 'INVALID_MINIGAME_REWARD',
+        });
+      }
+      await StepcoinTransaction.create([{
+        userId: targetUserId,
+        cantidad,
+        tipo: 'recompensa',
+        descripcion: `Nivel ${level} de ${clientSource}`,
+        operationKey,
+        metadata: { source: clientSource, level, miniGameSessionId },
+      }], { session });
+      await session.commitTransaction();
+      return res.json({
+        message: 'Stepcoins actualizados correctamente',
+        user: rewarded,
+        duplicate: false,
+        claimId: normalizedClaimId,
+      });
+    }
+
+    if (req.user.role !== 'admin' && clientSource === 'cycling_gps') {
+      const now = Date.now();
+      const hourlyLimit = integerEnv('CYCLING_REWARD_PER_HOUR', 15000);
+      const hourly = await positiveClientRewardsSince(
+        targetUserId, clientSource, new Date(now - 60 * 60 * 1000), session,
+      );
+      if (hourly + cantidad > hourlyLimit) {
+        await session.abortTransaction();
+        return res.status(429).json({
+          error: 'Incremento de Stepcoins no compatible con actividad normal',
+          code: 'ANOMALOUS_STEPCOIN_REWARD',
+        });
+      }
+    }
     const user = await User.findById(targetUserId).session(session);
     if (!user) {
       await session.abortTransaction();
@@ -110,19 +212,13 @@ router.post("/adjust", verifyToken, async (req, res) => {
       userId: targetUserId,
       cantidad,
       tipo: req.user.role === 'admin' ? 'admin' : 'recompensa',
-      descripcion,
+      descripcion: req.user.role === 'admin'
+        ? String(descripcion || '').slice(0, 300)
+        : `Actividad validada: ${clientSource}`,
       operationKey,
       metadata: { requestedType: tipo, source: clientSource, level },
     });
     await trans.save({ session });
-
-    if (LEGACY_LEVEL_REWARD_GAMES.includes(clientSource)) {
-      await User.updateOne(
-        { _id: targetUserId },
-        { $inc: { [`miniGameStats.${clientSource}.rewards`]: cantidad } },
-        { session },
-      );
-    }
 
     await session.commitTransaction();
     return res.json({
@@ -164,7 +260,7 @@ router.get("/historial/:userId", verifyToken, requireSelfOrAdmin(), async (req, 
 const Skin = require("../models/Skin"); // Asegúrate de tenerlo importado
 
 // Comprar skin con stepcoins
-router.post("/comprar-skin", verifyToken, async (req, res) => {
+router.post("/comprar-skin", verifyToken, economyWriteLimiter, async (req, res) => {
   const { userId, skinId } = req.body;
   const targetUserId = authenticatedTarget(req);
 
@@ -222,7 +318,7 @@ router.post("/comprar-skin", verifyToken, async (req, res) => {
   }
 });
 
-router.post("/ruleta", verifyToken, async (req, res) => {
+router.post("/ruleta", verifyToken, rouletteLimiter, async (req, res) => {
   try {
     const { userId, requestId } = req.body;
     const targetUserId = authenticatedTarget(req);
@@ -398,7 +494,7 @@ router.post("/ruleta", verifyToken, async (req, res) => {
 });
 
 
-router.post('/minigame-result', verifyToken, async (req, res) => {
+router.post('/minigame-result', verifyToken, economyWriteLimiter, async (req, res) => {
   try {
     const targetUserId = authenticatedTarget(req);
     const game = String(req.body?.game || '').trim();

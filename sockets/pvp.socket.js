@@ -1661,6 +1661,20 @@ module.exports = function(io, dependencies = {}) {
   });
 
   nsp.on('connection', (socket) => {
+    const packetWindowMs = 10 * 1000;
+    const packetLimit = Math.max(100, Number(process.env.SOCKET_EVENTS_PER_10_SECONDS) || 300);
+    let packetWindowStartedAt = Date.now();
+    let packetCount = 0;
+    socket.use((_packet, next) => {
+      const now = Date.now();
+      if (now - packetWindowStartedAt >= packetWindowMs) {
+        packetWindowStartedAt = now;
+        packetCount = 0;
+      }
+      packetCount += 1;
+      if (packetCount > packetLimit) return next(new Error('Demasiados eventos PVP'));
+      return next();
+    });
     log('socket connected', {
       socketId: socket.id,
       namespace: '/pvp',
@@ -1682,7 +1696,8 @@ module.exports = function(io, dependencies = {}) {
         if (socket.data.authUserId && requestedUserId && requestedUserId !== socket.data.authUserId) {
           return cb?.({ ok: false, error: 'El userId no coincide con el token' });
         }
-        if (!userId || typeof lat!=='number' || typeof lng!=='number') {
+        if (!userId || !Number.isFinite(lat) || !Number.isFinite(lng) ||
+            lat < -90 || lat > 90 || lng < -180 || lng > 180) {
           log('presence rejected', {
             socketId: socket.id,
             userId,
@@ -1913,7 +1928,8 @@ module.exports = function(io, dependencies = {}) {
         skinId: requestedSkinId,
         clientSeq,
       } = payload || {};
-      if (typeof lat!=='number' || typeof lng!=='number') return;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) ||
+          lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
       if (Number.isSafeInteger(clientSeq)) {
         if (clientSeq <= p.lastClientSeq) return;
         p.lastClientSeq = clientSeq;

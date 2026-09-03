@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { rateLimit } = require('express-rate-limit');
+const { createLimiter, requestIpKey } = require('../middlewares/securityLimits');
 const User = require('../models/User');
 const { getFirebaseAuth } = require('../services/firebaseAdmin');
 const {
@@ -93,6 +94,17 @@ function authLimiter(options = {}) {
   });
 }
 
+function accountLoginLimiter({ disabled = false } = {}) {
+  return createLimiter({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    skip: disabled ? () => true : undefined,
+    keyGenerator: (req) => `login:${normalizeEmail(req.body?.email) || requestIpKey(req)}`,
+    code: 'AUTH_ACCOUNT_RATE_LIMITED',
+    message: 'Demasiados intentos para esta cuenta. Espera unos minutos.',
+  });
+}
+
 function bearerFrom(req) {
   const authorization = String(req.headers.authorization || '');
   if (authorization.startsWith('Bearer ')) return authorization.slice(7).trim();
@@ -125,6 +137,12 @@ function createAuthRouter(dependencies = {}) {
   const limiterDisabled = dependencies.disableRateLimit === true;
   const loginLimiter = authLimiter({ limit: 10, disabled: limiterDisabled });
   const registrationLimiter = authLimiter({ limit: 15, disabled: limiterDisabled });
+  const registrationDailyLimiter = authLimiter({
+    windowMs: 24 * 60 * 60 * 1000,
+    limit: 50,
+    disabled: limiterDisabled,
+  });
+  const loginAccountLimiter = accountLoginLimiter({ disabled: limiterDisabled });
 
   const currentFirebaseAuth = () => firebaseAuth || getFirebaseAuth();
 
@@ -216,7 +234,7 @@ function createAuthRouter(dependencies = {}) {
     }
   });
 
-  router.post('/firebase/register', registrationLimiter, async (req, res, next) => {
+  router.post('/firebase/register', registrationLimiter, registrationDailyLimiter, async (req, res, next) => {
     try {
       const role = String(req.body.role || '');
       if (!PUBLIC_ROLES.has(role)) {
@@ -238,7 +256,7 @@ function createAuthRouter(dependencies = {}) {
       const idToken = bearerFrom(req);
       const decoded = await decodeFirebaseIdToken(idToken, {
         firebaseAuth: currentFirebaseAuth(),
-        requireVerifiedEmail: false,
+        requireVerifiedEmail: true,
       });
       const email = normalizeEmail(decoded.email);
       if (!email) return res.status(400).json({ error: 'Firebase no ha proporcionado un email' });
@@ -321,7 +339,7 @@ function createAuthRouter(dependencies = {}) {
   });
 
   // TEMPORAL: login exclusivo para documentos MongoDB anteriores a Firebase.
-  router.post('/login', loginLimiter, async (req, res, next) => {
+  router.post('/login', loginLimiter, loginAccountLimiter, async (req, res, next) => {
     try {
       const email = normalizeEmail(req.body.email);
       const password = typeof req.body.password === 'string' ? req.body.password : '';

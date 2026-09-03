@@ -40,6 +40,7 @@ const orderSchema = new mongoose.Schema(
       default: 'paypal',
     },
     providerOrderId: String, // PayPal order id / Stripe session id
+    clientRequestId: { type: String, trim: true },
     providerStatus: String, // COMPLETED, etc.
     paid: { type: Boolean, default: false },
 
@@ -60,6 +61,10 @@ const orderSchema = new mongoose.Schema(
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ paid: 1, createdAt: -1 });
 orderSchema.index({ providerOrderId: 1 });
+orderSchema.index(
+  { clientRequestId: 1 },
+  { unique: true, partialFilterExpression: { clientRequestId: { $type: 'string' } } }
+);
 orderSchema.index({ 'items.name': 1 });
 orderSchema.index({ 'shipping.name': 1 });
 orderSchema.index({ 'billing.name': 1 });

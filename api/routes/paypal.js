@@ -1,10 +1,23 @@
 // api/routes/paypal.js
 const express = require('express');
-const fetch = require('node-fetch');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
+const mongoose = require('mongoose');
+const { createLimiter } = require('../middlewares/securityLimits');
 
 const router = express.Router();
+const createOrderLimiter = createLimiter({
+  windowMs: 10 * 60 * 1000,
+  limit: 10,
+  code: 'PAYMENT_RATE_LIMITED',
+  message: 'Demasiados intentos de pago. Espera unos minutos.',
+});
+const captureOrderLimiter = createLimiter({
+  windowMs: 10 * 60 * 1000,
+  limit: 20,
+  code: 'PAYMENT_RATE_LIMITED',
+  message: 'Demasiados intentos de pago. Espera unos minutos.',
+});
 
 /* ========================
    ENV / Constantes PayPal
@@ -48,6 +61,27 @@ function centsToUsdString(cents) {
   return (n / 100).toFixed(2);
 }
 
+function paymentsAvailable() {
+  return PAYPAL_CLIENT_ID && PAYPAL_SECRET &&
+    !PAYPAL_CLIENT_ID.startsWith('pending-') &&
+    !PAYPAL_SECRET.startsWith('pending-') &&
+    (process.env.NODE_ENV !== 'production' || PAYPAL_ENV === 'live');
+}
+
+function cleanText(value, maxLength) {
+  return String(value || '').normalize('NFKC').trim().slice(0, maxLength);
+}
+
+function cleanAddress(value) {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return {
+    name: cleanText(raw.name, 100), phone: cleanText(raw.phone, 32),
+    taxId: cleanText(raw.taxId, 40), address1: cleanText(raw.address1, 180),
+    city: cleanText(raw.city, 100), state: cleanText(raw.state, 100),
+    zip: cleanText(raw.zip, 24), country: cleanText(raw.country, 2).toUpperCase(),
+  };
+}
+
 /* ========================
    Rutas públicas
 ======================== */
@@ -60,20 +94,33 @@ router.get('/config', (_req, res) => {
 /* ========================
    Crear Order
 ======================== */
-router.post('/create-order', async (req, res) => {
+router.post('/create-order', createOrderLimiter, async (req, res) => {
   try {
-    const { productId, qty = 1, notes, shipping, billing } = req.body || {};
-
-    if (!productId) {
-      return res.status(400).json({ error: 'productId requerido' });
+    if (!paymentsAvailable()) {
+      return res.status(503).json({ error: 'payments_not_configured' });
     }
+    const { productId, qty = 1, shipping, billing } = req.body || {};
+    const requestId = cleanText(req.body?.requestId, 120);
+
+    if (!mongoose.isValidObjectId(productId) ||
+        !/^[A-Za-z0-9._:-]{8,120}$/.test(requestId)) {
+      return res.status(400).json({ error: 'productId o requestId no valido' });
+    }
+
+    const previous = await Order.findOne({ clientRequestId: requestId }).lean();
+    if (previous?.providerOrderId) return res.json({ id: previous.providerOrderId, duplicate: true });
+    if (previous) return res.status(409).json({ error: 'payment_request_in_progress' });
 
     const product = await Product.findById(productId).lean();
     if (!product || product.active === false) {
       return res.status(400).json({ error: 'Producto no disponible' });
     }
 
-    const safeQty = Math.max(1, parseInt(qty || 1, 10));
+    const safeQty = Number(qty);
+    if (!Number.isInteger(safeQty) || safeQty < 1 || safeQty > 10 ||
+        !Number.isSafeInteger(product.price) || product.price < 1) {
+      return res.status(400).json({ error: 'Cantidad o precio no valido' });
+    }
     const subtotal = product.price * safeQty; // price en centavos
     const total = subtotal; // aquí podrías sumar envío/impuestos
 
@@ -86,13 +133,14 @@ router.post('/create-order', async (req, res) => {
         qty: safeQty,
         subtotal
       }],
-      notes,
-      shipping,
-      billing,
+      notes: cleanText(req.body?.notes, 500),
+      shipping: cleanAddress(shipping),
+      billing: cleanAddress(billing),
       currency: 'USD',
       total,
       paymentProvider: 'paypal',
-      paid: false
+      paid: false,
+      clientRequestId: requestId,
     });
 
     // 2) Crear order en PayPal
@@ -143,10 +191,18 @@ router.post('/create-order', async (req, res) => {
 /* ========================
    Capturar pago
 ======================== */
-router.post('/capture-order', async (req, res) => {
+router.post('/capture-order', captureOrderLimiter, async (req, res) => {
   try {
-    const { orderId } = req.body || {};
-    if (!orderId) return res.status(400).json({ error: 'orderId requerido' });
+    if (!paymentsAvailable()) {
+      return res.status(503).json({ error: 'payments_not_configured' });
+    }
+    const orderId = cleanText(req.body?.orderId, 64);
+    if (!/^[A-Za-z0-9-]{8,64}$/.test(orderId)) {
+      return res.status(400).json({ error: 'orderId no valido' });
+    }
+    const localOrder = await Order.findOne({ providerOrderId: orderId });
+    if (!localOrder) return res.status(404).json({ error: 'order_not_found' });
+    if (localOrder.paid) return res.json({ status: 'COMPLETED', duplicate: true });
 
     const access = await getAccessToken();
 
@@ -171,19 +227,20 @@ router.post('/capture-order', async (req, res) => {
 
     const status = data?.status; // "COMPLETED"
     const referenceId = data?.purchase_units?.[0]?.reference_id;
-
-    // Marca pedido local como pagado
-    if (referenceId) {
-      await Order.findByIdAndUpdate(referenceId, {
-        paid: status === 'COMPLETED',
-        providerStatus: status
-      });
-    } else {
-      await Order.findOneAndUpdate(
-        { providerOrderId: orderId },
-        { paid: status === 'COMPLETED', providerStatus: status }
-      );
+    const capturedAmount = data?.purchase_units?.[0]?.payments?.captures?.[0]?.amount;
+    const validCapture = status === 'COMPLETED' &&
+      String(referenceId || '') === String(localOrder._id) &&
+      capturedAmount?.currency_code === localOrder.currency &&
+      capturedAmount?.value === centsToUsdString(localOrder.total);
+    if (!validCapture) {
+      console.error('PayPal devolvio una captura que no coincide con el pedido local', orderId);
+      return res.status(409).json({ error: 'payment_verification_failed' });
     }
+
+    await Order.updateOne(
+      { _id: localOrder._id, providerOrderId: orderId, paid: false },
+      { $set: { paid: true, providerStatus: status } }
+    );
 
     return res.json({ status });
   } catch (err) {

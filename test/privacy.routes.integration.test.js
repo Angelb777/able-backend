@@ -105,11 +105,15 @@ test('a user without an equipped skin receives Simple as the initial skin', asyn
   const originalFindById = User.findById;
   const originalUpdateOne = User.updateOne;
   const originalSkinFindOne = Skin.findOne;
+  const originalSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = 'privacy-skin-route-secret';
   let skinQuery;
   let userUpdate;
 
   User.findById = () => new FakeQuery({
     _id: userId,
+    role: 'cliente',
+    email: 'skin@example.test',
     skinSeleccionada: null,
   });
   Skin.findOne = (query) => {
@@ -129,6 +133,8 @@ test('a user without an equipped skin receives Simple as the initial skin', asyn
     User.findById = originalFindById;
     User.updateOne = originalUpdateOne;
     Skin.findOne = originalSkinFindOne;
+    if (originalSecret == null) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = originalSecret;
   });
 
   const app = express();
@@ -140,6 +146,7 @@ test('a user without an equipped skin receives Simple as the initial skin', asyn
 
   const response = await fetch(
     `http://127.0.0.1:${server.address().port}/api/users/${userId}/skin`,
+    { headers: { authorization: `Bearer ${jwt.sign({ id: userId }, process.env.JWT_SECRET)}` } },
   );
   assert.equal(response.status, 200);
   const body = await response.json();

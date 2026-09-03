@@ -469,6 +469,7 @@
         style: { shape:"rect", layout:"vertical" },
         createOrder: async () => {
           const body = payloadFromForm();
+          body.requestId = `web-${Date.now()}-${Math.random().toString(36).slice(2)}`;
           const res = await fetch('/api/paypal/create-order', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify(body)

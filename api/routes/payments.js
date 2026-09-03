@@ -68,6 +68,12 @@ router.post("/", ...adminOnly, async (req, res) => {
 // registra un pago verificado de plataforma y abona el paquete en una sola
 // transacción. requestId hace que los reintentos no dupliquen la compra.
 router.post('/stepcoins/checkout', verifyToken, checkRole(['cliente']), async (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(503).json({
+      error: 'La compra de Stepcoins no esta disponible hasta verificar el pago real',
+      code: 'VERIFIED_PAYMENT_REQUIRED',
+    });
+  }
   const cantidad = Number(req.body.cantidad);
   const requestId = String(req.body.requestId || '').trim();
   const price = STEPCOIN_PACKAGES_EUR.get(cantidad);
