@@ -1196,9 +1196,16 @@ module.exports = function(io, dependencies = {}) {
       } catch (_) {
         continue;
       }
-      const candidates = primaryAlivePlayersInZone(turret.zoneId).filter((p) =>
-        p.userId !== String(turret.ownerUserId) &&
-        geo.distanceMeters(turret, p) <= turret.alcance);
+      const candidates = [];
+      for (const player of primaryAlivePlayersInZone(turret.zoneId)) {
+        if (player.userId === String(turret.ownerUserId) ||
+            geo.distanceMeters(turret, player) > turret.alcance ||
+            await ClanMembershipService.shareActiveClan(
+              String(turret.ownerUserId),
+              String(player.userId),
+            )) continue;
+        candidates.push(player);
+      }
       candidates.sort((a, b) => geo.distanceMeters(turret, a) - geo.distanceMeters(turret, b));
       const playerTarget = candidates[0];
       const ufoCandidates = [...activeUfos.values()]

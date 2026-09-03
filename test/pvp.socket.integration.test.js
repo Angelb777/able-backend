@@ -278,6 +278,17 @@ test('two players share presence, movement, one hit, life and explosions', async
       return { lean: async () => [] };
     },
   };
+  let turretAllianceEnabled = false;
+  const fakeClanMembershipService = {
+    getClanIds: async () => new Set(),
+    shareActiveClan: async (firstUserId, secondUserId) => {
+      const pair = new Set([String(firstUserId), String(secondUserId)]);
+      return turretAllianceEnabled &&
+        pair.has('507f1f77bcf86cd799439011') &&
+        pair.has('507f191e810c19729de860ea');
+    },
+    events: { on() {} },
+  };
 
   const httpServer = http.createServer();
   const io = new Server(httpServer, { transports: ['websocket'] });
@@ -289,6 +300,7 @@ test('two players share presence, movement, one hit, life and explosions', async
     AirstrikeModel: fakeAirstrikeModel,
     UserModel: fakeUserModel,
     UfoModel: fakeUfoModel,
+    ClanMembershipService: fakeClanMembershipService,
   });
   await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
   const address = httpServer.address();
@@ -766,6 +778,14 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.equal(lifeByUser.get('507f191e810c19729de860ea'), 710);
   assert.deepEqual(deletedAirstrikes, ['airstrike-test-1']);
 
+  const enemyPosition = geo.computeOffset(origin, 70, 0);
+  const playerC = await connectClient(url);
+  sockets.push(playerC);
+  await emitWithAck(playerC, 'presence:hello', {
+    userId: '507f191e810c19729de860eb',
+    ...enemyPosition,
+  });
+  turretAllianceEnabled = true;
   const turretSpawnOnB = waitForEvent(playerB, 'turret:spawn');
   const turretShotOnA = waitForEvent(playerA, 'turret:shot', 3000);
   const turretPlaceAck = await emitWithAck(playerA, 'turret:place', {
@@ -786,9 +806,13 @@ test('two players share presence, movement, one hit, life and explosions', async
 
   const turretShot = await turretShotOnA;
   assert.equal(turretShot.turretId, 'turret-test-1');
-  assert.equal(turretShot.targetUserId, '507f191e810c19729de860ea');
+  assert.equal(turretShot.targetUserId, '507f191e810c19729de860eb');
   assert.equal(turretShot.dano, 10);
   assert.equal(spawnedTurret.idleSpritesheet.url, '/uploads/cards/turret-idle.png');
+  turretAllianceEnabled = false;
+  const enemyLeaveOnA = waitForEvent(playerA, 'presence:leave');
+  playerC.disconnect();
+  await enemyLeaveOnA;
 
   const east30 = geo.computeOffset(origin, 30, 90);
   const ownerMoveOnB = waitForEvent(playerB, 'presence:move');
