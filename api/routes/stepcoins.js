@@ -67,9 +67,79 @@ async function positiveClientRewardsSince(userId, source, since, session) {
   return Number(result?.total || 0);
 }
 
+const MOVEMENT_SOURCES = new Map([
+  ['pedometer', 'walking_pedometer'],
+  ['walking_pedometer', 'walking_pedometer'],
+  ['cycling_gps', 'cycling_gps'],
+]);
+
+function normalizeMovementSource(source) {
+  return MOVEMENT_SOURCES.get(String(source || '').trim()) || '';
+}
+
+function movementAvailableReward(source, movementSession, now = Date.now()) {
+  const allowanceUpdatedAt = movementSession.allowanceUpdatedAt || movementSession.issuedAt;
+  const elapsedMs = Math.max(0, now - new Date(allowanceUpdatedAt).getTime());
+  const elapsedSeconds = elapsedMs / 1000;
+  // 300 pasos/minuto (150 SC) permite carrera intensa sin alterar el ratio
+  // 2 pasos = 1 SC. Bicicleta conserva el techo previo de 15.000 SC/hora.
+  const perHour = source === 'cycling_gps'
+    ? integerEnv('CYCLING_REWARD_PER_HOUR', 15000)
+    : integerEnv('WALKING_REWARD_PER_HOUR', 9000);
+  const maximumBurst = 500;
+  const previouslyAvailable = Math.max(0, Number(movementSession.availableReward) || 0);
+  return Math.min(maximumBurst, previouslyAvailable + elapsedSeconds * perHour / 3600);
+}
+
+router.post('/movement/session', verifyToken, economyWriteLimiter, async (req, res) => {
+  const source = normalizeMovementSource(req.body?.source);
+  if (!source) {
+    return res.status(400).json({ error: 'Origen de movimiento no valido' });
+  }
+  const targetUserId = String(req.user.id);
+  try {
+    let user = await User.findById(targetUserId).select('+movementSessions');
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+    let movementSession = user.movementSessions?.find((entry) => entry.source === source);
+    if (!movementSession) {
+      const created = {
+        source,
+        id: randomUUID(),
+        issuedAt: new Date(),
+        nextSequence: 1,
+        totalClaimed: 0,
+        availableReward: 0,
+        allowanceUpdatedAt: new Date(),
+      };
+      user = await User.findOneAndUpdate(
+        { _id: targetUserId, 'movementSessions.source': { $ne: source } },
+        { $push: { movementSessions: created } },
+        { new: true },
+      ).select('+movementSessions');
+      if (!user) user = await User.findById(targetUserId).select('+movementSessions');
+      movementSession = user?.movementSessions?.find((entry) => entry.source === source);
+    }
+    if (!movementSession) {
+      return res.status(409).json({ error: 'No se pudo crear la sesion de movimiento' });
+    }
+    return res.json({
+      sessionId: movementSession.id,
+      source: movementSession.source,
+      issuedAt: movementSession.issuedAt,
+      nextSequence: movementSession.nextSequence,
+    });
+  } catch (error) {
+    console.error('Error creando sesion de movimiento:', error);
+    return res.status(500).json({ error: 'Error interno creando sesion de movimiento' });
+  }
+});
+
 // Añadir o quitar stepcoins (positivo o negativo)
 router.post("/adjust", verifyToken, economyWriteLimiter, async (req, res) => {
-  const { userId, cantidad, tipo, descripcion, source, claimId, level } = req.body;
+  const {
+    userId, cantidad, tipo, descripcion, source, claimId, level,
+    movementSessionId, movementSequence,
+  } = req.body;
   const targetUserId = authenticatedTarget(req);
 
   if (req.user.role !== 'admin' && userId && String(userId) !== targetUserId) {
@@ -86,9 +156,12 @@ router.post("/adjust", verifyToken, economyWriteLimiter, async (req, res) => {
   }
   const clientSource = String(source || '').trim();
   const normalizedClaimId = String(claimId || '').trim();
+  const movementSource = normalizeMovementSource(clientSource);
   if (req.user.role !== 'admin') {
-    const validPedometer = ['pedometer', 'walking_pedometer', 'cycling_gps']
-      .includes(clientSource) && cantidad <= 500;
+    const validPedometer = Boolean(movementSource) && cantidad <= 500 &&
+      typeof movementSessionId === 'string' && movementSessionId.length >= 16 &&
+      movementSessionId.length <= 160 && Number.isSafeInteger(movementSequence) &&
+      movementSequence >= 1;
     const validMiniGame = LEGACY_LEVEL_REWARD_GAMES.includes(clientSource) &&
       cantidad === 100 && Number.isInteger(level) &&
       ((clientSource === 'culture' && level >= 1 && level <= 10) ||
@@ -103,7 +176,9 @@ router.post("/adjust", verifyToken, economyWriteLimiter, async (req, res) => {
   try {
     const operationKey = req.user.role === 'admin'
       ? undefined
-      : `client-reward:${targetUserId}:${clientSource}:${normalizedClaimId}`;
+      : movementSource
+        ? `movement:${targetUserId}:${movementSessionId}:${movementSequence}`
+        : `client-reward:${targetUserId}:${clientSource}:${normalizedClaimId}`;
     session = await User.startSession();
     session.startTransaction();
     if (operationKey) {
@@ -177,11 +252,52 @@ router.post("/adjust", verifyToken, economyWriteLimiter, async (req, res) => {
       });
     }
 
-    if (req.user.role !== 'admin' && clientSource === 'cycling_gps') {
+    let user;
+    let movementSession;
+    let movementRewardAvailable;
+    if (req.user.role !== 'admin' && movementSource) {
+      user = await User.findById(targetUserId)
+        .select('+movementSessions')
+        .session(session);
+      if (!user) {
+        await session.abortTransaction();
+        return res.status(404).json({ error: "Usuario no encontrado" });
+      }
+      movementSession = user.movementSessions?.find(
+        (entry) => entry.source === movementSource && entry.id === movementSessionId,
+      );
+      if (!movementSession) {
+        await session.abortTransaction();
+        return res.status(403).json({
+          error: 'Sesion de movimiento no valida',
+          code: 'INVALID_MOVEMENT_SESSION',
+        });
+      }
+      if (movementSequence !== movementSession.nextSequence) {
+        await session.abortTransaction();
+        return res.status(409).json({
+          error: 'Secuencia de movimiento no valida',
+          code: 'INVALID_MOVEMENT_SEQUENCE',
+          nextSequence: movementSession.nextSequence,
+        });
+      }
+      movementRewardAvailable = movementAvailableReward(
+        movementSource, movementSession,
+      );
+      if (cantidad > Math.floor(movementRewardAvailable)) {
+        await session.abortTransaction();
+        return res.status(429).json({
+          error: 'Incremento de Stepcoins no compatible con el tiempo de actividad',
+          code: 'ANOMALOUS_STEPCOIN_REWARD',
+        });
+      }
+    }
+
+    if (req.user.role !== 'admin' && movementSource === 'cycling_gps') {
       const now = Date.now();
       const hourlyLimit = integerEnv('CYCLING_REWARD_PER_HOUR', 15000);
       const hourly = await positiveClientRewardsSince(
-        targetUserId, clientSource, new Date(now - 60 * 60 * 1000), session,
+        targetUserId, movementSource, new Date(now - 60 * 60 * 1000), session,
       );
       if (hourly + cantidad > hourlyLimit) {
         await session.abortTransaction();
@@ -191,7 +307,7 @@ router.post("/adjust", verifyToken, economyWriteLimiter, async (req, res) => {
         });
       }
     }
-    const user = await User.findById(targetUserId).session(session);
+    user ??= await User.findById(targetUserId).session(session);
     if (!user) {
       await session.abortTransaction();
       return res.status(404).json({ error: "Usuario no encontrado" });
@@ -205,6 +321,16 @@ router.post("/adjust", verifyToken, economyWriteLimiter, async (req, res) => {
 
     // Actualizar saldo
     user.stepcoins += cantidad;
+    if (movementSession) {
+      movementSession.totalClaimed += cantidad;
+      movementSession.availableReward = Math.max(
+        0,
+        movementRewardAvailable - cantidad,
+      );
+      movementSession.allowanceUpdatedAt = new Date();
+      movementSession.nextSequence += 1;
+      movementSession.lastClaimedAt = new Date();
+    }
     await user.save({ session });
 
     // Registrar transacción
@@ -214,18 +340,28 @@ router.post("/adjust", verifyToken, economyWriteLimiter, async (req, res) => {
       tipo: req.user.role === 'admin' ? 'admin' : 'recompensa',
       descripcion: req.user.role === 'admin'
         ? String(descripcion || '').slice(0, 300)
-        : `Actividad validada: ${clientSource}`,
+        : `Actividad validada: ${movementSource || clientSource}`,
       operationKey,
-      metadata: { requestedType: tipo, source: clientSource, level },
+      metadata: {
+        requestedType: tipo,
+        source: movementSource || clientSource,
+        level,
+        movementSessionId: movementSession?.id,
+        movementSequence: movementSession ? movementSequence : undefined,
+      },
     });
     await trans.save({ session });
 
     await session.commitTransaction();
     return res.json({
       message: "Stepcoins actualizados correctamente",
-      user,
+      user: movementSession ? { stepcoins: user.stepcoins } : user,
       duplicate: false,
       claimId: normalizedClaimId || undefined,
+      movementSession: movementSession ? {
+        sessionId: movementSession.id,
+        nextSequence: movementSession.nextSequence,
+      } : undefined,
     });
   } catch (err) {
     if (session?.inTransaction()) await session.abortTransaction();

@@ -400,6 +400,94 @@ test('life updates carry a strictly increasing server version', async (t) => {
   a.disconnect();
 });
 
+test('adjacent geographic cells and both sides of a boundary share presence', async (t) => {
+  const server = await startServer();
+  t.after(() => server.close());
+  const west = await connect(server.url);
+  await ack(west, 'presence:hello', {
+    userId: 'west', lat: 41.659999, lng: -0.88, heading: 0,
+  });
+  const spawn = once(west, 'presence:spawn');
+  const east = await connect(server.url);
+  const response = await ack(east, 'presence:hello', {
+    userId: 'east', lat: 41.660001, lng: -0.88, heading: 0,
+  });
+  assert.deepEqual(response.players.map((player) => player.userId), ['west']);
+  assert.equal((await spawn).userId, 'east');
+  west.disconnect(); east.disconnect();
+});
+
+test('near players in neighboring cells see each other', async (t) => {
+  const server = await startServer();
+  t.after(() => server.close());
+  const a = await connect(server.url);
+  await ack(a, 'presence:hello', {
+    userId: 'near-a', lat: 41.659, lng: -0.88, heading: 0,
+  });
+  const b = await connect(server.url);
+  const response = await ack(b, 'presence:hello', {
+    userId: 'near-b', lat: 41.661, lng: -0.88, heading: 0,
+  });
+  assert.equal(response.players.some((player) => player.userId === 'near-a'), true);
+  a.disconnect(); b.disconnect();
+});
+
+test('remote players and client-selected rooms never receive each other coordinates', async (t) => {
+  const server = await startServer();
+  t.after(() => server.close());
+  const zaragoza = await connect(server.url);
+  await ack(zaragoza, 'presence:hello', {
+    userId: 'zaragoza', lat: 41.6488, lng: -0.8891, heading: 0,
+    roomId: 'madrid', zoneId: 'geo:remote:forced',
+  });
+  const remoteEvents = [];
+  zaragoza.on('presence:spawn', (event) => remoteEvents.push(event));
+  zaragoza.on('presence:move', (event) => remoteEvents.push(event));
+  const madrid = await connect(server.url);
+  const response = await ack(madrid, 'presence:hello', {
+    userId: 'madrid', lat: 40.4168, lng: -3.7038, heading: 0,
+    roomId: 'zaragoza', zoneId: 'geo:forced:zaragoza',
+  });
+  assert.deepEqual(response.players, []);
+  madrid.emit('presence:update', {
+    clientSeq: 1, lat: 40.41681, lng: -3.7038, heading: 1,
+    roomId: 'zaragoza', zoneId: 'geo:forced:zaragoza',
+  });
+  const madridEvents = [];
+  madrid.on('presence:move', (event) => {
+    if (event.userId === 'zaragoza') madridEvents.push(event);
+  });
+  zaragoza.emit('presence:update', {
+    clientSeq: 1, lat: 40.4168, lng: -3.7038, heading: 0,
+  });
+  await wait(50);
+  assert.deepEqual(remoteEvents, []);
+  assert.deepEqual(madridEvents, []);
+  zaragoza.disconnect(); madrid.disconnect();
+});
+
+test('crossing a cell updates rooms without reconnecting and preserves nearby presence', async (t) => {
+  const server = await startServer();
+  t.after(() => server.close());
+  const observer = await connect(server.url);
+  await ack(observer, 'presence:hello', {
+    userId: 'border-observer', lat: 41.661, lng: -0.88, heading: 0,
+  });
+  const mover = await connect(server.url);
+  await ack(mover, 'presence:hello', {
+    userId: 'border-mover', lat: 41.659, lng: -0.88, heading: 0,
+  });
+  const move = once(observer, 'presence:move');
+  mover.emit('presence:update', {
+    clientSeq: 1, lat: 41.671, lng: -0.88, heading: 0,
+  });
+  const received = await move;
+  assert.equal(received.userId, 'border-mover');
+  assert.equal(received.lat, 41.671);
+  assert.equal(mover.connected, true);
+  observer.disconnect(); mover.disconnect();
+});
+
 test('repeated reconnects keep one presence and one event per update', async (t) => {
   const server = await startServer(100);
   t.after(() => server.close());

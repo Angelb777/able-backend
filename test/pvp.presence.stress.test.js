@@ -68,11 +68,14 @@ async function runLoad(userCount) {
       heading: round,
     }));
   }
-  await new Promise((resolve) => setTimeout(resolve, 250));
+  const deliveryDeadline = Date.now() + 3000;
+  const expectedMoves = userCount * userCount * 5;
+  while (receivedMoves < expectedMoves && Date.now() < deliveryDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
   const cpu = process.cpuUsage(cpuStart);
   const heapDelta = process.memoryUsage().heapUsed - heapStart;
   eventLoop.disable();
-  const expectedMoves = userCount * userCount * 5;
   assert.equal(receivedMoves, expectedMoves);
   assert.equal(sockets.filter((socket) => !socket.connected).length, 0);
   const metrics = {

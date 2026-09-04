@@ -785,7 +785,7 @@ module.exports = function(io, dependencies = {}) {
     for (const [socketId, player] of players) {
       if (player.gameModeEnabled === false ||
           primarySocketByUser.get(player.userId) !== socketId ||
-          player.zoneId !== zoneId || (player.vida ?? 0) <= 0) continue;
+          !zonesAreLocal(player.zoneId, zoneId) || (player.vida ?? 0) <= 0) continue;
       result.push(player);
     }
     return result;
@@ -885,7 +885,10 @@ module.exports = function(io, dependencies = {}) {
       // Así una bala nunca atraviesa una torre/OVNI para impactar algo posterior.
       const candidates = [];
       const seenUsers = new Set();
-      const socketsInZone = roomIndex.get(b.zoneId) || new Set();
+      const socketsInZone = new Set();
+      for (const localZoneId of neighboringZoneIds(b.zoneId)) {
+        for (const sid of roomIndex.get(localZoneId) || []) socketsInZone.add(sid);
+      }
       const shooter = playersForUser(b.byUserId)[0];
       for (const sid of socketsInZone) {
         const player = players.get(sid);
@@ -909,7 +912,7 @@ module.exports = function(io, dependencies = {}) {
         if (impact) candidates.push({ type: 'player', target: player, impact });
       }
       for (const [turretId, turret] of turrets) {
-        if (turret.zoneId !== b.zoneId ||
+        if (!zonesAreLocal(turret.zoneId, b.zoneId) ||
             String(turret.ownerUserId) === b.byUserId) continue;
         const impact = segmentCircleIntersection(
           previous, next, turret, PLAYER_HIT_RADIUS_M
@@ -919,7 +922,7 @@ module.exports = function(io, dependencies = {}) {
         }
       }
       for (const state of activeUfos.values()) {
-        if (state.zoneId !== b.zoneId) continue;
+        if (!zonesAreLocal(state.zoneId, b.zoneId)) continue;
         const impact = segmentCircleIntersection(
           previous, next, state, UFO_HIT_RADIUS_M
         );
@@ -1144,7 +1147,7 @@ module.exports = function(io, dependencies = {}) {
       const target = playersForUser(projectile.targetUserId)[0];
       const hit = Boolean(
         target && target.gameModeEnabled !== false && (target.vida ?? 0) > 0 &&
-        target.zoneId === projectile.zoneId &&
+        zonesAreLocal(target.zoneId, projectile.zoneId) &&
         geo.distanceMeters(target, projectile.to) <= 15
       );
       let result = null;
@@ -1363,7 +1366,7 @@ module.exports = function(io, dependencies = {}) {
       const candidatesByUser = new Map();
       for (const player of players.values()) {
         if (player.gameModeEnabled === false ||
-            player.zoneId !== mine.zoneId || (player.vida ?? 0) <= 0) {
+            !zonesAreLocal(player.zoneId, mine.zoneId) || (player.vida ?? 0) <= 0) {
           continue;
         }
         if (!candidatesByUser.has(player.userId)) {
@@ -1513,7 +1516,7 @@ module.exports = function(io, dependencies = {}) {
       const targetsByUser = new Map();
       for (const player of players.values()) {
         if (player.gameModeEnabled === false ||
-            player.zoneId !== airstrike.zoneId ||
+            !zonesAreLocal(player.zoneId, airstrike.zoneId) ||
             (player.vida ?? 0) <= 0 ||
             geo.distanceMeters(airstrike, player) >
               airstrike.radioExplosion) {
@@ -1592,8 +1595,44 @@ module.exports = function(io, dependencies = {}) {
 
   // Helpers
   function toZoneId(lat, lng) {
-    // Celda ~120 m. Ajusta DECIMALES para agrupar menos/más jugadores.
-    return 'GLOBAL_TEST_ROOM';
+    // Celda local de ~1 km; la vecindad 3x3 evita cortes en sus límites.
+    const latCell = Math.floor((lat + 90) / 0.01);
+    const lngCell = Math.floor((lng + 180) / 0.01);
+    return `geo:${latCell}:${lngCell}`;
+  }
+
+  function zoneCoordinates(zoneId) {
+    const match = /^geo:(\d+):(\d+)$/.exec(String(zoneId));
+    return match ? { latCell: Number(match[1]), lngCell: Number(match[2]) } : null;
+  }
+
+  function neighboringZoneIds(zoneId) {
+    const cell = zoneCoordinates(zoneId);
+    if (!cell) return new Set();
+    const result = new Set();
+    for (let latOffset = -1; latOffset <= 1; latOffset += 1) {
+      for (let lngOffset = -1; lngOffset <= 1; lngOffset += 1) {
+        result.add(`geo:${cell.latCell + latOffset}:${cell.lngCell + lngOffset}`);
+      }
+    }
+    return result;
+  }
+
+  function zonesAreLocal(firstZoneId, secondZoneId) {
+    return neighboringZoneIds(firstZoneId).has(secondZoneId);
+  }
+
+  function updateZoneSubscriptions(socket, previousZoneId, nextZoneId) {
+    const previousRooms = previousZoneId
+      ? neighboringZoneIds(previousZoneId)
+      : new Set();
+    const nextRooms = neighboringZoneIds(nextZoneId);
+    for (const room of previousRooms) {
+      if (!nextRooms.has(room)) socket.leave(room);
+    }
+    for (const room of nextRooms) {
+      if (!previousRooms.has(room)) socket.join(room);
+    }
   }
 
   // Validar spawn de bala contra su carta (anti-cheat)
@@ -1742,10 +1781,9 @@ module.exports = function(io, dependencies = {}) {
         const zoneId = toZoneId(lat, lng);
         const previous = players.get(socket.id);
         if (previous) {
-          socket.leave(previous.zoneId);
           roomIndex.get(previous.zoneId)?.delete(socket.id);
         }
-        socket.join(zoneId);
+        updateZoneSubscriptions(socket, previous?.zoneId, zoneId);
         if (!roomIndex.has(zoneId)) roomIndex.set(zoneId, new Set());
         roomIndex.get(zoneId).add(socket.id);
 
@@ -1817,7 +1855,7 @@ module.exports = function(io, dependencies = {}) {
         // Enviar al que entra el estado de la sala (jugadores ya presentes)
         const othersByUserId = new Map();
         for (const p of lastPresenceByUser.values()) {
-          if (p.zoneId === zoneId && p.userId !== userId) {
+          if (zonesAreLocal(p.zoneId, zoneId) && p.userId !== userId) {
             othersByUserId.set(p.userId, {
               userId:p.userId,
               lat:p.lat,
@@ -1840,19 +1878,19 @@ module.exports = function(io, dependencies = {}) {
         await minesReady;
         await airstrikesReady;
         const roomTurrets = [...turrets.values()]
-          .filter((t) => t.zoneId === zoneId)
+          .filter((t) => zonesAreLocal(t.zoneId, zoneId))
           .map(turretPayload);
         const roomMines = [...mines.values()]
-          .filter((mine) => mine.zoneId === zoneId)
+          .filter((mine) => zonesAreLocal(mine.zoneId, zoneId))
           .map(minePayload);
         const roomAirstrikes = [...airstrikes.values()]
-          .filter((airstrike) => airstrike.zoneId === zoneId)
+          .filter((airstrike) => zonesAreLocal(airstrike.zoneId, zoneId))
           .map(airstrikePayload);
         const roomUfos = [...activeUfos.values()]
-          .filter((ufo) => ufo.zoneId === zoneId)
+          .filter((ufo) => zonesAreLocal(ufo.zoneId, zoneId))
           .map(ufoPayload);
         const roomUfoProjectiles = [...activeUfoProjectiles.values()]
-          .filter((projectile) => projectile.zoneId === zoneId)
+          .filter((projectile) => zonesAreLocal(projectile.zoneId, zoneId))
           .map((projectile) => ufoProjectilePayload(projectile));
         await policeRuntime.ensureAmbientPatrol(playerState, { lat, lng });
         const policeSnapshot = policeRuntime.getSnapshot(zoneId);
@@ -1941,6 +1979,17 @@ module.exports = function(io, dependencies = {}) {
         if (clientSeq <= p.lastClientSeq) return;
         p.lastClientSeq = clientSeq;
       }
+      const elapsedSeconds = Math.max(0, (Date.now() - p.lastSeen) / 1000);
+      const maximumJumpMeters = Math.max(10000, elapsedSeconds * 100);
+      if (geo.distanceMeters(p, { lat, lng }) > maximumJumpMeters) {
+        log('presence jump rejected', {
+          socketId: socket.id,
+          userId: p.userId,
+          from: { lat: p.lat, lng: p.lng },
+          to: { lat, lng },
+        });
+        return;
+      }
 
       const normalizedRequestedSkinId = String(requestedSkinId || '');
       if (socket.data.authUserId && normalizedRequestedSkinId !== String(p.skinId || '')) {
@@ -1969,11 +2018,23 @@ module.exports = function(io, dependencies = {}) {
       }
 
       const newZone = toZoneId(lat, lng);
+      const previousZone = p.zoneId;
+      const previouslyLocal = new Map();
+      const newlyLocal = new Map();
+      if (newZone !== previousZone) {
+        for (const other of lastPresenceByUser.values()) {
+          if (other.userId === p.userId) continue;
+          if (zonesAreLocal(other.zoneId, previousZone)) {
+            previouslyLocal.set(other.userId, other);
+          }
+          if (zonesAreLocal(other.zoneId, newZone)) {
+            newlyLocal.set(other.userId, other);
+          }
+        }
+      }
       if (newZone !== p.zoneId) {
-        socket.leave(p.zoneId);
         roomIndex.get(p.zoneId)?.delete(socket.id);
-
-        socket.join(newZone);
+        updateZoneSubscriptions(socket, p.zoneId, newZone);
         if (!roomIndex.has(newZone)) roomIndex.set(newZone, new Set());
         roomIndex.get(newZone).add(socket.id);
 
@@ -1995,6 +2056,61 @@ module.exports = function(io, dependencies = {}) {
       }
       if (!socket.data.authUserId && typeof skinUrl === 'string') {
         p.skinUrl = skinUrl.trim();
+      }
+      if (newZone !== previousZone) {
+        const leavePayload = {
+          userId: p.userId,
+          seq: p.seq,
+          serverTimestamp: Date.now(),
+          lastSeen: p.lastSeen,
+          presenceSessionId: p.presenceSessionId,
+          reason: 'left-local-area',
+        };
+        for (const [otherUserId, other] of previouslyLocal) {
+          if (newlyLocal.has(otherUserId)) continue;
+          emitToUser(otherUserId, 'presence:leave', leavePayload);
+          emitToUser(p.userId, 'presence:leave', {
+            userId: other.userId,
+            seq: other.seq,
+            serverTimestamp: Date.now(),
+            lastSeen: other.lastSeen,
+            presenceSessionId: other.presenceSessionId,
+            reason: 'left-local-area',
+          });
+        }
+        for (const [otherUserId, other] of newlyLocal) {
+          if (previouslyLocal.has(otherUserId)) continue;
+          emitToUser(otherUserId, 'presence:spawn', {
+            userId: p.userId,
+            lat: p.lat,
+            lng: p.lng,
+            heading: p.heading,
+            skinUrl: p.skinUrl,
+            skinId: p.skinId || '',
+            skinDefinition: p.skinDefinition || null,
+            nickname: p.nickname,
+            vida: p.vida,
+            clanIds: p.clanIds || [],
+            bountyTotal: p.bountyTotal || 0,
+            ...duelPresence(p),
+            ...presenceMetadata(p),
+          });
+          emitToUser(p.userId, 'presence:spawn', {
+            userId: other.userId,
+            lat: other.lat,
+            lng: other.lng,
+            heading: other.heading,
+            skinUrl: other.skinUrl,
+            skinId: other.skinId || '',
+            skinDefinition: other.skinDefinition || null,
+            nickname: other.nickname,
+            vida: other.vida,
+            clanIds: other.clanIds || [],
+            bountyTotal: other.bountyTotal || 0,
+            ...duelPresence(other),
+            ...presenceMetadata(other),
+          });
+        }
       }
       nsp.to(p.zoneId).emit('presence:move', {
         userId: p.userId,

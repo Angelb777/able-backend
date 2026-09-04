@@ -67,6 +67,21 @@ const miniGameSessionSchema = new mongoose.Schema({
   rewardedLevels: { type: [Number], default: [] },
 }, { _id: false });
 
+const movementSessionSchema = new mongoose.Schema({
+  source: {
+    type: String,
+    enum: ['walking_pedometer', 'cycling_gps'],
+    required: true,
+  },
+  id: { type: String, required: true },
+  issuedAt: { type: Date, required: true },
+  nextSequence: { type: Number, min: 1, default: 1 },
+  totalClaimed: { type: Number, min: 0, default: 0 },
+  availableReward: { type: Number, min: 0, default: 0 },
+  allowanceUpdatedAt: { type: Date, required: true },
+  lastClaimedAt: { type: Date },
+}, { _id: false });
+
 const userSchema = new mongoose.Schema({
   nickname: { type: String, trim: true, maxlength: 20 },
   normalizedNickname: { type: String, trim: true, maxlength: 20 },
@@ -97,6 +112,7 @@ const userSchema = new mongoose.Schema({
   duelStats: { type: duelStatsSchema, default: () => ({}) },
   miniGameStats: { type: miniGameStatsSchema, default: () => ({}) },
   miniGameSessions: { type: [miniGameSessionSchema], default: [], select: false },
+  movementSessions: { type: [movementSessionSchema], default: [], select: false },
 
   cartas: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Card' }],
   cardUpgrades: { type: [cardUpgradeSchema], default: [] },
