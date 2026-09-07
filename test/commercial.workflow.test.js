@@ -19,6 +19,69 @@ const MapPromoCode = require('../api/models/MapPromoCode');
 const {
   fixedPrice, pendingStatus, assertCanApprove, addOneYear, recordTransition,
 } = require('../api/services/commercialWorkflow');
+const {
+  MIN_COMMERCIAL_REWARD_STEPCOINS,
+  assertCommercialRewardStepcoins,
+} = require('../api/services/rewardPolicy');
+
+test('commercial rewards require at least 5,000 Stepcoins', () => {
+  assert.equal(MIN_COMMERCIAL_REWARD_STEPCOINS, 5000);
+  assert.equal(assertCommercialRewardStepcoins('5000'), 5000);
+  assert.throws(() => assertCommercialRewardStepcoins(4999), /5000/);
+  assert.throws(() => assertCommercialRewardStepcoins('invalid'), /mínimo/i);
+});
+
+test('commercial request endpoint rejects rewards below 5,000 Stepcoins', async (t) => {
+  const previousSecret = process.env.JWT_SECRET;
+  const originalUserFindById = User.findById;
+  const originalEstablishmentFindOne = Establishment.findOne;
+  process.env.JWT_SECRET = 'commercial-reward-minimum-secret';
+
+  User.findById = () => ({
+    select() { return this; },
+    lean: async () => ({ _id: 'commerce', role: 'comercio', firebaseUid: null }),
+  });
+  Establishment.findOne = async () => ({
+    _id: new mongoose.Types.ObjectId(),
+    ownerId: 'commerce',
+    address: 'Calle Able 73',
+  });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/commercial', commercialRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    if (previousSecret == null) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousSecret;
+    User.findById = originalUserFindById;
+    Establishment.findOne = originalEstablishmentFindOne;
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const token = jwt.sign({ id: 'commerce' }, process.env.JWT_SECRET);
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/commercial/requests`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        type: 'reward',
+        subtype: 'discount',
+        title: 'Descuento demasiado barato',
+        formData: { stepcoins: 4999, percentage: 10 },
+      }),
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.match(body.error, /5000/);
+});
 
 test('commercial prices are fixed by Able73 and payment is never inferred', () => {
   assert.equal(fixedPrice('commercial_skin'), 500);

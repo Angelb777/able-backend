@@ -8,6 +8,51 @@ const User = require('../api/models/User');
 const Reward = require('../api/models/Reward');
 const rewardsRouter = require('../api/routes/rewards');
 
+test('legacy commerce reward endpoint rejects prices below 5,000 Stepcoins', async (t) => {
+  const previousSecret = process.env.JWT_SECRET;
+  const originalUserFindById = User.findById;
+  process.env.JWT_SECRET = 'legacy-commercial-reward-minimum-secret';
+
+  User.findById = () => ({
+    select() { return this; },
+    lean: async () => ({ _id: 'commerce', role: 'comercio', firebaseUid: null }),
+  });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/rewards', rewardsRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    if (previousSecret == null) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousSecret;
+    User.findById = originalUserFindById;
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const token = jwt.sign({ id: 'commerce' }, process.env.JWT_SECRET);
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/rewards`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tipo: 'descuento',
+        titulo: 'Descuento demasiado barato',
+        porcentaje: 10,
+        stepcoins: 4999,
+      }),
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.match(body.error, /5000/);
+});
+
 test('buyer lists are scoped to Able for admin and to the owner for commerce', async (t) => {
   const previousSecret = process.env.JWT_SECRET;
   const originalUserFindById = User.findById;

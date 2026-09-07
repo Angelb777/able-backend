@@ -9,6 +9,7 @@ const StepcoinTransaction = require("../models/StepcoinTransaction");
 const Establishment = require("../models/Establishment");
 const CommercialRequest = require("../models/CommercialRequest");
 const { recordTransition } = require("../services/commercialWorkflow");
+const { assertCommercialRewardStepcoins } = require("../services/rewardPolicy");
 const { verifyToken, checkRole } = require("../middlewares/authMiddleware");
 const { saveImage } = require("../utils/mediaStorage");
 const adminOnly = [verifyToken, checkRole(["admin"])];
@@ -103,15 +104,23 @@ router.post(
     } = req.body;
 
     const creadoPorAdmin = req.user.role === "admin";
-    const parsedStepcoins = Number(stepcoins);
+    let parsedStepcoins = Number(stepcoins);
     const parsedPercentage = Number(porcentaje || 0);
     const parsedAmount = Number(cantidadEuros || 0);
     const parsedUnits = Number(unidades);
     if (!["descuento", "premio"].includes(tipo) || !String(titulo || "").trim()) {
       return res.status(400).json({ error: "Tipo y título válidos son obligatorios" });
     }
-    if (!Number.isFinite(parsedStepcoins) || parsedStepcoins < 0) {
-      return res.status(400).json({ error: "Stepcoins no válidos" });
+    if (creadoPorAdmin) {
+      if (!Number.isFinite(parsedStepcoins) || parsedStepcoins < 0) {
+        return res.status(400).json({ error: "Stepcoins no válidos" });
+      }
+    } else {
+      try {
+        parsedStepcoins = assertCommercialRewardStepcoins(stepcoins);
+      } catch (error) {
+        return res.status(400).json({ error: error.message });
+      }
     }
     if (tipo === "premio" && (!Number.isInteger(parsedUnits) || parsedUnits < 0)) {
       return res.status(400).json({ error: "Unidades no validas" });

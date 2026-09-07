@@ -21,6 +21,7 @@ const {
   FIXED_PRICES, fixedPrice, pendingStatus, assertCanApprove,
   addOneYear, recordTransition,
 } = require('../services/commercialWorkflow');
+const { assertCommercialRewardStepcoins } = require('../services/rewardPolicy');
 
 const router = express.Router();
 const commerceOnly = [verifyToken, checkRole(['comercio'])];
@@ -564,10 +565,12 @@ router.post('/requests', ...commerceOnly, uploadFields, async (req, res) => {
     }
     if (type === 'reward') {
       const rewardType = subtype === 'prize' ? 'premio' : 'descuento';
-      const stepcoins = Number(formData.stepcoins);
+      let stepcoins;
       const unidades = Number(formData.unidades);
-      if (!Number.isFinite(stepcoins) || stepcoins < 0) {
-        return res.status(400).json({ error: 'Stepcoins no válidos' });
+      try {
+        stepcoins = assertCommercialRewardStepcoins(formData.stepcoins);
+      } catch (error) {
+        return res.status(400).json({ error: error.message });
       }
       if (rewardType === 'premio' && (!Number.isInteger(unidades) || unidades < 0)) {
         return res.status(400).json({ error: 'Unidades no validas' });
@@ -584,6 +587,7 @@ router.post('/requests', ...commerceOnly, uploadFields, async (req, res) => {
         }
       }
       formData.rewardType = rewardType;
+      formData.stepcoins = stepcoins;
       formData.unidades = rewardType === 'premio' ? unidades : null;
     }
 
