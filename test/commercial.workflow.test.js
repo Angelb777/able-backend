@@ -14,6 +14,7 @@ const CommercialRequest = require('../api/models/CommercialRequest');
 const Establishment = require('../api/models/Establishment');
 const PromocionComprada = require('../api/models/PromocionComprada');
 const Payment = require('../api/models/Payment');
+const StepcoinTransaction = require('../api/models/StepcoinTransaction');
 const MapPlan = require('../api/models/MapPlan');
 const MapPromoCode = require('../api/models/MapPromoCode');
 const {
@@ -187,7 +188,7 @@ test('commercial and legacy positioning endpoints enforce role boundaries', asyn
   assert.equal((await call('/api/rewards/orden-catalogo', 'admin', 'PATCH')).status, 400);
 });
 
-test('internal platform payment publishes an approved establishment for the Flutter map', async (t) => {
+test('the legacy monetary positioning checkout is disabled', async (t) => {
   const previousSecret = process.env.JWT_SECRET;
   process.env.JWT_SECRET = 'commercial-platform-payment-secret';
   const originals = {
@@ -274,26 +275,21 @@ test('internal platform payment publishes an approved establishment for the Flut
   );
   const body = await response.json();
 
-  assert.equal(response.status, 200);
-  assert.equal(body.status, 'published');
-  assert.equal(request.status, 'published');
-  assert.equal(request.paymentStatus, 'confirmed');
-  assert.equal(request.paymentProvider, 'platform');
-  assert.equal(positioningUpdate.status, 'published');
-  assert.equal(positioningUpdate.activo, true);
-  assert.equal(positioningUpdate.logoComercio, establishment.logoUrl);
-  assert.equal(positioningUpdate.lat, establishment.lat);
-  assert.equal(positioningUpdate.lng, establishment.lng);
-  assert.equal(paymentUpdate.commercialRequestId, requestId);
-  assert.equal(paymentUpdate.source, 'platform_checkout');
+  assert.equal(response.status, 410);
+  assert.equal(body.code, 'USE_MERCHANT_LOCAL_PROMOTION');
+  assert.match(body.error, /Stepcoins/);
+  assert.equal(request.status, 'pending_payment');
+  assert.equal(request.paymentStatus, 'pending');
+  assert.equal(positioningWrites, 0);
+  assert.equal(paymentWrites, 0);
 
   const retry = await fetch(
     `http://127.0.0.1:${server.address().port}/api/commercial/requests/${requestId}/pay`,
     { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
   );
-  assert.equal(retry.status, 200);
-  assert.equal(positioningWrites, 1);
-  assert.equal(paymentWrites, 1);
+  assert.equal(retry.status, 410);
+  assert.equal(positioningWrites, 0);
+  assert.equal(paymentWrites, 0);
 });
 
 test('a commerce can simulate payment for a product and it enters the ledger', async (t) => {
@@ -370,7 +366,7 @@ test('a commerce can simulate payment for a product and it enters the ledger', a
   assert.match(ledger.motivo, /Compra simulada/);
 });
 
-test('a commerce can subscribe a location directly and the payment enters the platform ledger', async (t) => {
+test('a commerce pays a location promotion atomically with Stepcoins', async (t) => {
   const previousSecret = process.env.JWT_SECRET;
   process.env.JWT_SECRET = 'direct-map-subscription-secret';
   const originals = {
@@ -384,6 +380,10 @@ test('a commerce can subscribe a location directly and the payment enters the pl
     subscriptionUpsert: PromocionComprada.findOneAndUpdate,
     paymentFindOne: Payment.findOne,
     paymentCreate: Payment.create,
+    stepcoinFindOne: StepcoinTransaction.findOne,
+    stepcoinCreate: StepcoinTransaction.create,
+    userFindOneAndUpdate: User.findOneAndUpdate,
+    startSession: mongoose.startSession,
   };
   t.after(() => {
     if (previousSecret == null) delete process.env.JWT_SECRET;
@@ -398,6 +398,10 @@ test('a commerce can subscribe a location directly and the payment enters the pl
     PromocionComprada.findOneAndUpdate = originals.subscriptionUpsert;
     Payment.findOne = originals.paymentFindOne;
     Payment.create = originals.paymentCreate;
+    StepcoinTransaction.findOne = originals.stepcoinFindOne;
+    StepcoinTransaction.create = originals.stepcoinCreate;
+    User.findOneAndUpdate = originals.userFindOneAndUpdate;
+    mongoose.startSession = originals.startSession;
   });
 
   const ownerId = new mongoose.Types.ObjectId();
@@ -410,17 +414,29 @@ test('a commerce can subscribe a location directly and the payment enters the pl
     proximityMessage: '¿Te apetece tomar un café en CoffeeMax?', proximityRadiusMeters: 200,
   };
   const plan = {
-    _id: planId, code: 'MAP_MONTHLY', title: '1 mes', durationMonths: 1, priceEuros: 20,
+    _id: planId, code: 'MAP_MONTHLY', title: '1 mes',
+    durationMonths: 1, priceStepcoins: 20,
   };
   let published;
   let ledger;
+  let debit;
+  let debitCount = 0;
+  let balance = 100;
   User.findById = () => ({
+    session() { return this; },
     select() { return this; },
     lean: async () => ({
       _id: ownerId, id: String(ownerId), role: 'comercio', firebaseUid: null,
-      email: 'coffee@example.test', nombre: 'CoffeeMax',
+      email: 'coffee@example.test', nombre: 'CoffeeMax', stepcoins: balance,
     }),
   });
+  User.findOneAndUpdate = async (filter, update) => {
+    if (balance < filter.stepcoins.$gte) return null;
+    debit = { filter, update };
+    debitCount += 1;
+    balance += update.$inc.stepcoins;
+    return { _id: ownerId, stepcoins: balance };
+  };
   Establishment.findOne = async () => location;
   MapPlan.updateOne = async () => ({});
   MapPlan.find = () => ({ sort() { return this; }, lean: async () => [plan] });
@@ -429,18 +445,29 @@ test('a commerce can subscribe a location directly and the payment enters the pl
   let subscriptionLookup = 0;
   PromocionComprada.findOne = () => {
     subscriptionLookup += 1;
-    const result = subscriptionLookup === 1 ? null : null;
-    return { lean: async () => result, then: (resolve) => resolve(result) };
+    const result = ledger ? { _id: subscriptionId, ...published } : null;
+    return {
+      session() { return this; },
+      lean: async () => result,
+      then: (resolve) => resolve(result),
+    };
   };
-  Payment.findOne = () => ({ lean: async () => null });
   PromocionComprada.findOneAndUpdate = async (_filter, update) => {
     published = update.$set;
     return { _id: subscriptionId, ...published, async save() {} };
   };
-  Payment.create = async (value) => {
+  StepcoinTransaction.findOne = (filter) => ({
+    session() { return this; },
+    lean: async () => (ledger?.operationKey === filter.operationKey ? ledger : null),
+  });
+  StepcoinTransaction.create = async ([value]) => {
     ledger = value;
-    return { _id: new mongoose.Types.ObjectId(), ...value };
+    return [{ _id: new mongoose.Types.ObjectId(), ...value }];
   };
+  mongoose.startSession = async () => ({
+    async withTransaction(callback) { await callback(); },
+    async endSession() {},
+  });
 
   const app = express();
   app.use(express.json());
@@ -469,12 +496,51 @@ test('a commerce can subscribe a location directly and the payment enters the pl
   assert.equal(published.imagenBase, '/img/local.png');
   assert.equal(published.proximityRadiusMeters, 250);
   assert.equal(published.autoRenew, true);
-  assert.equal(published.precioEuros, 20);
-  assert.equal(ledger.cantidad, 20);
-  assert.equal(ledger.source, 'platform_checkout');
-  assert.equal(ledger.verified, true);
-  assert.equal(ledger.establishmentId, locationId);
-  assert.equal(String(ledger.mapSubscriptionId), String(subscriptionId));
+  assert.equal(published.precioStepcoins, 20);
+  assert.equal(published.originalPriceStepcoins, 20);
+  assert.equal(debit.filter.stepcoins.$gte, 20);
+  assert.equal(debit.update.$inc.stepcoins, -20);
+  assert.equal(ledger.cantidad, -20);
+  assert.equal(ledger.tipo, 'promocion_local_comercio');
+  assert.equal(ledger.metadata.source, 'merchant_local_promotion');
+  assert.equal(ledger.metadata.establishmentId, locationId);
+  assert.equal(String(ledger.metadata.mapSubscriptionId), String(subscriptionId));
+  assert.equal(body.spentStepcoins, 20);
+  assert.equal(body.balance, 80);
+
+  const repeatedResponse = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/commercial/locations/${locationId}/subscribe`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        planId: String(planId), requestId: 'checkout_test_123', autoRenew: true,
+      }),
+    },
+  );
+  const repeatedBody = await repeatedResponse.json();
+  assert.equal(repeatedResponse.status, 200, repeatedBody.error);
+  assert.equal(repeatedBody.repeated, true);
+  assert.equal(repeatedBody.balance, 80);
+  assert.equal(debitCount, 1);
+
+  balance = 5;
+  const insufficientResponse = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/commercial/locations/${locationId}/subscribe`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        planId: String(planId), requestId: 'checkout_test_456', autoRenew: true,
+      }),
+    },
+  );
+  const insufficientBody = await insufficientResponse.json();
+  assert.equal(insufficientResponse.status, 402);
+  assert.equal(insufficientBody.code, 'INSUFFICIENT_STEPCOINS');
+  assert.equal(insufficientBody.requiredStepcoins, 20);
+  assert.equal(insufficientBody.balance, 5);
+  assert.equal(debitCount, 1);
 });
 
 test('the public Flutter map endpoint exposes active location and proximity data', async (t) => {

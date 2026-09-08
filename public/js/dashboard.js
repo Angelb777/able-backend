@@ -567,7 +567,7 @@ function commerceLocationCard(location) {
   const plans = commerceMapPlansCache.map((plan) => `
     <button type="button" data-commercial-action="subscribe-location"
       data-entity-id="${commercialEscape(id)}" data-plan-id="${commercialEscape(commercialId(plan))}">
-      ${active ? "Ampliar" : "Contratar"} ${commercialEscape(plan.title)} · ${commercialEscape(plan.priceEuros)} €
+      ${active ? "Ampliar" : "Contratar"} ${commercialEscape(plan.title)} · ${commercialEscape(plan.priceStepcoins)} SC
     </button>`).join("");
   return `<article class="commerce-card commerce-location-card">
     ${location.logoUrl ? `<img class="commerce-logo-preview" src="${commercialEscape(location.logoUrl)}" alt="Logo de ${commercialEscape(location.publicName)}">` : ""}
@@ -673,7 +673,7 @@ async function subscribeCommerceLocation(id, planId) {
   if (!location || !plan) return alert("El local o el plan ya no están disponibles.");
   const code = document.getElementById(`commerce-promo-${id}`)?.value?.trim() || "";
   const autoRenew = Boolean(document.getElementById(`commerce-renew-${id}`)?.checked);
-  if (!confirm(`Publicar ${location.publicName} durante ${plan.durationMonths} mes(es) por ${plan.priceEuros} €${code ? ` usando el código ${code}` : ""}?`)) return;
+  if (!confirm(`Publicar ${location.publicName} durante ${plan.durationMonths} mes(es) por ${plan.priceStepcoins} SC${code ? ` usando el código ${code}` : ""}?`)) return;
   const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try {
     const result = await commerceResponse(await fetch(`/api/commercial/locations/${id}/subscribe`, {
@@ -681,9 +681,9 @@ async function subscribeCommerceLocation(id, planId) {
       body: JSON.stringify({ planId, promotionCode: code, autoRenew, requestId }),
     }));
     await renderCommerceLocations();
-    alert(result.payment
-      ? "Pago registrado. El local ya está publicado en el mapa."
-      : "Código aplicado. El local ya está publicado gratis en el mapa.");
+    alert(result.spentStepcoins > 0
+      ? `Se han descontado ${result.spentStepcoins} SC. Saldo disponible: ${result.balance} SC. El local ya está publicado.`
+      : `Código aplicado. Saldo disponible: ${result.balance} SC. El local ya está publicado gratis.`);
   } catch (error) { alert(error.message); }
 }
 

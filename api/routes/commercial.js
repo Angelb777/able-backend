@@ -10,6 +10,7 @@ const Reward = require('../models/Reward');
 const Skin = require('../models/Skin');
 const Card = require('../models/Card');
 const Payment = require('../models/Payment');
+const StepcoinTransaction = require('../models/StepcoinTransaction');
 const User = require('../models/User');
 const MapPlan = require('../models/MapPlan');
 const MapPromoCode = require('../models/MapPromoCode');
@@ -114,6 +115,11 @@ async function expireFinishedPositioningRequests(ownerId) {
 
 function specifications() {
   return {
+    billingContact: {
+      email: 'info@able73.com',
+      method: 'bank_transfer',
+      note: 'Los servicios facturables se gestionan por contacto y transferencia bancaria.',
+    },
     commercial_skin: {
       type: 'commercial_skin', price: FIXED_PRICES.commercial_skin, currency: 'EUR',
       title: 'Skin comercial', reviewYears: 1,
@@ -268,121 +274,196 @@ router.delete('/locations/:id', ...commerceOnly, async (req, res) => {
 router.get('/map-plans', ...commerceOnly, async (_req, res, next) => {
   try {
     const plans = await ensureDefaultMapPlans();
-    res.json(plans.map((item) => ({ ...item, id: String(item._id) })));
+    res.json(plans.map((item) => ({
+      id: String(item._id),
+      _id: item._id,
+      code: item.code,
+      title: item.title,
+      description: item.description,
+      durationMonths: item.durationMonths,
+      priceStepcoins: item.priceStepcoins,
+    })));
   } catch (error) { next(error); }
 });
 
 router.post('/locations/:id/subscribe', ...commerceOnly, async (req, res) => {
+  const requestId = String(req.body.requestId || '').trim();
+  if (!/^[a-zA-Z0-9_-]{8,100}$/.test(requestId)) {
+    return res.status(400).json({ error: 'Identificador de operación no válido' });
+  }
+
+  let session;
   try {
-    if (process.env.NODE_ENV === 'production') {
-      return res.status(503).json({
-        error: 'La contratacion requiere confirmacion de un proveedor de pago real',
-        code: 'VERIFIED_PAYMENT_REQUIRED',
-      });
-    }
     const location = await Establishment.findOne({
       _id: req.params.id, ownerId: req.user.id, archived: { $ne: true },
     });
     if (!location) return res.status(404).json({ error: 'Local no encontrado' });
+
     await ensureDefaultMapPlans();
     const plan = await MapPlan.findOne({ _id: req.body.planId, active: true });
-    if (!plan) return res.status(404).json({ error: 'Plan no disponible' });
-
-    const requestId = String(req.body.requestId || '').trim();
-    if (!/^[a-zA-Z0-9_-]{8,100}$/.test(requestId)) {
-      return res.status(400).json({ error: 'Identificador de operación no válido' });
-    }
-    const reference = `MAP-${req.user.id}-${location._id}-${requestId}`;
-    const repeatedSubscription = await PromocionComprada.findOne({
-      comercioId: req.user.id, establishmentId: location._id, checkoutReference: reference,
-    }).lean();
-    if (repeatedSubscription) {
-      const previous = await Payment.findOne({ providerReference: reference }).lean();
-      return res.json({ subscription: repeatedSubscription, payment: previous, repeated: true });
-    }
-    const previousPayment = await Payment.findOne({ providerReference: reference }).lean();
-    if (previousPayment) {
-      const existing = await PromocionComprada.findOne({
-        _id: previousPayment.mapSubscriptionId, comercioId: req.user.id,
-      }).lean();
-      return res.json({ subscription: existing, payment: previousPayment, repeated: true });
+    if (!plan || !Number.isFinite(Number(plan.priceStepcoins))) {
+      return res.status(404).json({ error: 'Plan no disponible' });
     }
 
-    let durationMonths = Number(plan.durationMonths);
-    let price = Number(plan.priceEuros);
-    let promotion = null;
-    const promotionCode = String(req.body.promotionCode || '').trim().toUpperCase();
-    if (promotionCode) {
-      const now = new Date();
-      promotion = await MapPromoCode.findOne({ code: promotionCode, active: true });
-      const unavailable = !promotion
-        || (promotion.validFrom && promotion.validFrom > now)
-        || (promotion.validUntil && promotion.validUntil < now)
-        || (promotion.maxRedemptions && promotion.redemptions.length >= promotion.maxRedemptions)
-        || promotion.redemptions.some((item) => String(item.establishmentId) === String(location._id));
-      if (unavailable) return res.status(409).json({ error: 'El código promocional no es válido para este local' });
-      if (Number(promotion.freeMonths) > 0) {
-        durationMonths = Number(promotion.freeMonths);
-        price = 0;
-      } else {
-        price = Math.max(0, price * (1 - Number(promotion.discountPercent || 0) / 100));
+    const operationKey = `merchant_local_promotion:${req.user.id}:${location._id}:${requestId}`;
+    const reference = `MAP-SC-${req.user.id}-${location._id}-${requestId}`;
+    let result;
+    session = await mongoose.startSession();
+    await session.withTransaction(async () => {
+      const previous = await StepcoinTransaction.findOne({ operationKey }).session(session).lean();
+      if (previous) {
+        const subscription = await PromocionComprada.findOne({
+          comercioId: req.user.id, establishmentId: location._id,
+        }).session(session).lean();
+        const owner = await User.findById(req.user.id).session(session).select('stepcoins').lean();
+        result = {
+          subscription, stepcoinTransaction: previous,
+          spentStepcoins: Math.abs(Number(previous.cantidad || 0)),
+          balance: Number(owner?.stepcoins || 0), repeated: true,
+        };
+        return;
       }
-      price = Math.round(price * 100) / 100;
-    }
 
-    const now = new Date();
-    const current = await PromocionComprada.findOne({ establishmentId: location._id });
-    const baseDate = current?.activo && current.fechaFin > now ? current.fechaFin : now;
-    const end = addMonths(baseDate, durationMonths);
-    const subscription = await PromocionComprada.findOneAndUpdate(
-      { establishmentId: location._id },
-      { $set: {
-        comercioId: req.user.id, establishmentId: location._id,
-        mapPlanId: plan._id, planCode: plan.code,
-        titulo: location.publicName, publicName: location.publicName,
-        description: location.description, address: location.address,
-        // Plantilla fija del local. Flutter coloca el logo del comercio en su
-        // letrero y genera un único marcador compacto.
-        logoComercio: location.logoUrl, imagenBase: '/img/local.png',
-        lat: location.lat, lng: location.lng,
-        proximityMessage: String(
-          location.proximityMessage || `¿Te apetece visitar ${location.publicName}?`,
-        ).trim().slice(0, 50),
-        proximityRadiusMeters: 250,
-        duracionMeses: plan.durationMonths, precioEuros: price,
-        originalPriceEuros: plan.priceEuros, fechaInicio: now, fechaFin: end,
-        activo: true, status: 'published',
-        paymentStatus: price === 0 ? 'waived' : 'confirmed',
-        autoRenew: Boolean(req.body.autoRenew), cancelAtPeriodEnd: false,
-        stoppedAt: null, retiredAt: null, publishedAt: now,
-        promotionCode,
-        checkoutReference: reference,
-      } },
-      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
-    );
+      let durationMonths = Number(plan.durationMonths);
+      let price = Math.max(0, Math.round(Number(plan.priceStepcoins)));
+      let promotion = null;
+      const promotionCode = String(req.body.promotionCode || '').trim().toUpperCase();
+      if (promotionCode) {
+        const now = new Date();
+        promotion = await MapPromoCode.findOne({ code: promotionCode, active: true }).session(session);
+        const unavailable = !promotion
+          || (promotion.validFrom && promotion.validFrom > now)
+          || (promotion.validUntil && promotion.validUntil < now)
+          || (promotion.maxRedemptions && promotion.redemptions.length >= promotion.maxRedemptions)
+          || promotion.redemptions.some(
+            (item) => String(item.establishmentId) === String(location._id),
+          );
+        if (unavailable) {
+          const error = new Error('El código promocional no es válido para este local');
+          error.status = 409;
+          throw error;
+        }
+        if (Number(promotion.freeMonths) > 0) {
+          durationMonths = Number(promotion.freeMonths);
+          price = 0;
+        } else {
+          price = Math.max(
+            0,
+            Math.round(price * (1 - Number(promotion.discountPercent || 0) / 100)),
+          );
+        }
+      }
 
-    let payment = null;
-    if (price > 0) {
-      const owner = await User.findById(req.user.id).select('nombre nickname email').lean();
-      payment = await Payment.create({
+      const owner = await User.findOneAndUpdate(
+        { _id: req.user.id, role: 'comercio', stepcoins: { $gte: price } },
+        { $inc: { stepcoins: -price } },
+        { new: true, session },
+      );
+      if (!owner) {
+        const currentOwner = await User.findById(req.user.id)
+          .session(session).select('stepcoins').lean();
+        const error = new Error(
+          `Necesitas ${price} SC y tienes ${Number(currentOwner?.stepcoins || 0)} SC.`,
+        );
+        error.status = 402;
+        error.code = 'INSUFFICIENT_STEPCOINS';
+        error.requiredStepcoins = price;
+        error.balance = Number(currentOwner?.stepcoins || 0);
+        throw error;
+      }
+
+      const now = new Date();
+      const current = await PromocionComprada.findOne({
+        establishmentId: location._id,
+      }).session(session);
+      const baseDate = current?.activo && current.fechaFin > now ? current.fechaFin : now;
+      const end = addMonths(baseDate, durationMonths);
+      const subscription = await PromocionComprada.findOneAndUpdate(
+        { establishmentId: location._id },
+        {
+          $set: {
+            comercioId: req.user.id, establishmentId: location._id,
+            mapPlanId: plan._id, planCode: plan.code,
+            titulo: location.publicName, publicName: location.publicName,
+            description: location.description, address: location.address,
+            logoComercio: location.logoUrl, imagenBase: '/img/local.png',
+            lat: location.lat, lng: location.lng,
+            proximityMessage: String(
+              location.proximityMessage || `¿Te apetece visitar ${location.publicName}?`,
+            ).trim().slice(0, 50),
+            proximityRadiusMeters: 250,
+            duracionMeses: plan.durationMonths,
+            precioStepcoins: price,
+            originalPriceStepcoins: Number(plan.priceStepcoins),
+            fechaInicio: now, fechaFin: end,
+            activo: true, status: 'published',
+            paymentStatus: price === 0 ? 'waived' : 'confirmed',
+            autoRenew: Boolean(req.body.autoRenew), cancelAtPeriodEnd: false,
+            stoppedAt: null, retiredAt: null, publishedAt: now,
+            promotionCode, checkoutReference: reference,
+          },
+          $unset: { paymentId: '', precioEuros: '', originalPriceEuros: '' },
+        },
+        {
+          upsert: true, new: true, runValidators: true,
+          setDefaultsOnInsert: true, session,
+        },
+      );
+
+      const [transaction] = await StepcoinTransaction.create([{
         userId: req.user.id,
-        nombre: owner?.nombre || owner?.nickname || owner?.email || 'Comercio',
-        cantidad: price, motivo: `Promoción en el mapa: ${location.publicName}`,
-        currency: 'EUR', fecha: now, verified: true, verifiedAt: now,
-        source: 'platform_checkout', providerReference: reference,
-        establishmentId: location._id, mapSubscriptionId: subscription._id,
-      });
-      subscription.paymentId = payment._id;
-      await subscription.save();
-    }
-    if (promotion) {
-      promotion.redemptions.push({ userId: req.user.id, establishmentId: location._id, redeemedAt: now });
-      await promotion.save();
-    }
-    res.status(201).json({ subscription, payment });
+        cantidad: -price,
+        tipo: 'promocion_local_comercio',
+        descripcion: `Promoción en el mapa: ${location.publicName}`,
+        fecha: now,
+        operationKey,
+        metadata: {
+          source: 'merchant_local_promotion', action: 'subscription',
+          establishmentId: location._id, mapSubscriptionId: subscription._id,
+          planId: plan._id, planCode: plan.code,
+        },
+      }], { session });
+      subscription.stepcoinTransactionId = transaction._id;
+      await subscription.save({ session });
+
+      if (promotion) {
+        promotion.redemptions.push({
+          userId: req.user.id, establishmentId: location._id, redeemedAt: now,
+        });
+        await promotion.save({ session });
+      }
+
+      result = {
+        subscription, stepcoinTransaction: transaction,
+        spentStepcoins: price, balance: Number(owner.stepcoins), repeated: false,
+      };
+    });
+    return res.status(result.repeated ? 200 : 201).json(result);
   } catch (error) {
-    const status = error?.code === 11000 ? 409 : 400;
-    res.status(status).json({ error: error.message });
+    if (error?.code === 11000) {
+      const operationKey = `merchant_local_promotion:${req.user.id}:${req.params.id}:${requestId}`;
+      const previous = await StepcoinTransaction.findOne({ operationKey }).lean();
+      if (previous) {
+        const subscription = await PromocionComprada.findOne({
+          comercioId: req.user.id, establishmentId: req.params.id,
+        }).lean();
+        const owner = await User.findById(req.user.id).select('stepcoins').lean();
+        return res.json({
+          subscription, stepcoinTransaction: previous,
+          spentStepcoins: Math.abs(Number(previous.cantidad || 0)),
+          balance: Number(owner?.stepcoins || 0), repeated: true,
+        });
+      }
+    }
+    return res.status(error.status || 400).json({
+      error: error.message,
+      ...(error.code ? { code: error.code } : {}),
+      ...(error.requiredStepcoins != null
+        ? { requiredStepcoins: error.requiredStepcoins, balance: error.balance }
+        : {}),
+    });
+  } finally {
+    if (session) await session.endSession();
   }
 });
 
@@ -524,6 +605,12 @@ router.post('/requests', ...commerceOnly, uploadFields, async (req, res) => {
     if (!title) return res.status(400).json({ error: 'El título es obligatorio' });
     if (!['positioning', 'commercial_skin', 'commercial_weapon', 'reward'].includes(type)) {
       return res.status(400).json({ error: 'Tipo de solicitud no válido' });
+    }
+    if (type === 'positioning') {
+      return res.status(410).json({
+        error: 'El posicionamiento antiguo ya no admite pagos. Contrata la promoción del local con Stepcoins.',
+        code: 'USE_MERCHANT_LOCAL_PROMOTION',
+      });
     }
 
     const validSubtype = type === 'commercial_weapon'
@@ -668,12 +755,10 @@ async function payableCommercialRequest(requestId, ownerId) {
   const request = await CommercialRequest.findOne({ _id: requestId, ownerId });
   if (!request) throw Object.assign(new Error('Solicitud no encontrada'), { status: 404 });
   if (request.type === 'positioning') {
-    const establishment = await Establishment.findOne({
-      _id: request.establishmentId, ownerId, status: 'approved',
-    });
-    if (!establishment) {
-      throw Object.assign(new Error('Able73 debe aprobar el establecimiento antes del pago'), { status: 409 });
-    }
+    throw Object.assign(
+      new Error('El posicionamiento antiguo ya no admite pagos. Contrata la promoción del local con Stepcoins.'),
+      { status: 410, code: 'USE_MERCHANT_LOCAL_PROMOTION' },
+    );
   }
   if (!(Number(request.price) > 0) || request.currency !== 'EUR') {
     throw Object.assign(new Error('El importe de la solicitud no es válido'), { status: 409 });
@@ -747,7 +832,10 @@ router.post('/requests/:id/pay', ...commerceOnly, async (req, res) => {
     }
     return res.json({ status: request.status, request: requestJson(request), payment });
   } catch (error) {
-    return res.status(error.status || 500).json({ error: error.message });
+    return res.status(error.status || 500).json({
+      error: error.message,
+      ...(error.code ? { code: error.code } : {}),
+    });
   }
 });
 

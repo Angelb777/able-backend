@@ -21,17 +21,20 @@ const promocionCompradaSchema = new mongoose.Schema({
 
   duracionMeses: Number,
   precioEuros: Number,
+  precioStepcoins: Number,
 
   fechaInicio: { type: Date, default: Date.now },
   fechaFin: { type: Date, required: true },
 
   paymentId: { type: mongoose.Schema.Types.ObjectId, ref: "Payment" },
+  stepcoinTransactionId: { type: mongoose.Schema.Types.ObjectId, ref: "StepcoinTransaction" },
   autoRenew: { type: Boolean, default: false },
   cancelAtPeriodEnd: { type: Boolean, default: false },
   stoppedAt: Date,
   promotionCode: { type: String, trim: true },
   checkoutReference: { type: String, trim: true, index: true },
   originalPriceEuros: Number,
+  originalPriceStepcoins: Number,
 
   activo: { type: Boolean, default: true }, // por si quieres desactivarla manualmente
   status: {

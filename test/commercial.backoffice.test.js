@@ -53,7 +53,9 @@ test('the dashboard exposes direct multi-location map subscriptions', () => {
   assert.match(html, /Promociona tu local físico en el mapa/);
   assert.match(html, /Llega a más clientes de verdad/);
   assert.match(script, /\/api\/commercial\/locations\/\$\{id\}\/subscribe/);
-  assert.match(script, /El local ya está publicado en el mapa/);
+  assert.match(script, /Se han descontado.*SC.*El local ya está publicado/);
+  assert.match(script, /plan\.priceStepcoins/);
+  assert.doesNotMatch(script, /plan\.priceEuros/);
   assert.doesNotMatch(html, /id="gestionComercial"/);
   assert.doesNotMatch(html, /id="commercePositioning"/);
   assert.doesNotMatch(html, /id="commerceRequests"/);

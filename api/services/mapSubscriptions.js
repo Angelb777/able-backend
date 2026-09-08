@@ -1,5 +1,6 @@
+const mongoose = require('mongoose');
 const MapPlan = require('../models/MapPlan');
-const Payment = require('../models/Payment');
+const StepcoinTransaction = require('../models/StepcoinTransaction');
 const PromocionComprada = require('../models/PromocionComprada');
 const User = require('../models/User');
 const Establishment = require('../models/Establishment');
@@ -8,12 +9,12 @@ const DEFAULT_MAP_PLANS = [
   {
     code: 'MAP_MONTHLY', title: '1 mes',
     description: 'Tu local visible en el mapa durante un mes.',
-    durationMonths: 1, priceEuros: 20, sortOrder: 10,
+    durationMonths: 1, priceStepcoins: 20, sortOrder: 10,
   },
   {
     code: 'MAP_YEARLY', title: '1 año',
-    description: 'Tu local visible en el mapa durante un año. Ahorras 40 €.',
-    durationMonths: 12, priceEuros: 200, sortOrder: 20,
+    description: 'Tu local visible en el mapa durante un año. Ahorras 40 SC.',
+    durationMonths: 12, priceStepcoins: 200, sortOrder: 20,
   },
 ];
 
@@ -26,7 +27,11 @@ function addMonths(date, months) {
 async function ensureDefaultMapPlans() {
   await Promise.all(DEFAULT_MAP_PLANS.map((plan) => MapPlan.updateOne(
     { code: plan.code },
-    { $setOnInsert: { ...plan, active: true } },
+    {
+      $set: plan,
+      $setOnInsert: { active: true },
+      $unset: { priceEuros: '' },
+    },
     { upsert: true, setDefaultsOnInsert: true },
   )));
   return MapPlan.find({ active: true }).sort({ sortOrder: 1, durationMonths: 1 }).lean();
@@ -54,10 +59,7 @@ async function renewExpiredMapSubscriptions() {
   }).lean();
 
   for (const current of expired) {
-    // Nunca renovar ni registrar cobros ficticios en produccion. La futura
-    // integracion del proveedor debera confirmar el cargo antes de extender.
-    if (process.env.NODE_ENV === 'production' ||
-        !current.autoRenew || current.cancelAtPeriodEnd) {
+    if (!current.autoRenew || current.cancelAtPeriodEnd) {
       await PromocionComprada.updateOne(
         { _id: current._id, status: 'published', fechaFin: current.fechaFin },
         { $set: { activo: false, status: 'expired' } },
@@ -65,37 +67,64 @@ async function renewExpiredMapSubscriptions() {
       continue;
     }
 
-    const start = new Date(current.fechaFin);
-    const end = addMonths(start, current.duracionMeses || 1);
-    const reference = `MAP-RENEW-${current._id}-${start.getTime()}`;
-    const updated = await PromocionComprada.findOneAndUpdate(
-      { _id: current._id, status: 'published', activo: true, fechaFin: current.fechaFin },
-      { $set: { fechaInicio: start, fechaFin: end, cancelAtPeriodEnd: false } },
-      { new: true },
-    );
-    if (!updated) continue;
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        const fresh = await PromocionComprada.findOne({
+          _id: current._id, status: 'published', activo: true, fechaFin: current.fechaFin,
+        }).session(session);
+        if (!fresh) return;
 
-    const owner = await User.findById(current.comercioId).select('nombre nickname email').lean();
-    const payment = await Payment.findOneAndUpdate(
-      { providerReference: reference },
-      { $setOnInsert: {
-        userId: current.comercioId,
-        nombre: owner?.nombre || owner?.nickname || owner?.email || 'Comercio',
-        cantidad: current.originalPriceEuros ?? current.precioEuros,
-        motivo: `Renovación del local ${current.publicName || current.titulo || ''}`.trim(),
-        currency: 'EUR', fecha: start, verified: true, verifiedAt: start,
-        source: 'platform_checkout', providerReference: reference,
-        establishmentId: current.establishmentId, mapSubscriptionId: current._id,
-      } },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    );
-    await PromocionComprada.updateOne({ _id: current._id }, {
-      $set: {
-        paymentId: payment._id,
-        precioEuros: current.originalPriceEuros ?? current.precioEuros,
-        promotionCode: '',
-      },
-    });
+        const start = new Date(fresh.fechaFin);
+        const operationKey = `merchant_local_promotion_renewal:${fresh._id}:${start.getTime()}`;
+        const alreadyCharged = await StepcoinTransaction.findOne({ operationKey }).session(session);
+        if (alreadyCharged) return;
+
+        const price = Math.max(0, Math.round(Number(
+          fresh.originalPriceStepcoins ?? fresh.precioStepcoins
+            ?? fresh.originalPriceEuros ?? fresh.precioEuros ?? 0,
+        )));
+        const owner = await User.findOneAndUpdate(
+          { _id: fresh.comercioId, role: 'comercio', stepcoins: { $gte: price } },
+          { $inc: { stepcoins: -price } },
+          { new: true, session },
+        );
+        if (!owner) {
+          fresh.activo = false;
+          fresh.status = 'expired';
+          await fresh.save({ session });
+          return;
+        }
+
+        const end = addMonths(start, fresh.duracionMeses || 1);
+        const [transaction] = await StepcoinTransaction.create([{
+          userId: fresh.comercioId,
+          cantidad: -price,
+          tipo: 'promocion_local_comercio',
+          descripcion: `Renovación del local ${fresh.publicName || fresh.titulo || ''}`.trim(),
+          fecha: start,
+          operationKey,
+          metadata: {
+            source: 'merchant_local_promotion', action: 'renewal',
+            establishmentId: fresh.establishmentId, mapSubscriptionId: fresh._id,
+          },
+        }], { session });
+
+        fresh.fechaInicio = start;
+        fresh.fechaFin = end;
+        fresh.cancelAtPeriodEnd = false;
+        fresh.precioStepcoins = price;
+        fresh.originalPriceStepcoins = price;
+        fresh.stepcoinTransactionId = transaction._id;
+        fresh.paymentId = undefined;
+        fresh.precioEuros = undefined;
+        fresh.originalPriceEuros = undefined;
+        fresh.promotionCode = '';
+        await fresh.save({ session });
+      });
+    } finally {
+      await session.endSession();
+    }
   }
 }
 

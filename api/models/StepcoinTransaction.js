@@ -5,7 +5,7 @@ const stepcoinTransactionSchema = new mongoose.Schema({
   cantidad: { type: Number, required: true }, // positivo o negativo
   tipo: {
     type: String,
-    enum: ["canje", "recompensa", "compra", "admin", "ruleta", "racha", "muerte", "burla", "reembolso_burla", "recompensa_pvp", "devolucion_recompensa", "cobro_recompensa", "duelo_apuesta", "duelo_bote", "reembolso_duelo"],
+    enum: ["canje", "recompensa", "compra", "admin", "ruleta", "racha", "muerte", "burla", "reembolso_burla", "recompensa_pvp", "devolucion_recompensa", "cobro_recompensa", "duelo_apuesta", "duelo_bote", "reembolso_duelo", "promocion_local_comercio"],
     required: true
   },
   descripcion: { type: String },
