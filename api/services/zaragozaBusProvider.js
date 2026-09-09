@@ -7,6 +7,8 @@ const PROVIDER = "zaragoza_bus";
 const SOURCE = "Ayuntamiento de Zaragoza";
 const PAGE_SIZE = 500;
 const DEFAULT_TIMEOUT_MS = 8_000;
+const DEFAULT_ARRIVALS_MAX_ATTEMPTS = 4;
+const DEFAULT_RETRY_DELAY_MS = 250;
 const URBAN_STOP_ID_PATTERN = /^tuzsa-\d+$/i;
 
 class ZaragozaBusProviderError extends Error {
@@ -30,6 +32,15 @@ class ZaragozaBusStopNotFoundError extends ZaragozaBusProviderError {
 
 function cleanText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function isRetryableArrivalsError(error) {
+  if (!(error instanceof ZaragozaBusProviderError)) return false;
+  if (error instanceof ZaragozaBusStopNotFoundError) return false;
+  if (["TIMEOUT", "NETWORK_ERROR", "RATE_LIMITED"].includes(error.code)) {
+    return true;
+  }
+  return error.status === 400 || error.status === 408 || error.status >= 500;
 }
 
 function validCoordinates(raw) {
@@ -357,6 +368,10 @@ function normalizeArrivalsPayload(payload, expectedStopId) {
 function createZaragozaBusProvider({
   fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  arrivalsMaxAttempts = DEFAULT_ARRIVALS_MAX_ATTEMPTS,
+  retryDelayMs = DEFAULT_RETRY_DELAY_MS,
+  sleep = (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
   if (typeof fetchImpl !== "function") {
     throw new Error("Este runtime de Node.js no dispone de fetch");
@@ -468,12 +483,23 @@ function createZaragozaBusProvider({
     const url =
       `${BUS_STOP_DETAIL_API_URL}/${encodeURIComponent(stopId)}.json` +
       "?srsname=wgs84";
-    const result = await requestJson(url, { validators });
-    if (result.notModified) return result;
-    return {
-      value: normalizeArrivalsPayload(result.payload, stopId),
-      validators: result.validators,
-    };
+    const maxAttempts = Math.max(1, Math.trunc(arrivalsMaxAttempts));
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const result = await requestJson(url, { validators });
+        if (result.notModified) return result;
+        return {
+          value: normalizeArrivalsPayload(result.payload, stopId),
+          validators: result.validators,
+        };
+      } catch (error) {
+        if (attempt === maxAttempts || !isRetryableArrivalsError(error)) {
+          throw error;
+        }
+        await sleep(retryDelayMs * 2 ** (attempt - 1));
+      }
+    }
   }
 
   return { fetchStops, fetchArrivals };
@@ -482,6 +508,8 @@ function createZaragozaBusProvider({
 module.exports = {
   BUS_STOPS_API_URL,
   BUS_STOP_DETAIL_API_URL,
+  DEFAULT_ARRIVALS_MAX_ATTEMPTS,
+  DEFAULT_RETRY_DELAY_MS,
   DEFAULT_TIMEOUT_MS,
   PAGE_SIZE,
   PROVIDER,
@@ -490,6 +518,7 @@ module.exports = {
   ZaragozaBusProviderError,
   ZaragozaBusStopNotFoundError,
   createZaragozaBusProvider,
+  isRetryableArrivalsError,
   normalizeArrivalsPayload,
   normalizeDisplayTime,
   normalizeStop,

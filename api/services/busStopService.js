@@ -7,7 +7,6 @@ const {
 const STOPS_CACHE_TTL_MS = 12 * 60 * 60 * 1_000;
 const STOPS_STALE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
 const ARRIVALS_CACHE_TTL_MS = 30_000;
-const ARRIVALS_STALE_MAX_AGE_MS = 5 * 60 * 1_000;
 
 function createBusStopService({
   provider = createZaragozaBusProvider(),
@@ -103,17 +102,7 @@ function createBusStopService({
       arrivalsInFlight.set(stopId, inFlight);
     }
 
-    try {
-      return await inFlight;
-    } catch (error) {
-      if (
-        cached &&
-        now() - cached.fetchedAt <= ARRIVALS_STALE_MAX_AGE_MS
-      ) {
-        return cachedResponse(cached, true);
-      }
-      throw error;
-    }
+    return inFlight;
   }
 
   return { getStops, getArrivals };
@@ -121,7 +110,6 @@ function createBusStopService({
 
 module.exports = {
   ARRIVALS_CACHE_TTL_MS,
-  ARRIVALS_STALE_MAX_AGE_MS,
   STOPS_CACHE_TTL_MS,
   STOPS_STALE_MAX_AGE_MS,
   createBusStopService,

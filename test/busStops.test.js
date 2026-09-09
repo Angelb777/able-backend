@@ -354,7 +354,7 @@ test("devuelve la última lista válida como stale si caduca y falla el origen",
   assert.equal(stale.stops.length, 1);
 });
 
-test("devuelve los últimos tiempos como stale solo durante la ventana temporal", async () => {
+test("no devuelve tiempos caducados cuando falla el origen", async () => {
   let currentTime = Date.parse("2026-07-29T10:00:00Z");
   let fail = false;
   const service = createBusStopService({
@@ -371,10 +371,6 @@ test("devuelve los últimos tiempos como stale solo durante la ventana temporal"
   currentTime += 101;
   fail = true;
 
-  const stale = await service.getArrivals("tuzsa-905");
-  assert.equal(stale.stale, true);
-
-  currentTime += 5 * 60 * 1_000;
   await assert.rejects(
     service.getArrivals("tuzsa-905"),
     /fallo/,
@@ -410,9 +406,55 @@ test("reutiliza la respuesta válida cuando el Ayuntamiento responde 304", async
   assert.equal(calls, 2);
 });
 
+test("reintenta los timeouts internos del Ayuntamiento hasta obtener tiempos", async () => {
+  let calls = 0;
+  const delays = [];
+  const provider = createZaragozaBusProvider({
+    retryDelayMs: 10,
+    sleep: async (milliseconds) => delays.push(milliseconds),
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls < 3) {
+        return responseWith(
+          { status: 400, mensaje: "java.net.SocketTimeoutException" },
+          { status: 400 },
+        );
+      }
+      return responseWith(rawArrivals);
+    },
+  });
+
+  const result = await provider.fetchArrivals("tuzsa-905");
+
+  assert.equal(calls, 3);
+  assert.deepEqual(delays, [10, 20]);
+  assert.equal(result.value.stop.id, "tuzsa-905");
+  assert.ok(result.value.arrivals.length > 0);
+});
+
+test("agota los reintentos y conserva el error municipal", async () => {
+  let calls = 0;
+  const provider = createZaragozaBusProvider({
+    arrivalsMaxAttempts: 3,
+    sleep: async () => {},
+    fetchImpl: async () => {
+      calls += 1;
+      return responseWith({}, { status: 400 });
+    },
+  });
+
+  await assert.rejects(
+    provider.fetchArrivals("tuzsa-905"),
+    (error) =>
+      error instanceof ZaragozaBusProviderError && error.status === 400,
+  );
+  assert.equal(calls, 3);
+});
+
 test("convierte timeout externo en error controlado", async () => {
   const provider = createZaragozaBusProvider({
     timeoutMs: 5,
+    arrivalsMaxAttempts: 1,
     fetchImpl: async (_url, options) =>
       new Promise((_resolve, reject) => {
         options.signal.addEventListener("abort", () => {
