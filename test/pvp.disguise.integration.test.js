@@ -28,7 +28,17 @@ test('Disfraz changes the authoritative skin and cannot be stacked', async (t) =
   const io = new Server(httpServer, { transports: ['websocket'] });
   registerPvp(io, {
     CardModel: {
-      findById: (id) => query(id === 'animated-disguise-card'
+      findById: (id) => query(id === 'projectile-card'
+        ? {
+            _id: id,
+            tipoArma: 'Proyectil',
+            alcance: 100,
+            dano: 10,
+            tiempoEspera: 0,
+            projectileRenderType: 'classic',
+            imagenesArma: ['/uploads/cards/bullet.png'],
+          }
+        : id === 'animated-disguise-card'
         ? {
             _id: id,
             tipoArma: 'Disfraz',
@@ -64,6 +74,7 @@ test('Disfraz changes the authoritative skin and cannot be stacked', async (t) =
     },
     LifeModel: {
       findOne: () => query({ vida: 1000 }),
+      updateOne: async () => ({ acknowledged: true }),
     },
     TurretModel: emptyPersistentModel,
     MineModel: emptyPersistentModel,
@@ -106,6 +117,8 @@ test('Disfraz changes the authoritative skin and cannot be stacked', async (t) =
   assert.equal(activated.skinDefinition.renderType, 'classic');
   assert.equal(activated.skinDefinition.portada, '/uploads/cards/police-disguise.png');
   assert.equal(activated.apparentFaction, 'police');
+  assert.equal(activated.hudHidden, true);
+  assert.equal(activated.revealed, false);
   assert.equal(activated.durationSeconds, 30);
   assert.equal(activated.cooldownMs, 60000);
 
@@ -114,6 +127,26 @@ test('Disfraz changes the authoritative skin and cannot be stacked', async (t) =
   });
   assert.equal(stacked.ok, false);
   assert.match(stacked.error, /disfraz activo/i);
+
+  const revealedEvent = new Promise((resolve) => {
+    socket.once('card:disguise:revealed', resolve);
+  });
+  const shot = await emitWithAck(socket, 'bullet:spawn', {
+    clientShotId: 'disguise-reveal-shot',
+    cardId: 'projectile-card',
+    from: { lat: 41.6567, lng: -0.8785 },
+    heading: 180,
+    speed: 180,
+    alcance: 100,
+    dano: 10,
+    spriteUrl: '/uploads/cards/bullet.png',
+    explosionFrames: [],
+  });
+  assert.equal(shot.ok, true);
+  const revealed = await revealedEvent;
+  assert.equal(revealed.userId, userId);
+  assert.equal(revealed.reason, 'shot-fired');
+  assert.equal(revealed.hudHidden, false);
 
   const animatedSocket = createClient(`http://127.0.0.1:${address.port}/pvp`, {
     transports: ['websocket'],
@@ -128,7 +161,7 @@ test('Disfraz changes the authoritative skin and cannot be stacked', async (t) =
   const animatedUserId = '507f191e810c19729de860ea';
   const animatedHello = await emitWithAck(animatedSocket, 'presence:hello', {
     userId: animatedUserId,
-    lat: 41.6568,
+    lat: 41.65724,
     lng: -0.8785,
     nickname: 'Policía animado',
     skinUrl: '/uploads/skins/original.png',
@@ -138,10 +171,38 @@ test('Disfraz changes the authoritative skin and cannot be stacked', async (t) =
     cardId: 'animated-disguise-card',
   });
   assert.equal(animated.ok, true);
+  assert.equal(animated.hudHidden, true);
   assert.equal(animated.skinUrl, '');
   assert.equal(animated.skinDefinition.renderType, 'flame_spritesheet');
   assert.equal(animated.skinDefinition.portada, '/uploads/cards/police-walk.png');
   assert.equal(animated.skinDefinition.spritesheets.idle.frames, 1);
   assert.deepEqual(animated.skinDefinition.spritesheets.idle.frameOrder, [0]);
   assert.equal(animated.skinDefinition.spritesheets.walk.frames, 3);
+
+  const damageRevealEvent = new Promise((resolve) => {
+    animatedSocket.once('card:disguise:revealed', (event) => {
+      if (event.userId === animatedUserId) resolve(event);
+    });
+  });
+  const damagingShot = await emitWithAck(socket, 'bullet:spawn', {
+    clientShotId: 'damage-disguise-reveal-shot',
+    cardId: 'projectile-card',
+    from: { lat: 41.6567, lng: -0.8785 },
+    heading: 0,
+    speed: 180,
+    alcance: 100,
+    dano: 10,
+    spriteUrl: '/uploads/cards/bullet.png',
+    explosionFrames: [],
+  });
+  assert.equal(damagingShot.ok, true);
+  const damageReveal = await Promise.race([
+    damageRevealEvent,
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error('damage did not reveal disguise')),
+      1500,
+    )),
+  ]);
+  assert.equal(damageReveal.reason, 'damage-received');
+  assert.equal(damageReveal.hudHidden, false);
 });

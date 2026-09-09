@@ -333,6 +333,10 @@ module.exports = function(io, dependencies = {}) {
   const presenceMetadata = (player, seq = player.seq) => ({
     seq,
     lifeSeq: lifeSequenceByUser.get(String(player.userId)) || 0,
+    hudHidden: (() => {
+      const disguise = activeDisguises.get(String(player.userId));
+      return Boolean(disguise && disguise.expiresAt > Date.now() && !disguise.revealed);
+    })(),
     serverTimestamp: Date.now(),
     lastSeen: player.lastSeen,
     presenceSessionId: player.presenceSessionId,
@@ -362,6 +366,8 @@ module.exports = function(io, dependencies = {}) {
     skinUrl: state.skinUrl,
     skinDefinition: state.skinDefinition,
     apparentFaction: state.apparentFaction,
+    revealed: Boolean(state.revealed),
+    hudHidden: !state.revealed,
     expiresAt: new Date(state.expiresAt).toISOString(),
     serverTimestamp: Date.now(),
   }) : null;
@@ -393,6 +399,24 @@ module.exports = function(io, dependencies = {}) {
       skinDefinition: primary.skinDefinition || null,
       ...presenceMetadata(primary),
     });
+  };
+  const revealDisguise = (userId, reason) => {
+    const id = String(userId || '');
+    const state = activeDisguiseFor(id);
+    if (!state || state.revealed) return false;
+    state.revealed = true;
+    const primary = primaryPlayer(id);
+    if (!primary) return true;
+    primary.seq = nextPresenceSeq(id);
+    primary.lastSeen = Date.now();
+    lastPresenceByUser.set(id, primary);
+    nsp.to(primary.zoneId).emit('card:disguise:revealed', {
+      userId: id,
+      cardId: state.cardId,
+      reason,
+      ...presenceMetadata(primary),
+    });
+    return true;
   };
   const finishDisguise = async (userId, expectedExpiresAt, reason = 'expired') => {
     const id = String(userId);
@@ -570,6 +594,9 @@ module.exports = function(io, dependencies = {}) {
 
     const previousLife = target.vida ?? MAX_PLAYER_LIFE;
     const nuevaVida = Math.max(0, previousLife - damage);
+    if (nuevaVida < previousLife) {
+      revealDisguise(targetUserId, 'damage-received');
+    }
     for (const sameUser of playersForUser(targetUserId)) sameUser.vida = nuevaVida;
     await LifeModel.updateOne(
       { userId: targetUserId },
@@ -2454,6 +2481,7 @@ module.exports = function(io, dependencies = {}) {
           skinUrl: classicSkinUrl(skinDefinition),
           skinDefinition,
           apparentFaction: baseCard.identidadAparente || 'police',
+          revealed: false,
           expiresAt: activatedAt + durationSeconds * 1000,
           timer: null,
         };
@@ -2886,6 +2914,7 @@ module.exports = function(io, dependencies = {}) {
           dano,
           speed,
         });
+        revealDisguise(p.userId, 'shot-fired');
 
         // Crear bala server-side
         const bulletId = `${p.userId}-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
