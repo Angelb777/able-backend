@@ -409,19 +409,19 @@ test('a commerce pays a location promotion atomically with Stepcoins', async (t)
   const planId = new mongoose.Types.ObjectId();
   const subscriptionId = new mongoose.Types.ObjectId();
   const location = {
-    _id: locationId, ownerId, publicName: 'CoffeeMax', description: 'Café',
+    _id: locationId, ownerId, status: 'approved', publicName: 'CoffeeMax', description: 'Café',
     address: 'Calle Uno', logoUrl: '/api/media/coffee', lat: 41.65, lng: -0.88,
     proximityMessage: '¿Te apetece tomar un café en CoffeeMax?', proximityRadiusMeters: 200,
   };
   const plan = {
     _id: planId, code: 'MAP_MONTHLY', title: '1 mes',
-    durationMonths: 1, priceStepcoins: 20,
+    durationMonths: 1, priceStepcoins: 1500, referencePriceEuros: 10,
   };
   let published;
   let ledger;
   let debit;
   let debitCount = 0;
-  let balance = 100;
+  let balance = 2000;
   User.findById = () => ({
     session() { return this; },
     select() { return this; },
@@ -476,6 +476,23 @@ test('a commerce pays a location promotion atomically with Stepcoins', async (t)
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const token = jwt.sign({ id: String(ownerId), legacy: true }, process.env.JWT_SECRET);
+  location.status = 'pending_review';
+  const blockedResponse = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/commercial/locations/${locationId}/subscribe`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        planId: String(planId), requestId: 'checkout_blocked_123', autoRenew: true,
+      }),
+    },
+  );
+  const blockedBody = await blockedResponse.json();
+  assert.equal(blockedResponse.status, 409);
+  assert.equal(blockedBody.code, 'ESTABLISHMENT_NOT_APPROVED');
+  assert.equal(debitCount, 0);
+  location.status = 'approved';
+
   const response = await fetch(
     `http://127.0.0.1:${server.address().port}/api/commercial/locations/${locationId}/subscribe`,
     {
@@ -496,17 +513,17 @@ test('a commerce pays a location promotion atomically with Stepcoins', async (t)
   assert.equal(published.imagenBase, '/img/local.png');
   assert.equal(published.proximityRadiusMeters, 250);
   assert.equal(published.autoRenew, true);
-  assert.equal(published.precioStepcoins, 20);
-  assert.equal(published.originalPriceStepcoins, 20);
-  assert.equal(debit.filter.stepcoins.$gte, 20);
-  assert.equal(debit.update.$inc.stepcoins, -20);
-  assert.equal(ledger.cantidad, -20);
+  assert.equal(published.precioStepcoins, 1500);
+  assert.equal(published.originalPriceStepcoins, 1500);
+  assert.equal(debit.filter.stepcoins.$gte, 1500);
+  assert.equal(debit.update.$inc.stepcoins, -1500);
+  assert.equal(ledger.cantidad, -1500);
   assert.equal(ledger.tipo, 'promocion_local_comercio');
   assert.equal(ledger.metadata.source, 'merchant_local_promotion');
   assert.equal(ledger.metadata.establishmentId, locationId);
   assert.equal(String(ledger.metadata.mapSubscriptionId), String(subscriptionId));
-  assert.equal(body.spentStepcoins, 20);
-  assert.equal(body.balance, 80);
+  assert.equal(body.spentStepcoins, 1500);
+  assert.equal(body.balance, 500);
 
   const repeatedResponse = await fetch(
     `http://127.0.0.1:${server.address().port}/api/commercial/locations/${locationId}/subscribe`,
@@ -521,7 +538,7 @@ test('a commerce pays a location promotion atomically with Stepcoins', async (t)
   const repeatedBody = await repeatedResponse.json();
   assert.equal(repeatedResponse.status, 200, repeatedBody.error);
   assert.equal(repeatedBody.repeated, true);
-  assert.equal(repeatedBody.balance, 80);
+  assert.equal(repeatedBody.balance, 500);
   assert.equal(debitCount, 1);
 
   balance = 5;
@@ -538,7 +555,7 @@ test('a commerce pays a location promotion atomically with Stepcoins', async (t)
   const insufficientBody = await insufficientResponse.json();
   assert.equal(insufficientResponse.status, 402);
   assert.equal(insufficientBody.code, 'INSUFFICIENT_STEPCOINS');
-  assert.equal(insufficientBody.requiredStepcoins, 20);
+  assert.equal(insufficientBody.requiredStepcoins, 1500);
   assert.equal(insufficientBody.balance, 5);
   assert.equal(debitCount, 1);
 });

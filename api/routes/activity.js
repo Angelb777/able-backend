@@ -152,6 +152,12 @@ function createActivityRouter(dependencies = {}) {
 
   router.post('/streak/claim', authenticate, async (req, res, next) => {
     try {
+      if (req.user.role === 'comercio') {
+        return res.status(403).json({
+          error: 'Las cuentas comercio no pueden obtener recompensas de Stepcoins',
+          code: 'MERCHANT_PURCHASE_ONLY',
+        });
+      }
       const rewardKey = String(req.body?.rewardKey || '').trim();
       const rewardType = String(req.body?.rewardType || '').trim();
       if (!rewardKey || !['stepcoins', 'card'].includes(rewardType)) {

@@ -9,6 +9,7 @@ const mapPlanSchema = new mongoose.Schema({
   // presencia de locales usan exclusivamente Stepcoins.
   priceEuros: { type: Number, min: 0 },
   priceStepcoins: { type: Number, required: true, min: 0 },
+  referencePriceEuros: { type: Number, required: true, min: 0 },
   active: { type: Boolean, default: true, index: true },
   sortOrder: { type: Number, default: 0 },
 }, { timestamps: true });

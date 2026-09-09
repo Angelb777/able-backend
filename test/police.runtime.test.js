@@ -42,6 +42,7 @@ function fixture(customize = () => {}, options = {}) {
       return { vida: target.vida, killed: target.vida === 0 };
     },
     playersForUser: (id) => players.has(String(id)) ? [players.get(String(id))] : [],
+    isPlayerDisguised: options.isPlayerDisguised || (() => false),
     primaryAlivePlayersInZone: () => [...players.values()],
     routeProvider: options.routeProvider || { getRoute: async (from, to, mode) => {
       routeCalls.push({ from, to, mode });
@@ -60,6 +61,30 @@ function fixture(customize = () => {}, options = {}) {
     projectiles: () => runtime._debug.projectiles,
   };
 }
+
+test('a police disguise suspends targeting and projectile damage without clearing wanted state', async (t) => {
+  let disguised = false;
+  const fx = fixture((config) => {
+    config.stars[0].spawnDelaySeconds = 0;
+  }, { isPlayerDisguised: () => disguised });
+  t.after(() => fx.runtime.shutdown());
+  const player = fx.addPlayer('infiltrator', { lat: 41.6567, lng: -0.8785 });
+  await fx.runtime.ensureAmbientPatrol(player, player);
+  const incident = [...fx.runtime._debug.incidents.values()][0];
+  const unit = [...incident.units.values()][0];
+  fx.runtime.applyBulletDamage(unit.unitId, 1, player.userId, 'wanted');
+
+  disguised = true;
+  fx.tick();
+  assert.equal(fx.runtime._debug.wantedUsers.has(player.userId), true);
+  assert.equal(unit.targetUserId, null);
+  assert.equal(fx.runtime.isUnitHostileToUser(unit.unitId, player.userId), false);
+
+  disguised = false;
+  fx.advance(100); fx.tick();
+  assert.equal(unit.targetUserId, player.userId);
+  assert.equal(fx.runtime.isUnitHostileToUser(unit.unitId, player.userId), true);
+});
 
 test('ambient patrol is shared and shooting alone never starts a pursuit', async (t) => {
   const fx = fixture(); t.after(() => fx.runtime.shutdown());

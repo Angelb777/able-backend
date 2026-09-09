@@ -9,12 +9,14 @@ const DEFAULT_MAP_PLANS = [
   {
     code: 'MAP_MONTHLY', title: '1 mes',
     description: 'Tu local visible en el mapa durante un mes.',
-    durationMonths: 1, priceStepcoins: 20, sortOrder: 10,
+    durationMonths: 1, priceStepcoins: 1500, referencePriceEuros: 10,
+    sortOrder: 10,
   },
   {
     code: 'MAP_YEARLY', title: '1 año',
-    description: 'Tu local visible en el mapa durante un año. Ahorras 40 SC.',
-    durationMonths: 12, priceStepcoins: 200, sortOrder: 20,
+    description: 'Tu local visible en el mapa durante un año.',
+    durationMonths: 12, priceStepcoins: 15000, referencePriceEuros: 65,
+    sortOrder: 20,
   },
 ];
 

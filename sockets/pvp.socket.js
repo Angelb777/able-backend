@@ -6,6 +6,7 @@ const Turret = require('../api/models/Turret');
 const Mine = require('../api/models/Mine');
 const Airstrike = require('../api/models/Airstrike');
 const User = require('../api/models/User');
+const Skin = require('../api/models/Skin');
 const Ufo = require('../api/models/Ufo');
 const PoliceConfig = require('../api/models/PoliceConfig');
 const { createPoliceRuntime } = require('../api/services/policeRuntime');
@@ -40,6 +41,7 @@ module.exports = function(io, dependencies = {}) {
   const MineModel = dependencies.MineModel || Mine;
   const AirstrikeModel = dependencies.AirstrikeModel || Airstrike;
   const UserModel = dependencies.UserModel || User;
+  const SkinModel = dependencies.SkinModel || Skin;
   const UfoModel = dependencies.UfoModel || Ufo;
   const PoliceConfigModel = dependencies.PoliceConfigModel ||
     (hasInjectedDependencies ? {
@@ -94,6 +96,8 @@ module.exports = function(io, dependencies = {}) {
   const activeDuelByUser = new Map();
   const presenceSequenceByUser = new Map();
   const lifeSequenceByUser = new Map();
+  const activeDisguises = new Map();
+  const disguiseCooldowns = new Map();
   let snapshotVersion = 0;
   const presenceDisconnectGraceMs =
     dependencies.presenceDisconnectGraceMs ?? 15000;
@@ -311,6 +315,70 @@ module.exports = function(io, dependencies = {}) {
         nsp.to(socketId).emit(event, payload);
       }
     }
+  };
+  const activeDisguiseFor = (userId, timestamp = Date.now()) => {
+    const state = activeDisguises.get(String(userId));
+    if (!state || state.expiresAt <= timestamp) return null;
+    return state;
+  };
+  const disguisePayload = (state) => state ? ({
+    cardId: state.cardId,
+    skinId: state.skinId,
+    skinUrl: state.skinUrl,
+    skinDefinition: state.skinDefinition,
+    apparentFaction: state.apparentFaction,
+    expiresAt: new Date(state.expiresAt).toISOString(),
+    serverTimestamp: Date.now(),
+  }) : null;
+  const identityWithActiveDisguise = (userId, identity) => {
+    const disguise = activeDisguiseFor(userId);
+    return disguise ? {
+      ...identity,
+      skinId: disguise.skinId,
+      skinUrl: disguise.skinUrl,
+      skinDefinition: disguise.skinDefinition,
+    } : identity;
+  };
+  const publishSkinForUser = (userId, identity) => {
+    const sameUser = playersForUser(userId);
+    const primary = primaryPlayer(userId) || sameUser[0];
+    for (const player of sameUser) {
+      player.skinId = identity.skinId;
+      player.skinUrl = identity.skinUrl;
+      player.skinDefinition = identity.skinDefinition;
+    }
+    if (!primary) return;
+    primary.seq = nextPresenceSeq(userId);
+    primary.lastSeen = Date.now();
+    lastPresenceByUser.set(String(userId), primary);
+    nsp.to(primary.zoneId).emit('presence:skin', {
+      userId: String(userId),
+      skinUrl: primary.skinUrl,
+      skinId: primary.skinId || '',
+      skinDefinition: primary.skinDefinition || null,
+      ...presenceMetadata(primary),
+    });
+  };
+  const finishDisguise = async (userId, expectedExpiresAt, reason = 'expired') => {
+    const id = String(userId);
+    const state = activeDisguises.get(id);
+    if (!state || (expectedExpiresAt && state.expiresAt !== expectedExpiresAt)) return;
+    activeDisguises.delete(id);
+    if (state.timer) clearTimeout(state.timer);
+    try {
+      const identity = await loadAuthoritativeIdentityAndSkin(id);
+      publishSkinForUser(id, identity);
+    } catch (error) {
+      console.error(`[PVP][${instanceId}] disguise restore error`, {
+        userId: id,
+        error: error.message,
+      });
+    }
+    emitToUser(id, 'card:disguise:end', {
+      cardId: state.cardId,
+      reason,
+      serverTimestamp: Date.now(),
+    });
   };
   const duelOpponent = (session, userId) =>
     session.players.find((candidate) => candidate !== String(userId));
@@ -548,6 +616,7 @@ module.exports = function(io, dependencies = {}) {
     PoliceConfigModel,
     applyPlayerDamage,
     playersForUser,
+    isPlayerDisguised: (userId) => Boolean(activeDisguiseFor(userId)),
     primaryAlivePlayersInZone: (zoneId) => primaryAlivePlayersInZone(zoneId),
     routeProvider: sharedGroundRouteProvider,
   });
@@ -1761,7 +1830,10 @@ module.exports = function(io, dependencies = {}) {
         let gameModeEnabled = true;
         let duelStats = publicDuelStats();
         if (socket.data.authUserId) {
-          const authoritative = await loadAuthoritativeIdentityAndSkin(userId);
+          const authoritative = identityWithActiveDisguise(
+            userId,
+            await loadAuthoritativeIdentityAndSkin(userId),
+          );
           const user = authoritative.user;
           if (!user) return cb?.({ ok: false, error: 'Usuario no encontrado' });
           if (!user.nickname) {
@@ -1917,6 +1989,7 @@ module.exports = function(io, dependencies = {}) {
           claimedStepcoins,
           clanIds,
           bountyTotal,
+          selfDisguise: disguisePayload(activeDisguiseFor(userId)),
           instanceId,
           snapshotVersion,
           serverTimestamp: Date.now(),
@@ -1994,7 +2067,10 @@ module.exports = function(io, dependencies = {}) {
       const normalizedRequestedSkinId = String(requestedSkinId || '');
       if (socket.data.authUserId && normalizedRequestedSkinId !== String(p.skinId || '')) {
         try {
-          const authoritative = await loadAuthoritativeIdentityAndSkin(p.userId);
+          const authoritative = identityWithActiveDisguise(
+            p.userId,
+            await loadAuthoritativeIdentityAndSkin(p.userId),
+          );
           p.skinUrl = authoritative.skinUrl;
           p.skinId = authoritative.skinId;
           p.skinDefinition = authoritative.skinDefinition;
@@ -2279,6 +2355,94 @@ module.exports = function(io, dependencies = {}) {
         cb?.({ ok: true, vida, vidaRecuperada, cooldownMs });
       } catch (error) {
         console.error(`[PVP][${instanceId}] life card error`, {
+          socketId: socket.id,
+          userId: p.userId,
+          cardId,
+          error: error.message,
+        });
+        cb?.({ ok: false, error: error.message });
+      }
+    });
+
+    // Disfraz autoritativo: cambia únicamente la identidad visual/aparente.
+    // El mazo y el resto de habilidades permanecen disponibles.
+    socket.on('card:use-disguise', async (payload, cb) => {
+      const p = players.get(socket.id);
+      if (!p) return cb?.({ ok: false, error: 'No player' });
+
+      const cardId = String(payload?.cardId || '');
+      if (!cardId) {
+        return cb?.({ ok: false, error: 'Carta de Disfraz inválida' });
+      }
+
+      try {
+        await assertGameModeEnabled(p.userId);
+        if (activeDisguiseFor(p.userId)) {
+          throw new Error('Ya tienes un disfraz activo');
+        }
+        const baseCard = await CardModel.findById(cardId).lean();
+        if (!baseCard || baseCard.tipoArma !== 'Disfraz') {
+          throw new Error('Carta de Disfraz inválida');
+        }
+        const owner = await UserModel.findOne({
+          _id: p.userId,
+          cartas: cardId,
+          mazo: cardId,
+        }).select('_id').lean();
+        if (!owner) {
+          throw new Error('La carta ya no está disponible en tu mazo');
+        }
+
+        const durationSeconds = Math.min(
+          86400,
+          Math.max(1, Number(baseCard.duracionDisfraz) || 30),
+        );
+        const cooldownMs = Math.max(
+          0,
+          Number(baseCard.tiempoEspera) || 0,
+        ) * 1000;
+        const cooldownKey = `${p.userId}:${cardId}`;
+        const lastUsedAt = disguiseCooldowns.get(cooldownKey) || 0;
+        if (Date.now() - lastUsedAt < cooldownMs) {
+          throw new Error('Carta en tiempo de espera');
+        }
+
+        const skinId = String(baseCard.disguiseSkin || '');
+        if (!skinId) throw new Error('La carta no tiene una skin configurada');
+        const skin = await SkinModel.findById(skinId).lean();
+        const skinDefinition = publicSkinPayload(skin);
+        if (!skinDefinition?._id) {
+          throw new Error('La skin del disfraz ya no está disponible');
+        }
+
+        const activatedAt = Date.now();
+        const state = {
+          cardId,
+          skinId: skinDefinition._id,
+          skinUrl: classicSkinUrl(skinDefinition),
+          skinDefinition,
+          apparentFaction: baseCard.identidadAparente || 'police',
+          expiresAt: activatedAt + durationSeconds * 1000,
+          timer: null,
+        };
+        state.timer = setTimeout(
+          () => finishDisguise(p.userId, state.expiresAt),
+          durationSeconds * 1000,
+        );
+        state.timer.unref?.();
+        activeDisguises.set(String(p.userId), state);
+        disguiseCooldowns.set(cooldownKey, activatedAt);
+        publishSkinForUser(p.userId, state);
+        const response = {
+          ok: true,
+          ...disguisePayload(state),
+          durationSeconds,
+          cooldownMs,
+        };
+        emitToUser(p.userId, 'card:disguise:start', response);
+        cb?.(response);
+      } catch (error) {
+        console.error(`[PVP][${instanceId}] disguise card error`, {
           socketId: socket.id,
           userId: p.userId,
           cardId,

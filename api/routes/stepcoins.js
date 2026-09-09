@@ -35,6 +35,16 @@ function authenticatedTarget(req) {
     : String(req.user.id);
 }
 
+function commerceCannotUseClientEconomy(req, res, next) {
+  if (req.user.role === 'comercio') {
+    return res.status(403).json({
+      error: 'Las cuentas comercio solo pueden comprar Stepcoins y usarlos para promocionar locales',
+      code: 'MERCHANT_PURCHASE_ONLY',
+    });
+  }
+  return next();
+}
+
 const economyWriteLimiter = createLimiter({
   windowMs: 60 * 1000,
   limit: 30,
@@ -91,7 +101,7 @@ function movementAvailableReward(source, movementSession, now = Date.now()) {
   return Math.min(maximumBurst, previouslyAvailable + elapsedSeconds * perHour / 3600);
 }
 
-router.post('/movement/session', verifyToken, economyWriteLimiter, async (req, res) => {
+router.post('/movement/session', verifyToken, commerceCannotUseClientEconomy, economyWriteLimiter, async (req, res) => {
   const source = normalizeMovementSource(req.body?.source);
   if (!source) {
     return res.status(400).json({ error: 'Origen de movimiento no valido' });
@@ -135,7 +145,7 @@ router.post('/movement/session', verifyToken, economyWriteLimiter, async (req, r
 });
 
 // Añadir o quitar stepcoins (positivo o negativo)
-router.post("/adjust", verifyToken, economyWriteLimiter, async (req, res) => {
+router.post("/adjust", verifyToken, commerceCannotUseClientEconomy, economyWriteLimiter, async (req, res) => {
   const {
     userId, cantidad, tipo, descripcion, source, claimId, level,
     movementSessionId, movementSequence,
@@ -396,7 +406,7 @@ router.get("/historial/:userId", verifyToken, requireSelfOrAdmin(), async (req, 
 const Skin = require("../models/Skin"); // Asegúrate de tenerlo importado
 
 // Comprar skin con stepcoins
-router.post("/comprar-skin", verifyToken, economyWriteLimiter, async (req, res) => {
+router.post("/comprar-skin", verifyToken, commerceCannotUseClientEconomy, economyWriteLimiter, async (req, res) => {
   const { userId, skinId } = req.body;
   const targetUserId = authenticatedTarget(req);
 
@@ -454,7 +464,7 @@ router.post("/comprar-skin", verifyToken, economyWriteLimiter, async (req, res) 
   }
 });
 
-router.post("/ruleta", verifyToken, rouletteLimiter, async (req, res) => {
+router.post("/ruleta", verifyToken, commerceCannotUseClientEconomy, rouletteLimiter, async (req, res) => {
   try {
     const { userId, requestId } = req.body;
     const targetUserId = authenticatedTarget(req);
@@ -630,7 +640,7 @@ router.post("/ruleta", verifyToken, rouletteLimiter, async (req, res) => {
 });
 
 
-router.post('/minigame-result', verifyToken, economyWriteLimiter, async (req, res) => {
+router.post('/minigame-result', verifyToken, commerceCannotUseClientEconomy, economyWriteLimiter, async (req, res) => {
   try {
     const targetUserId = authenticatedTarget(req);
     const game = String(req.body?.game || '').trim();

@@ -15,7 +15,8 @@ function plain(value) {
 
 function createPoliceRuntime({
   nsp, geo, PoliceConfigModel, applyPlayerDamage, playersForUser,
-  primaryAlivePlayersInZone, routeProvider, now = () => Date.now(), random = Math.random,
+  primaryAlivePlayersInZone, isPlayerDisguised = () => false,
+  routeProvider, now = () => Date.now(), random = Math.random,
 } = {}) {
   const incidents = new Map();
   const wantedUsers = new Map();
@@ -279,11 +280,13 @@ function createPoliceRuntime({
   }
 
   const validTarget = (incident, userId) => {
-    if (!userId || !incident.wanted.has(String(userId))) return null;
+    if (!userId || !incident.wanted.has(String(userId)) ||
+        isPlayerDisguised(String(userId))) return null;
     const player = playersForUser(String(userId))[0];
     return player && player.gameModeEnabled !== false && (player.vida ?? 0) > 0 ? player : null;
   };
   const isUnitHostileToUser = (unitId, userId) => {
+    if (isPlayerDisguised(String(userId))) return false;
     const wanted = wantedUsers.get(String(userId));
     if (!wanted || wanted.stars <= 0) return false;
     const incident = incidents.get(wanted.incidentId);
@@ -471,6 +474,7 @@ function createPoliceRuntime({
       const incident = incidents.get(shot.incidentId); const unit = incident?.units.get(shot.unitId);
       const target = playersForUser(shot.targetUserId)[0];
       const hit = Boolean(unit && target && target.gameModeEnabled !== false && (target.vida ?? 0) > 0 &&
+        !isPlayerDisguised(String(shot.targetUserId)) &&
         geo.distanceMeters(target, shot.to) <= 15);
       let result = null;
       if (hit) result = await applyPlayerDamage({ attackerUserId: '', target, damage: shot.damage,

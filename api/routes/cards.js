@@ -274,6 +274,13 @@ router.post(
           error: "Las cartas Vida necesitan otorgar una cantidad de vida mayor que 0."
         });
       }
+      if (body.tipoArma === "Disfraz" &&
+          (toInt(body.duracionDisfraz, 0) <= 0 ||
+           !mongoose.isValidObjectId(body.disguiseSkin))) {
+        return res.status(400).json({
+          error: "Las cartas Disfraz necesitan una skin y una duración mayor que 0."
+        });
+      }
       if (body.tipoArma === "Trampa" &&
           (toFloat(body.radioActivacion, 0) <= 0 ||
            toInt(body.dano, 0) <= 0 ||
@@ -423,6 +430,13 @@ router.post(
         duracionDefensa: toInt(body.duracionDefensa, 0),
         tipoDefensa: body.tipoDefensa || "Inmunidad",
         porcentajeReduccion: toInt(body.porcentajeReduccion, 0),
+        disguiseSkin: body.tipoArma === "Disfraz" ? body.disguiseSkin : undefined,
+        duracionDisfraz: body.tipoArma === "Disfraz"
+          ? toInt(body.duracionDisfraz, 30)
+          : 30,
+        identidadAparente: body.tipoArma === "Disfraz"
+          ? (body.identidadAparente || "police")
+          : "police",
         numeroUnidades: toInt(body.numeroUnidades, 1),
         separacionUnidades: toFloat(body.separacionUnidades, 3),
         distanciaMaximaColocacion: toFloat(body.distanciaMaximaColocacion, 500),
@@ -525,6 +539,13 @@ router.put(
       if (body.tipoArma === "Vida" && toInt(body.vida, 0) <= 0) {
         return res.status(400).json({
           error: "Las cartas Vida necesitan otorgar una cantidad de vida mayor que 0."
+        });
+      }
+      if (body.tipoArma === "Disfraz" &&
+          (toInt(body.duracionDisfraz, 0) <= 0 ||
+           !mongoose.isValidObjectId(body.disguiseSkin))) {
+        return res.status(400).json({
+          error: "Las cartas Disfraz necesitan una skin y una duración mayor que 0."
         });
       }
       if (body.tipoArma === "Trampa" &&
@@ -643,6 +664,13 @@ router.put(
         duracionDefensa: toInt(body.duracionDefensa, 0),
         tipoDefensa: body.tipoDefensa || "Inmunidad",
         porcentajeReduccion: toInt(body.porcentajeReduccion, 0),
+        disguiseSkin: body.tipoArma === "Disfraz" ? body.disguiseSkin : undefined,
+        duracionDisfraz: body.tipoArma === "Disfraz"
+          ? toInt(body.duracionDisfraz, card.duracionDisfraz || 30)
+          : 30,
+        identidadAparente: body.tipoArma === "Disfraz"
+          ? (body.identidadAparente || "police")
+          : "police",
         numeroUnidades: toInt(body.numeroUnidades, card.numeroUnidades || 1),
         separacionUnidades: toFloat(body.separacionUnidades, card.separacionUnidades ?? 3),
         distanciaMaximaColocacion: toFloat(body.distanciaMaximaColocacion, card.distanciaMaximaColocacion || 500),
@@ -735,7 +763,9 @@ router.put(
 // 📥 Obtener todas las cartas
 router.get("/", async (req, res) => {
   try {
-    const cards = await Card.find().sort({ creadoEn: -1 });
+    const cards = await Card.find()
+      .populate("disguiseSkin", "titulo portada renderType")
+      .sort({ creadoEn: -1 });
     res.json(cards);
   } catch (err) {
     console.error("❌ Error al obtener cartas:", err);

@@ -59,6 +59,44 @@ test('authenticated users cannot mint walking rewards with arbitrary claim ids',
   assert.equal(transactionAttempts, 0);
 });
 
+test('commerce accounts cannot earn Stepcoins through client economy routes', async (t) => {
+  const previousSecret = process.env.JWT_SECRET;
+  const originalFindById = User.findById;
+  process.env.JWT_SECRET = 'merchant-purchase-only-test-secret-32';
+  const userId = '507f1f77bcf86cd799439012';
+  User.findById = (id) => ({
+    select() { return this; },
+    lean: async () => ({
+      _id: id, role: 'comercio', email: 'merchant@test', firebaseUid: null,
+    }),
+  });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/stepcoins', stepcoinsRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    if (previousSecret == null) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousSecret;
+    User.findById = originalFindById;
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const token = jwt.sign({ id: userId, legacy: true }, process.env.JWT_SECRET);
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/stepcoins/adjust`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cantidad: 100, tipo: 'recompensa' }),
+    },
+  );
+  const body = await response.json();
+  assert.equal(response.status, 403);
+  assert.equal(body.code, 'MERCHANT_PURCHASE_ONLY');
+});
+
 test('server movement session consumes each sequence once and keeps retries idempotent', async (t) => {
   const previousSecret = process.env.JWT_SECRET;
   const originals = {

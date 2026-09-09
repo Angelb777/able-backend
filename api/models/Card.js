@@ -11,7 +11,7 @@ const CardSchema = new mongoose.Schema({
   // Tipo de carta
   tipoArma: {
     type: String,
-    enum: ["Proyectil", "Arrastre", "Trampa", "Invocacion", "Vida", "Defensa", "TROPA"],
+    enum: ["Proyectil", "Arrastre", "Trampa", "Invocacion", "Vida", "Defensa", "TROPA", "Disfraz"],
     required: true
   },
 
@@ -132,6 +132,11 @@ const CardSchema = new mongoose.Schema({
   },
   porcentajeReduccion: { type: Number, default: 0 },
   imagenesDefensa: [String],
+
+  // ===== Disfraz =====
+  disguiseSkin: { type: mongoose.Schema.Types.ObjectId, ref: "Skin" },
+  duracionDisfraz: { type: Number, default: 30, min: 1 }, // segundos
+  identidadAparente: { type: String, enum: ["police"], default: "police" },
 
   creadoEn: { type: Date, default: Date.now },
   commercialRequestId: { type: mongoose.Schema.Types.ObjectId, ref: "CommercialRequest", index: true },

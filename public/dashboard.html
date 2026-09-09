@@ -472,6 +472,7 @@
     <option value="Vida">Vida</option>
     <option value="Defensa">Defensa</option>
     <option value="TROPA">TROPA</option>
+    <option value="Disfraz">Disfraz</option>
   </select><br><br>
 
   <div id="comunCarta" style="display:none;">
@@ -781,6 +782,25 @@
 
     <label>Duración del escudo (segundos):</label>
     <input type="number" name="duracionDefensa"><br><br>
+  </div>
+
+  <!-- 🕵️ Disfraz -->
+  <div id="seccionDisfraz" style="display:none;">
+    <label>Skin que aplicará el disfraz:</label>
+    <select id="disguiseSkinSelect" name="disguiseSkin" required>
+      <option value="">-- Elige una skin --</option>
+    </select><br><br>
+
+    <label>Duración de uso (segundos):</label>
+    <input type="number" name="duracionDisfraz" min="1" value="30" required><br><br>
+
+    <label>Identidad aparente:</label>
+    <select name="identidadAparente" required>
+      <option value="police">Policía</option>
+    </select><br><br>
+
+    <p>La skin elegida puede ser clásica o animada con Flame. Durante el efecto,
+      la policía tratará al jugador como infiltrado.</p>
   </div>
 
   <button type="submit" id="submitCarta">Crear Carta</button>

@@ -15,6 +15,15 @@ const bountyService = require('../services/bountyService');
 
 const router = express.Router();
 router.use(verifyToken);
+router.use((req, res, next) => {
+  if (req.user.role === 'comercio') {
+    return res.status(403).json({
+      error: 'Las cuentas comercio no participan en la economía social de Stepcoins',
+      code: 'MERCHANT_PURCHASE_ONLY',
+    });
+  }
+  return next();
+});
 
 const TAUNT_COOLDOWN_MS = Number(process.env.TAUNT_COOLDOWN_MS) || 15 * 1000;
 const MIN_BOUNTY = Math.max(

@@ -60,8 +60,10 @@ test('Stepcoin checkout credits once and records the server-side EUR price', asy
   });
 
   const userId = new mongoose.Types.ObjectId();
+  let role = 'cliente';
   let balance = 1000;
   let increments = 0;
+  let creditedRole;
   let storedPayment = null;
   let storedTransaction = null;
   mongoose.startSession = async () => ({
@@ -73,13 +75,14 @@ test('Stepcoin checkout credits once and records the server-side EUR price', asy
       select() { return this; },
       session: async () => ({ stepcoins: balance }),
       lean: async () => ({
-        _id: userId, role: 'cliente', email: 'buyer@example.test', firebaseUid: null,
+        _id: userId, role, email: 'buyer@example.test', firebaseUid: null,
       }),
     };
     return query;
   };
-  User.findOneAndUpdate = (_filter, update) => ({
+  User.findOneAndUpdate = (filter, update) => ({
     select: async () => {
+      creditedRole = filter.role;
       increments += 1;
       balance += update.$inc.stepcoins;
       return { stepcoins: balance, nickname: 'Buyer', email: 'buyer@example.test' };
@@ -102,12 +105,12 @@ test('Stepcoin checkout credits once and records the server-side EUR price', asy
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const token = jwt.sign({ id: String(userId), legacy: true }, process.env.JWT_SECRET);
-  const call = () => fetch(
+  const call = (cantidad = 500, requestId = 'purchase-test-001') => fetch(
     `http://127.0.0.1:${server.address().port}/api/payments/stepcoins/checkout`,
     {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cantidad: 500, requestId: 'purchase-test-001' }),
+      body: JSON.stringify({ cantidad, requestId }),
     },
   );
 
@@ -130,6 +133,18 @@ test('Stepcoin checkout credits once and records the server-side EUR price', asy
   assert.equal(retryBody.duplicate, true);
   assert.equal(retryBody.user.stepcoins, 1500);
   assert.equal(increments, 1);
+
+  role = 'comercio';
+  balance = 0;
+  storedPayment = null;
+  const merchant = await call(1500, 'merchant-purchase-001');
+  const merchantBody = await merchant.json();
+  assert.equal(merchant.status, 201, merchantBody.error);
+  assert.equal(merchantBody.user.stepcoins, 1500);
+  assert.equal(storedPayment.cantidad, 10);
+  assert.equal(storedPayment.stepcoinsDelta, 1500);
+  assert.equal(creditedRole, 'comercio');
+  assert.equal(increments, 2);
 });
 
 test('Stepcoin checkout rejects unauthenticated and non-catalog purchases', async (t) => {

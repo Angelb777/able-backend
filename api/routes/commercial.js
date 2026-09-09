@@ -282,6 +282,7 @@ router.get('/map-plans', ...commerceOnly, async (_req, res, next) => {
       description: item.description,
       durationMonths: item.durationMonths,
       priceStepcoins: item.priceStepcoins,
+      referencePriceEuros: item.referencePriceEuros,
     })));
   } catch (error) { next(error); }
 });
@@ -298,6 +299,12 @@ router.post('/locations/:id/subscribe', ...commerceOnly, async (req, res) => {
       _id: req.params.id, ownerId: req.user.id, archived: { $ne: true },
     });
     if (!location) return res.status(404).json({ error: 'Local no encontrado' });
+    if (location.status !== 'approved') {
+      return res.status(409).json({
+        error: 'Able73 debe aprobar el establecimiento antes de contratar su promoción',
+        code: 'ESTABLISHMENT_NOT_APPROVED',
+      });
+    }
 
     await ensureDefaultMapPlans();
     const plan = await MapPlan.findOne({ _id: req.body.planId, active: true });

@@ -31,6 +31,28 @@ const STEPCOIN_PACKAGES_EUR = new Map([
   [30000, 110], [40000, 130], [50000, 150], [60000, 180],
 ]);
 
+// Catálogo exclusivo para comercios. Usa el mismo saldo Stepcoins, pero solo
+// ofrece los paquetes necesarios para promocionar sus locales físicos.
+const MERCHANT_STEPCOIN_PACKAGES_EUR = new Map([
+  [1500, 10],
+  [15000, 65],
+]);
+
+function stepcoinPackagesFor(role) {
+  return role === 'comercio'
+    ? MERCHANT_STEPCOIN_PACKAGES_EUR
+    : STEPCOIN_PACKAGES_EUR;
+}
+
+router.get(
+  '/stepcoins/packages',
+  verifyToken,
+  checkRole(['comercio']),
+  (req, res) => res.json(Array.from(stepcoinPackagesFor(req.user.role), ([stepcoins, euros]) => ({
+    stepcoins, euros, currency: 'EUR',
+  }))),
+);
+
 // Crear un registro monetario manual. Solo Superadmin puede certificarlo.
 router.post("/", ...adminOnly, async (req, res) => {
   const { userId, cantidad } = req.body;
@@ -67,7 +89,7 @@ router.post("/", ...adminOnly, async (req, res) => {
 // punto que en el futuro confirmará Google Play/Apple/TPV. Hasta entonces,
 // registra un pago verificado de plataforma y abona el paquete en una sola
 // transacción. requestId hace que los reintentos no dupliquen la compra.
-router.post('/stepcoins/checkout', verifyToken, checkRole(['cliente']), async (req, res) => {
+router.post('/stepcoins/checkout', verifyToken, checkRole(['cliente', 'comercio']), async (req, res) => {
   if (process.env.NODE_ENV === 'production') {
     return res.status(503).json({
       error: 'La compra de Stepcoins no esta disponible hasta verificar el pago real',
@@ -76,7 +98,7 @@ router.post('/stepcoins/checkout', verifyToken, checkRole(['cliente']), async (r
   }
   const cantidad = Number(req.body.cantidad);
   const requestId = String(req.body.requestId || '').trim();
-  const price = STEPCOIN_PACKAGES_EUR.get(cantidad);
+  const price = stepcoinPackagesFor(req.user.role).get(cantidad);
 
   if (!Number.isInteger(cantidad) || price == null) {
     return res.status(400).json({ error: 'Paquete de Stepcoins no válido' });
@@ -102,7 +124,7 @@ router.post('/stepcoins/checkout', verifyToken, checkRole(['cliente']), async (r
       }
 
       user = await User.findOneAndUpdate(
-        { _id: userId, role: 'cliente' },
+        { _id: userId, role: req.user.role },
         { $inc: { stepcoins: cantidad } },
         { new: true, session },
       ).select('stepcoins nombre nickname email');
