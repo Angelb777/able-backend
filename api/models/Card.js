@@ -134,7 +134,13 @@ const CardSchema = new mongoose.Schema({
   imagenesDefensa: [String],
 
   // ===== Disfraz =====
-  disguiseSkin: { type: mongoose.Schema.Types.ObjectId, ref: "Skin" },
+  disguiseRenderType: {
+    type: String,
+    enum: ["classic", "flame_spritesheet"],
+    default: "classic"
+  },
+  disguiseImage: String,
+  disguiseSpritesheet: cardSpritesheetSchema,
   duracionDisfraz: { type: Number, default: 30, min: 1 }, // segundos
   identidadAparente: { type: String, enum: ["police"], default: "police" },
 

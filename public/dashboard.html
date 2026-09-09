@@ -786,10 +786,18 @@
 
   <!-- 🕵️ Disfraz -->
   <div id="seccionDisfraz" style="display:none;">
-    <label>Skin que aplicará el disfraz:</label>
-    <select id="disguiseSkinSelect" name="disguiseSkin" required>
-      <option value="">-- Elige una skin --</option>
+    <label>Apariencia del disfraz:</label>
+    <select id="disguiseRenderType" name="disguiseRenderType">
+      <option value="classic">Imagen clásica</option>
+      <option value="flame_spritesheet">Spritesheet animado</option>
     </select><br><br>
+
+    <div id="disguiseClassicFields">
+      <label>Imagen que sustituirá visualmente al jugador:</label>
+      <input type="file" id="disguiseImage" name="disguiseImage" accept="image/*"><br><br>
+    </div>
+
+    <div id="disguiseFlameFields" style="display:none;"></div>
 
     <label>Duración de uso (segundos):</label>
     <input type="number" name="duracionDisfraz" min="1" value="30" required><br><br>
@@ -799,8 +807,8 @@
       <option value="police">Policía</option>
     </select><br><br>
 
-    <p>La skin elegida puede ser clásica o animada con Flame. Durante el efecto,
-      la policía tratará al jugador como infiltrado.</p>
+    <p>Esta apariencia pertenece únicamente a la carta y sustituye temporalmente
+      a la skin del jugador. Durante el efecto, la policía lo tratará como infiltrado.</p>
   </div>
 
   <button type="submit" id="submitCarta">Crear Carta</button>

@@ -1074,7 +1074,7 @@ function commaSeparatedIntegers(value) {
 function installSimpleSpriteEditor(kind) {
   const container = document.getElementById(`${kind}FlameFields`);
   if (!container || container.dataset.ready) return;
-  const usesSkinOrientationFormat = kind.startsWith("unit");
+  const usesSkinOrientationFormat = kind.startsWith("unit") || kind === "disguise";
   container.dataset.ready = "true";
   container.innerHTML = `
     <input type="file" id="${kind}SpritesheetPng" name="${kind}SpritesheetPng" accept="image/png">
@@ -1105,7 +1105,7 @@ function simpleSpriteConfig(root, kind) {
     throw new Error(`Completa columnas, filas, frames y FPS para ${kind}.`);
   }
   const array = (value) => value?.trim() ? JSON.parse(value) : [];
-  const usesSkinOrientationFormat = kind.startsWith("unit");
+  const usesSkinOrientationFormat = kind.startsWith("unit") || kind === "disguise";
   return { columns, rows, frames, fps, frameTime: 1 / fps,
     loop: Boolean(get("loop")?.checked), multipleOrientations: Boolean(get("multipleOrientations")?.checked),
     readOrder: get("readOrder")?.value || "row-major",
@@ -3954,7 +3954,7 @@ async function cargarCartas() {
         ${carta.tipoArma === "Proyectil" ? `<p><strong>Render explosión:</strong> ${carta.explosionRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p>` : ""}
         ${carta.tipoArma === "Arrastre" ? `<p><strong>Render torre:</strong> ${carta.turretRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p>` : ""}
         ${carta.tipoArma === "TROPA" ? `<p><strong>Unidades:</strong> ${carta.numeroUnidades || 1}</p>` : ""}
-        ${carta.tipoArma === "Disfraz" ? `<p><strong>Skin:</strong> ${commercialEscape(carta.disguiseSkin?.titulo || "Sin configurar")}</p><p><strong>Duración:</strong> ${carta.duracionDisfraz || 0}s</p>` : ""}
+        ${carta.tipoArma === "Disfraz" ? `<p><strong>Apariencia propia:</strong> ${carta.disguiseRenderType === "flame_spritesheet" ? "Spritesheet animado" : "Imagen clásica"}</p><p><strong>Duración:</strong> ${carta.duracionDisfraz || 0}s</p>` : ""}
         <p><strong>Daño:</strong> ${carta.dano}</p>
         <p><strong>Dispositivo:</strong> ${carta.dispositivo || "Ambos"}</p>
         <p><strong>Tiempo de espera:</strong> ${carta.tiempoEspera || 0} segundos</p>
@@ -5451,7 +5451,7 @@ async function renderMisSkinsCliente() {
 }
 
 document.addEventListener("DOMContentLoaded", function () {
-  const extendedCardSpriteKinds = ["mine", "mineExplosion", "airstrikePlane", "airstrikeBomb", "airstrikeExplosion", "unitIdle", "unitWalk", "unitAttack"];
+  const extendedCardSpriteKinds = ["mine", "mineExplosion", "airstrikePlane", "airstrikeBomb", "airstrikeExplosion", "unitIdle", "unitWalk", "unitAttack", "disguise"];
   extendedCardSpriteKinds.forEach(installSimpleSpriteEditor);
   const tipoSelect = document.getElementById("tipoArmaSelect");
   const seccionComun = document.getElementById("comunCarta");
@@ -5466,23 +5466,6 @@ document.addEventListener("DOMContentLoaded", function () {
     Defensa:    document.getElementById("seccionDefensa"),
     Disfraz:    document.getElementById("seccionDisfraz")
   };
-
-  const cargarSkinsDisfraz = async () => {
-    const select = document.getElementById("disguiseSkinSelect");
-    if (!select) return;
-    try {
-      const response = await fetch("/api/skins");
-      const skins = await response.json();
-      if (!response.ok || !Array.isArray(skins)) throw new Error("Respuesta inválida");
-      const selected = select.value;
-      select.innerHTML = '<option value="">-- Elige una skin --</option>' +
-        skins.map((skin) => `<option value="${commercialEscape(skin._id)}">${commercialEscape(skin.titulo || "Skin")}</option>`).join("");
-      select.value = selected;
-    } catch (error) {
-      console.error("No se pudieron cargar las skins para Disfraz:", error);
-    }
-  };
-  cargarSkinsDisfraz();
 
   // --- Helpers ---
   const clearInputs = (root) => {
@@ -5530,7 +5513,8 @@ document.addEventListener("DOMContentLoaded", function () {
     flame.style.display = animated ? "block" : "none";
     if (classic) classic.querySelectorAll("input,select,textarea").forEach(el => { el.disabled = animated; });
     const classicInputIds = { mine: "imagenesActivacion", mineExplosion: "imagenesExplosionTrampa",
-      airstrikePlane: "imagenesAvion", airstrikeBomb: "imagenesBomba", airstrikeExplosion: "imagenesExplosionInvocacion" };
+      airstrikePlane: "imagenesAvion", airstrikeBomb: "imagenesBomba", airstrikeExplosion: "imagenesExplosionInvocacion",
+      disguise: "disguiseImage" };
     const classicInput = document.getElementById(classicInputIds[kind]);
     if (classicInput) classicInput.disabled = animated;
     flame.querySelectorAll("input,select,textarea").forEach(el => { el.disabled = !animated; });
@@ -5609,6 +5593,8 @@ document.addEventListener("DOMContentLoaded", function () {
           setRenderFields("airstrikePlane"); setRenderFields("airstrikeBomb"); setRenderFields("airstrikeExplosion");
         } else if (key === "TROPA") {
           setRenderFields("unitIdle"); setRenderFields("unitWalk"); setRenderFields("unitAttack");
+        } else if (key === "Disfraz") {
+          setRenderFields("disguise");
         }
       } else {
         seccion.style.display = "none";
@@ -5766,7 +5752,6 @@ document.addEventListener("DOMContentLoaded", function () {
       distanciaMaximaPersecucion: carta.distanciaMaximaPersecucion ?? 250,
       velocidadMovimiento: carta.velocidadMovimiento ?? 3,
       cooldownAtaque: carta.cooldownAtaque ?? 1,
-      disguiseSkin: carta.disguiseSkin?._id ?? carta.disguiseSkin ?? "",
       duracionDisfraz: carta.duracionDisfraz ?? 30,
       identidadAparente: carta.identidadAparente ?? "police",
     };

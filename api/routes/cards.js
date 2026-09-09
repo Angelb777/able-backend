@@ -30,7 +30,8 @@ const SPRITESHEET_FIELDS = new Set([
   "airstrikeExplosionSpritesheetPng",
   "unitIdleSpritesheetPng",
   "unitWalkSpritesheetPng",
-  "unitAttackSpritesheetPng"
+  "unitAttackSpritesheetPng",
+  "disguiseSpritesheetPng"
 ]);
 
 class SpritesheetValidationError extends Error {}
@@ -196,6 +197,8 @@ router.post(
     { name: "unitIdleSpritesheetPng", maxCount: 1 },
     { name: "unitWalkSpritesheetPng", maxCount: 1 },
     { name: "unitAttackSpritesheetPng", maxCount: 1 },
+    { name: "disguiseImage", maxCount: 1 },
+    { name: "disguiseSpritesheetPng", maxCount: 1 },
     { name: "imagenesExtras", maxCount: 5 },
 
     { name: "imagenesMovimiento", maxCount: 4 },
@@ -232,6 +235,7 @@ router.post(
       const airstrikePlaneRenderType = normalizedRenderType(body.airstrikePlaneRenderType);
       const airstrikeBombRenderType = normalizedRenderType(body.airstrikeBombRenderType);
       const airstrikeExplosionRenderType = normalizedRenderType(body.airstrikeExplosionRenderType);
+      const disguiseRenderType = normalizedRenderType(body.disguiseRenderType);
 
       // ✅ Validaciones mínimas (evita 500 de Mongoose)
       if (!body.titulo || !body.tipoArma) {
@@ -274,13 +278,15 @@ router.post(
           error: "Las cartas Vida necesitan otorgar una cantidad de vida mayor que 0."
         });
       }
-      if (body.tipoArma === "Disfraz" &&
-          (toInt(body.duracionDisfraz, 0) <= 0 ||
-           !mongoose.isValidObjectId(body.disguiseSkin))) {
+      if (body.tipoArma === "Disfraz" && toInt(body.duracionDisfraz, 0) <= 0) {
         return res.status(400).json({
-          error: "Las cartas Disfraz necesitan una skin y una duración mayor que 0."
+          error: "Las cartas Disfraz necesitan una duración mayor que 0."
         });
       }
+      if (body.tipoArma === "Disfraz" && disguiseRenderType === "classic" && !files.disguiseImage?.length) {
+        return res.status(400).json({ error: "Debes subir la imagen clásica del disfraz." });
+      }
+      requiredSheet(body.tipoArma === "Disfraz" && disguiseRenderType === "flame_spritesheet", "disguiseSpritesheetPng", "el disfraz animado");
       if (body.tipoArma === "Trampa" &&
           (toFloat(body.radioActivacion, 0) <= 0 ||
            toInt(body.dano, 0) <= 0 ||
@@ -326,6 +332,7 @@ router.post(
       const unitIdleSheetFile = files.unitIdleSpritesheetPng?.[0];
       const unitWalkSheetFile = files.unitWalkSpritesheetPng?.[0];
       const unitAttackSheetFile = files.unitAttackSpritesheetPng?.[0];
+      const disguiseSheetFile = files.disguiseSpritesheetPng?.[0];
       const projectileSpritesheet = projectileRenderType === "flame_spritesheet"
         ? parseSpritesheetConfig(body.projectileSpritesheetConfig, "proyectil", normalizarRuta(projectileSheetFile), projectileSheetFile)
         : undefined;
@@ -354,6 +361,9 @@ router.post(
         ? parseSpritesheetConfig(body.unitWalkSpritesheetConfig, "movimiento de unidad", normalizarRuta(unitWalkSheetFile), unitWalkSheetFile, null, true) : undefined;
       const unitAttackSpritesheet = body.tipoArma === "TROPA"
         ? parseSpritesheetConfig(body.unitAttackSpritesheetConfig, "ataque de unidad", normalizarRuta(unitAttackSheetFile), unitAttackSheetFile, null, true) : undefined;
+      const disguiseSpritesheet = body.tipoArma === "Disfraz" && disguiseRenderType === "flame_spritesheet"
+        ? parseSpritesheetConfig(body.disguiseSpritesheetConfig, "disfraz animado", normalizarRuta(disguiseSheetFile), disguiseSheetFile, null, true)
+        : undefined;
       const imgsDisparo = [];
       if (files.imagenesDisparo) imgsDisparo.push(...files.imagenesDisparo.map(normalizarRuta));
       if (files.imagenesBala)     imgsDisparo.push(...files.imagenesBala.map(normalizarRuta));
@@ -412,6 +422,11 @@ router.post(
         unitIdleSpritesheet,
         unitWalkSpritesheet,
         unitAttackSpritesheet,
+        disguiseRenderType,
+        disguiseImage: body.tipoArma === "Disfraz" && disguiseRenderType === "classic"
+          ? normalizarRuta(files.disguiseImage?.[0])
+          : undefined,
+        disguiseSpritesheet,
 
         // Específicos
         vida: toInt(body.vida, 0),
@@ -430,7 +445,6 @@ router.post(
         duracionDefensa: toInt(body.duracionDefensa, 0),
         tipoDefensa: body.tipoDefensa || "Inmunidad",
         porcentajeReduccion: toInt(body.porcentajeReduccion, 0),
-        disguiseSkin: body.tipoArma === "Disfraz" ? body.disguiseSkin : undefined,
         duracionDisfraz: body.tipoArma === "Disfraz"
           ? toInt(body.duracionDisfraz, 30)
           : 30,
@@ -493,6 +507,8 @@ router.put(
     { name: "unitIdleSpritesheetPng", maxCount: 1 },
     { name: "unitWalkSpritesheetPng", maxCount: 1 },
     { name: "unitAttackSpritesheetPng", maxCount: 1 },
+    { name: "disguiseImage", maxCount: 1 },
+    { name: "disguiseSpritesheetPng", maxCount: 1 },
     { name: "imagenesExtras", maxCount: 5 },
     { name: "imagenesMovimiento", maxCount: 4 },
     { name: "imagenesDisparo", maxCount: 4 },
@@ -524,6 +540,7 @@ router.put(
         value === undefined || value === null || value === ""
           ? fallback
           : parseFloat(value);
+      const disguiseRenderType = normalizedRenderType(body.disguiseRenderType || card.disguiseRenderType);
 
       if (!body.titulo || !body.tipoArma) {
         return res.status(400).json({
@@ -541,12 +558,18 @@ router.put(
           error: "Las cartas Vida necesitan otorgar una cantidad de vida mayor que 0."
         });
       }
-      if (body.tipoArma === "Disfraz" &&
-          (toInt(body.duracionDisfraz, 0) <= 0 ||
-           !mongoose.isValidObjectId(body.disguiseSkin))) {
+      if (body.tipoArma === "Disfraz" && toInt(body.duracionDisfraz, 0) <= 0) {
         return res.status(400).json({
-          error: "Las cartas Disfraz necesitan una skin y una duración mayor que 0."
+          error: "Las cartas Disfraz necesitan una duración mayor que 0."
         });
+      }
+      if (body.tipoArma === "Disfraz" && disguiseRenderType === "classic" &&
+          !req.files?.disguiseImage?.length && !card.disguiseImage) {
+        return res.status(400).json({ error: "Debes subir la imagen clásica del disfraz." });
+      }
+      if (body.tipoArma === "Disfraz" && disguiseRenderType === "flame_spritesheet" &&
+          !req.files?.disguiseSpritesheetPng?.length && !card.disguiseSpritesheet?.url) {
+        return res.status(400).json({ error: "Debes subir el PNG spritesheet del disfraz animado." });
       }
       if (body.tipoArma === "Trampa" &&
           (toFloat(body.radioActivacion, 0) <= 0 ||
@@ -603,6 +626,7 @@ router.put(
       const unitIdleSheetFile = files.unitIdleSpritesheetPng?.[0];
       const unitWalkSheetFile = files.unitWalkSpritesheetPng?.[0];
       const unitAttackSheetFile = files.unitAttackSpritesheetPng?.[0];
+      const disguiseSheetFile = files.disguiseSpritesheetPng?.[0];
       const projectileSpritesheet = projectileRenderType === "flame_spritesheet"
         ? parseSpritesheetConfig(body.projectileSpritesheetConfig, "proyectil", normalizarRuta(projectileSheetFile) || card.projectileSpritesheet?.url, projectileSheetFile, card.projectileSpritesheet)
         : card.projectileSpritesheet;
@@ -633,6 +657,9 @@ router.put(
       const unitAttackSpritesheet = body.tipoArma === "TROPA"
         ? parseSpritesheetConfig(body.unitAttackSpritesheetConfig, "ataque de unidad", normalizarRuta(unitAttackSheetFile) || card.unitAttackSpritesheet?.url, unitAttackSheetFile, card.unitAttackSpritesheet, true)
         : card.unitAttackSpritesheet;
+      const disguiseSpritesheet = body.tipoArma === "Disfraz" && disguiseRenderType === "flame_spritesheet"
+        ? parseSpritesheetConfig(body.disguiseSpritesheetConfig, "disfraz animado", normalizarRuta(disguiseSheetFile) || card.disguiseSpritesheet?.url, disguiseSheetFile, card.disguiseSpritesheet, true)
+        : card.disguiseSpritesheet;
       Object.assign(card, {
         titulo: body.titulo,
         descripcion: body.descripcion || "",
@@ -664,7 +691,8 @@ router.put(
         duracionDefensa: toInt(body.duracionDefensa, 0),
         tipoDefensa: body.tipoDefensa || "Inmunidad",
         porcentajeReduccion: toInt(body.porcentajeReduccion, 0),
-        disguiseSkin: body.tipoArma === "Disfraz" ? body.disguiseSkin : undefined,
+        disguiseRenderType,
+        disguiseSpritesheet,
         duracionDisfraz: body.tipoArma === "Disfraz"
           ? toInt(body.duracionDisfraz, card.duracionDisfraz || 30)
           : 30,
@@ -699,6 +727,10 @@ router.put(
         unitWalkSpritesheet,
         unitAttackSpritesheet
       });
+
+      if (files.disguiseImage?.length) {
+        card.disguiseImage = normalizarRuta(files.disguiseImage[0]);
+      }
 
       if (files.imagenPortada?.length) {
         card.imagenPortada = normalizarRuta(files.imagenPortada[0]);
@@ -763,9 +795,7 @@ router.put(
 // 📥 Obtener todas las cartas
 router.get("/", async (req, res) => {
   try {
-    const cards = await Card.find()
-      .populate("disguiseSkin", "titulo portada renderType")
-      .sort({ creadoEn: -1 });
+    const cards = await Card.find().sort({ creadoEn: -1 });
     res.json(cards);
   } catch (err) {
     console.error("❌ Error al obtener cartas:", err);

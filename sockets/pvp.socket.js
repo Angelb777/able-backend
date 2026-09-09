@@ -6,7 +6,6 @@ const Turret = require('../api/models/Turret');
 const Mine = require('../api/models/Mine');
 const Airstrike = require('../api/models/Airstrike');
 const User = require('../api/models/User');
-const Skin = require('../api/models/Skin');
 const Ufo = require('../api/models/Ufo');
 const PoliceConfig = require('../api/models/PoliceConfig');
 const { createPoliceRuntime } = require('../api/services/policeRuntime');
@@ -41,7 +40,6 @@ module.exports = function(io, dependencies = {}) {
   const MineModel = dependencies.MineModel || Mine;
   const AirstrikeModel = dependencies.AirstrikeModel || Airstrike;
   const UserModel = dependencies.UserModel || User;
-  const SkinModel = dependencies.SkinModel || Skin;
   const UfoModel = dependencies.UfoModel || Ufo;
   const PoliceConfigModel = dependencies.PoliceConfigModel ||
     (hasInjectedDependencies ? {
@@ -140,6 +138,43 @@ module.exports = function(io, dependencies = {}) {
     if (!skin || skin.renderType === 'flame_spritesheet') return '';
     const idle = skin.scripts?.parado;
     return Array.isArray(idle) && typeof idle[0] === 'string' ? idle[0] : '';
+  };
+  const disguiseSkinDefinition = (rawCard) => {
+    if (!rawCard) return null;
+    const card = typeof rawCard.toObject === 'function' ? rawCard.toObject() : rawCard;
+    const id = String(card._id || card.id || '');
+    if (!id) return null;
+    const syntheticId = `disguise-${id}`;
+    if (card.disguiseRenderType === 'flame_spritesheet') {
+      const walk = typeof card.disguiseSpritesheet?.toObject === 'function'
+        ? card.disguiseSpritesheet.toObject()
+        : card.disguiseSpritesheet;
+      if (!walk?.url) return null;
+      const firstFrame = Array.isArray(walk.frameOrder) && walk.frameOrder.length
+        ? walk.frameOrder[0]
+        : 0;
+      return {
+        _id: syntheticId,
+        renderType: 'flame_spritesheet',
+        renderVersion: 1,
+        portada: walk.url,
+        scripts: {},
+        spritesheets: {
+          idle: { ...walk, frames: 1, frameOrder: [firstFrame], loop: true },
+          walk: { ...walk, loop: true },
+        },
+      };
+    }
+    const image = String(card.disguiseImage || '');
+    if (!image) return null;
+    return {
+      _id: syntheticId,
+      renderType: 'classic',
+      renderVersion: 1,
+      portada: image,
+      scripts: { parado: [image] },
+      spritesheets: {},
+    };
   };
   const loadAuthoritativeIdentityAndSkin = async (userId) => {
     let query = UserModel.findById(userId).select('nickname skinSeleccionada gameModeEnabled duelStats');
@@ -2407,12 +2442,9 @@ module.exports = function(io, dependencies = {}) {
           throw new Error('Carta en tiempo de espera');
         }
 
-        const skinId = String(baseCard.disguiseSkin || '');
-        if (!skinId) throw new Error('La carta no tiene una skin configurada');
-        const skin = await SkinModel.findById(skinId).lean();
-        const skinDefinition = publicSkinPayload(skin);
+        const skinDefinition = disguiseSkinDefinition(baseCard);
         if (!skinDefinition?._id) {
-          throw new Error('La skin del disfraz ya no está disponible');
+          throw new Error('La carta no tiene una apariencia de disfraz válida');
         }
 
         const activatedAt = Date.now();
