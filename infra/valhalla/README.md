@@ -22,9 +22,17 @@ sin cambios. Las descargas y el merge se publican mediante renombrado atomico.
 
 No crear otro servicio de rutas. El servicio comprobado es able73-valhalla,
 srv-dac08aifngtc73fgumi0, en Oregon: 512 MB de RAM, imagen privada de GHCR
-con Aragon incorporado y SIN disco persistente. El backend de produccion
+con Aragon y Panama incorporados y SIN disco persistente. La cobertura de
+Espana completa se prepara con el constructor regional descrito abajo;
+todavia no forma parte de la imagen temporal de produccion. El backend
 ya usa http://able73-valhalla:8002 con GROUND_ROUTING_PROVIDER=valhalla.
 Mantener el puerto 8002, la URL interna y inicialmente el plan actual.
+
+Imagen temporal comprobada en produccion:
+ghcr.io/angelb777/able73-valhalla@sha256:9bf4d0ee59a116b3d50d4900a6660cb5302bb2795d12d810c59ae265c8b275aa.
+Contiene 298 tiles. Rutas walking/driving en Zaragoza y Ciudad de Panama y
+aparicion/movimiento de la pareja policial en la costa de Panama se han
+comprobado localmente con --memory 512m --cpus 0.5 (unos 43 MB en esa prueba).
 
 Construir el grafo LOCALMENTE con Dockerfile (contexto: infra/valhalla).
 No ejecutar esa construccion en el servicio de 512 MB. Despues construir
