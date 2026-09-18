@@ -19,6 +19,7 @@ const errorNode = document.getElementById('error');
 const submitNode = document.getElementById('register-submit');
 const googleNode = document.getElementById('google-register');
 const verificationNode = document.getElementById('verification-actions');
+const onboardingNode = document.getElementById('google-onboarding');
 let pendingUser = null;
 
 function message(value) { errorNode.textContent = value || ''; }
@@ -35,6 +36,20 @@ function validNickname(nickname) {
   return nickname.length >= 3 && nickname.length <= 20 && /^[\p{L}\p{N}_-]+$/u.test(nickname);
 }
 function loading(value) { submitNode.disabled = value; googleNode.disabled = value; }
+
+async function finishGoogle(user) {
+  pendingUser = user;
+  const status = await firebaseStatus(user);
+  if (status.status === 'needs_profile') {
+    onboardingNode.hidden = false;
+    verificationNode.hidden = true;
+    message('Elige nickname y tipo de cuenta para completar tu alta con Google.');
+    return;
+  }
+  if (status.status === 'terms_required') await acceptCurrentTerms(user);
+  await createWebSession(user);
+  location.assign('/dashboard.html');
+}
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -72,16 +87,10 @@ form.addEventListener('submit', async (event) => {
 
 googleNode.addEventListener('click', async () => {
   const data = values();
-  if (!validNickname(data.nickname)) return message('El nickname es obligatorio antes de continuar con Google.');
   loading(true); message('');
   try {
     const credential = await signInWithPopup(await firebaseAuth(), new GoogleAuthProvider());
-    pendingUser = credential.user;
-    const status = await firebaseStatus(pendingUser);
-    if (status.status === 'needs_profile') await createAbleProfile(pendingUser, data.nickname, data.role);
-    if (status.status === 'terms_required') await acceptCurrentTerms(pendingUser);
-    await createWebSession(pendingUser);
-    location.assign('/dashboard.html');
+    await finishGoogle(credential.user);
   } catch (error) {
     if (error.code === 'auth/account-exists-with-different-credential') {
       const pending = GoogleAuthProvider.credentialFromError(error);
@@ -92,14 +101,7 @@ googleNode.addEventListener('click', async () => {
         try {
           const existing = await signInWithEmailAndPassword(await firebaseAuth(), data.email, data.password);
           const linked = await linkWithCredential(existing.user, pending);
-          pendingUser = linked.user;
-          const status = await firebaseStatus(pendingUser);
-          if (status.status === 'needs_profile') {
-            await createAbleProfile(pendingUser, data.nickname, data.role);
-          }
-          if (status.status === 'terms_required') await acceptCurrentTerms(pendingUser);
-          await createWebSession(pendingUser);
-          location.assign('/dashboard.html');
+          await finishGoogle(linked.user);
         } catch (linkError) { message(friendlyError(linkError)); }
       }
     } else {
@@ -107,6 +109,22 @@ googleNode.addEventListener('click', async () => {
     }
   }
   finally { loading(false); }
+});
+
+document.getElementById('complete-google-profile').addEventListener('click', async () => {
+  if (!pendingUser) return message('Vuelve a iniciar sesion con Google.');
+  const nickname = document.getElementById('google-nickname').value.trim();
+  const role = document.getElementById('google-role').value;
+  if (!validNickname(nickname)) return message('El nickname debe tener 3-20 caracteres y usar letras, numeros, guion o guion bajo.');
+  const button = document.getElementById('complete-google-profile');
+  button.disabled = true;
+  loading(true); message('');
+  try {
+    await createAbleProfile(pendingUser, nickname, role);
+    await createWebSession(pendingUser);
+    location.assign('/dashboard.html');
+  } catch (error) { message(friendlyError(error)); }
+  finally { button.disabled = false; loading(false); }
 });
 
 document.getElementById('resend-verification').addEventListener('click', async () => {

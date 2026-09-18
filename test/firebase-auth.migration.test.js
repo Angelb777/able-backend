@@ -43,7 +43,7 @@ async function withServer(router, callback) {
   finally { await new Promise((resolve) => server.close(resolve)); }
 }
 
-test('Firebase registration creates a profile with uid, nickname and public role', async () => {
+test('unverified password registration saves nickname before verification but cannot authenticate', async () => {
   const created = [];
   class FakeUser {
     constructor(value) { Object.assign(this, value, { _id: 'mongo-new' }); }
@@ -57,7 +57,7 @@ test('Firebase registration creates a profile with uid, nickname and public role
   const router = createAuthRouter({
     UserModel: FakeUser,
     firebaseAuth: firebaseAuth({
-      uid: 'firebase-new', email: 'new@example.test', email_verified: true,
+      uid: 'firebase-new', email: 'new@example.test', email_verified: false,
       firebase: { sign_in_provider: 'password' },
     }),
     disableRateLimit: true,
@@ -78,6 +78,13 @@ test('Firebase registration creates a profile with uid, nickname and public role
   assert.equal(created[0].termsVersionAccepted, '1.0');
   assert.ok(created[0].termsAcceptedAt instanceof Date);
   assert.equal(Object.hasOwn(created[0], 'password'), false);
+  await assert.rejects(userFromFirebaseToken('firebase-token', {
+    UserModel: FakeUser,
+    firebaseAuth: firebaseAuth({
+      uid: 'firebase-new', email: 'new@example.test', email_verified: false,
+      firebase: { sign_in_provider: 'password' },
+    }),
+  }), (error) => error.code === 'EMAIL_NOT_VERIFIED');
 });
 
 test('public Firebase registration rejects admin and legacy registration is disabled', async () => {

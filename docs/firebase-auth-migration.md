@@ -5,7 +5,9 @@
 - Las altas nuevas se autentican en Firebase y crean un único perfil MongoDB con `firebaseUid`.
 - MongoDB sigue siendo la autoridad de `role`, nickname, Stepcoins, cartas, inventario, clanes y comercio.
 - El registro público solo admite `cliente` (Usuario, valor por defecto) y `comercio`.
-- Nunca se enlaza un perfil MongoDB antiguo solo por coincidencia de email.
+- Google puede recuperar un perfil MongoDB del mismo correo cuando Firebase confirma el proveedor Google y el correo verificado. Se conserva su identidad, nickname y rol. Un correo sin verificar nunca vincula un perfil existente.
+- El alta con correo guarda el nickname y el perfil antes de enviar la verificación. La verificación sigue siendo obligatoria para crear sesiones y acceder a rutas privadas mediante contraseña.
+- Google autentica antes de pedir nickname: las cuentas existentes entran y las nuevas completan nickname y tipo de cuenta después.
 - El login `/api/auth/login` y su JWT quedan marcados como fallback temporal y solo aceptan documentos existentes con contraseña y sin `firebaseUid`.
 - `/api/auth/register` responde `410`; no se pueden crear nuevas cuentas legacy.
 

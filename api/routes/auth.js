@@ -256,7 +256,9 @@ function createAuthRouter(dependencies = {}) {
       const idToken = bearerFrom(req);
       const decoded = await decodeFirebaseIdToken(idToken, {
         firebaseAuth: currentFirebaseAuth(),
-        requireVerifiedEmail: true,
+        // El alta guarda el nickname antes de enviar la verificacion. Las
+        // sesiones y rutas privadas siguen exigiendo el correo verificado.
+        requireVerifiedEmail: false,
       });
       const email = normalizeEmail(decoded.email);
       if (!email) return res.status(400).json({ error: 'Firebase no ha proporcionado un email' });

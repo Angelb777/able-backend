@@ -209,6 +209,18 @@
       <p style="margin:10px 0 0;text-align:center;color:#aeb8b0;font-size:.82rem;line-height:1.45">Al continuar, aceptas los <a class="legal-inline-link" href="/terminos.html" target="_blank" rel="noopener">Términos de Uso</a> y confirmas que has leído la <a class="legal-inline-link" href="/privacidad.html" target="_blank" rel="noopener">Política de Privacidad</a>.</p>
     </form>
 
+    <div id="google-onboarding" hidden style="background:#111;padding:24px;border-radius:16px;width:100%;max-width:480px;margin-top:16px">
+      <label for="google-nickname">Nickname Able73:</label>
+      <input id="google-nickname" class="form-input" minlength="3" maxlength="20" required>
+      <label for="google-role">Tipo de cuenta:</label>
+      <select id="google-role" class="form-input">
+        <option value="cliente" selected>Usuario</option>
+        <option value="comercio">Comercio</option>
+      </select>
+      <button id="complete-google-profile" type="button" class="form-button">Crear perfil Able73</button>
+      <p style="color:#aeb8b0;font-size:.82rem">Al crear el perfil, aceptas los <a href="/terminos.html" target="_blank" rel="noopener">Términos de Uso</a>. Consulta la <a href="/privacidad.html" target="_blank" rel="noopener">Política de Privacidad</a>.</p>
+    </div>
+
     <div id="verification-actions" hidden>
       <button id="resend-verification" type="button" class="form-button">Reenviar correo</button>
       <button id="verified-email" type="button" class="form-button" style="margin-top:10px">Ya he verificado mi correo</button>

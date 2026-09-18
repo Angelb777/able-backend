@@ -78,6 +78,12 @@ app.use(helmet({
 /* =========================
    Middlewares globales
 ========================= */
+// Firebase necesita mantener la comunicacion con el popup de Google.
+// El resto de paginas conserva la politica same-origin de Helmet.
+app.use(['/login.html', '/register.html'], helmet.crossOriginOpenerPolicy({
+  policy: 'same-origin-allow-popups',
+}));
+
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '100kb', strict: true }));
 app.use(express.urlencoded({
   extended: true,
