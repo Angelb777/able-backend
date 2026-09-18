@@ -201,10 +201,11 @@ function createPoliceRuntime({
       maxLife: Math.max(1, Number(definition.life) || 1), seq: 1, state,
       targetUserId: null, targetLockedUntil: 0, nextShotAt: now(), route: [], routeIndex: 0,
       routeTarget: null, routePending: false, routeRetryAt: 0, patrolTarget: null,
+      groundReady: definition.movementType === 'air',
       orbitAngle: ((index + 1) / (total + 1)) * 360,
       formationIndex: Number.isInteger(options.formationIndex) ? options.formationIndex : null };
     incident.units.set(unitId, unit);
-    nsp.to(incident.zoneId).emit('police:unit:spawn', unitPayload(unit));
+    if (unit.groundReady) nsp.to(incident.zoneId).emit('police:unit:spawn', unitPayload(unit));
     return unit;
   };
   const spawnWave = (incident) => {
@@ -276,7 +277,14 @@ function createPoliceRuntime({
     if (!Number.isFinite(position.lat) || !Number.isFinite(position.lng)) return null;
     const existing = selectIncident(position);
     if (existing) return existing;
-    return spawnAmbientPatrol(createIncident(player, position, 'ambient'));
+    const incident = spawnAmbientPatrol(createIncident(player, position, 'ambient'));
+    const leader = incident.units.get(incident.ambientPatrolLeaderId);
+    if (leader) {
+      requestRoute(leader, incident.center);
+      await leader.routePromise;
+      if (leader.groundReady && incidents.has(incident.incidentId)) moveAmbientPatrol(incident, 0);
+    }
+    return incident;
   }
 
   const validTarget = (incident, userId) => {
@@ -306,7 +314,7 @@ function createPoliceRuntime({
     const selected = candidates[0]?.player || null;
     if ((selected?.userId || null) !== unit.targetUserId) {
       unit.targetUserId = selected?.userId || null; unit.seq += 1;
-      nsp.to(unit.zoneId).emit('police:unit:target', unitPayload(unit));
+      if (unit.groundReady) nsp.to(unit.zoneId).emit('police:unit:target', unitPayload(unit));
     }
     unit.targetLockedUntil = timestamp + Math.max(500, Number(config.targetLockSeconds) * 1000 || 4000);
     return selected;
@@ -323,6 +331,13 @@ function createPoliceRuntime({
     unit.routeTarget = null;
     unit.routeRetryAt = now() + 10000;
     const incident = incidents.get(unit.incidentId);
+    if (!unit.groundReady && incident) {
+      unit.spawnAttempts = (unit.spawnAttempts || 0) + 1;
+      const radius = (Number(config.spawnDistanceMeters) || 180) *
+        Math.max(0, 1 - unit.spawnAttempts / 4);
+      const candidate = geo.computeOffset(incident.center, radius, random() * 360);
+      unit.lat = candidate.lat; unit.lng = candidate.lng;
+    }
     if (incident?.state === 'ambient' &&
         incident.ambientPatrolLeaderId === unit.unitId &&
         incident.ambientPatrolTarget &&
@@ -338,14 +353,44 @@ function createPoliceRuntime({
     const threshold = Number(config.routeRecalculationDistanceMeters) || 100;
     if (unit.routePending || now() < (unit.routeRetryAt || 0) || (unit.routeTarget && unit.route.length > unit.routeIndex &&
       geo.distanceMeters(unit.routeTarget, target) < threshold)) return;
-    unit.routePending = true; const from = { lat: unit.lat, lng: unit.lng };
-    const destination = { lat: target.lat, lng: target.lng };
-    directions.getRoute(from, destination, unit.definition.routeMode || 'driving', {
+    unit.routePending = true;
+    const incident = incidents.get(unit.incidentId);
+    // Locate a new unit from the incident's reachable road network before
+    // publishing it. A geographic spawn ring may lie in the sea.
+    const from = unit.groundReady ? { lat: unit.lat, lng: unit.lng } : incident.center;
+    const destination = unit.groundReady
+      ? { lat: target.lat, lng: target.lng } : { lat: unit.lat, lng: unit.lng };
+    unit.routePromise = directions.getRoute(from, destination, unit.definition.routeMode || 'driving', {
       ttlMs: Math.max(30000, Number(config.routeCacheTtlSeconds) * 1000 || 300000),
     }).then((points) => {
       if (!incidents.get(unit.incidentId)?.units.has(unit.unitId)) return;
       if (Array.isArray(points) && points.length > 1) {
-        unit.route = points; unit.routeIndex = 1; unit.routeTarget = destination;
+        if (!points.every((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng))) {
+          handleRouteUnavailable(unit, target); return;
+        }
+        if (!unit.groundReady) {
+          const located = points.at(-1);
+          const maxDistance = Math.max(300, (Number(config.spawnDistanceMeters) || 180) * 2);
+          if (geo.distanceMeters(located, incident.center) > maxDistance) {
+            handleRouteUnavailable(unit, target); return;
+          }
+          unit.lat = located.lat; unit.lng = located.lng; unit.groundReady = true;
+          unit.seq += 1;
+          nsp.to(unit.zoneId).emit('police:unit:spawn', unitPayload(unit));
+          unit.route = [...points].reverse(); unit.routeIndex = 1;
+          unit.routeTarget = { ...incident.center };
+          if (incident.state === 'ambient' && incident.ambientPatrolLeaderId === unit.unitId) {
+            incident.ambientPatrolTarget = { ...incident.center };
+          }
+        } else {
+          // Valhalla's first point is snapped to the network. Never walk from
+          // an unsnapped coordinate directly to the second route vertex.
+          if (geo.distanceMeters(unit, points[0]) > 50) {
+            handleRouteUnavailable(unit, target); return;
+          }
+          unit.lat = points[0].lat; unit.lng = points[0].lng;
+          unit.route = points; unit.routeIndex = 1; unit.routeTarget = destination;
+        }
         unit.routeRetryAt = 0;
       } else {
         handleRouteUnavailable(unit, target);
@@ -365,6 +410,7 @@ function createPoliceRuntime({
       return;
     }
     requestRoute(unit, target); let remaining = budget;
+    if (!unit.groundReady) return;
     const start = { lat: unit.lat, lng: unit.lng };
     while (remaining > 0 && unit.routeIndex < unit.route.length) {
       remaining = moveToward(unit, unit.route[unit.routeIndex], remaining);
@@ -378,7 +424,8 @@ function createPoliceRuntime({
     if (units.length === 0) return;
     const leader = incident.units.get(incident.ambientPatrolLeaderId) || units[0];
     const patrolRadius = Math.max(40, Number(config.spawnDistanceMeters) || 180);
-    if (!incident.ambientPatrolTarget || geo.distanceMeters(leader, incident.ambientPatrolTarget) < 3) {
+    if (!incident.ambientPatrolTarget || geo.distanceMeters(leader, incident.ambientPatrolTarget) < 3 ||
+        (leader.routeTarget && leader.routeIndex >= leader.route.length && !leader.routePending)) {
       incident.ambientPatrolTarget = geo.computeOffset(
         incident.center,
         patrolRadius * (0.45 + random() * 0.55),
@@ -388,19 +435,55 @@ function createPoliceRuntime({
       leader.routeIndex = 0;
       leader.routeTarget = null;
     }
+    const previous = { lat: leader.lat, lng: leader.lng };
+    const previousIndex = leader.routeIndex;
+    const previousRoute = leader.route;
     moveUnit(leader, incident.ambientPatrolTarget, elapsedSeconds);
+    if (!leader.groundReady) return;
+    incident.patrolTrail ||= [];
+    const trail = incident.patrolTrail;
+    if (trail.length === 0) trail.push(previous);
+    if (leader.route === previousRoute) {
+      for (let index = previousIndex; index < leader.routeIndex; index += 1) {
+        trail.push({ ...leader.route[index] });
+      }
+    }
+    if (geo.distanceMeters(trail.at(-1), leader) > 0.01) trail.push({ lat: leader.lat, lng: leader.lng });
     const spacing = Math.max(1, Number(config.patrolPairSpacingMeters) || 3);
     for (const follower of units) {
       if (follower.unitId === leader.unitId) continue;
       const index = Math.max(1, Number(follower.formationIndex) || 1);
-      const desired = geo.computeOffset(leader, spacing * index, (leader.heading || 0) + 90);
-      const distance = geo.distanceMeters(follower, desired);
-      const baseBudget = Math.max(0, Number(follower.definition.speedMetersPerSecond) || 0) * elapsedSeconds;
-      moveToward(follower, desired, distance > spacing * 2 ? baseBudget * 2 : baseBudget);
+      // Follow the leader's actual road trail, rather than a lateral offset
+      // which can put the partner in water beside a coastal road.
+      let behind = spacing * index;
+      let desired = trail[0];
+      for (let cursor = trail.length - 1; cursor > 0; cursor -= 1) {
+        const segment = geo.distanceMeters(trail[cursor], trail[cursor - 1]);
+        if (segment >= behind) {
+          desired = geo.computeOffset(trail[cursor], behind,
+            bearingBetween(trail[cursor], trail[cursor - 1]));
+          break;
+        }
+        behind -= segment;
+      }
+      follower.lat = desired.lat; follower.lng = desired.lng;
+      if (!follower.groundReady) {
+        follower.groundReady = true; follower.seq += 1;
+        nsp.to(follower.zoneId).emit('police:unit:spawn', unitPayload(follower));
+      }
       follower.heading = leader.heading;
+    }
+    // Keep enough recent trail for the whole formation, with bounded memory.
+    let retained = 0;
+    for (let cursor = trail.length - 1; cursor > 0; cursor -= 1) {
+      retained += geo.distanceMeters(trail[cursor], trail[cursor - 1]);
+      if (retained > spacing * (units.length + 1) + 30) {
+        trail.splice(0, cursor - 1); break;
+      }
     }
   };
   const fire = (incident, unit, target, timestamp) => {
+    if (!unit.groundReady) return;
     const distance = geo.distanceMeters(unit, target);
     if (distance > (Number(unit.definition.rangeMeters) || 0) || timestamp < unit.nextShotAt) return;
     const speed = Math.max(1, Number(unit.definition.projectileSpeedMetersPerSecond) || 1);
@@ -520,13 +603,13 @@ function createPoliceRuntime({
         for (const unit of incident.units.values()) {
           unit.targetUserId = null;
           unit.state = 'idle';
-          unit.seq += 1; nsp.to(unit.zoneId).emit('police:unit:update', unitPayload(unit));
+          if (unit.groundReady) { unit.seq += 1; nsp.to(unit.zoneId).emit('police:unit:update', unitPayload(unit)); }
         }
       } else {
         for (const unit of incident.units.values()) {
           const target = selectTarget(incident, unit, timestamp);
           if (target) { moveUnit(unit, target, elapsedSeconds); fire(incident, unit, target, timestamp); }
-          unit.seq += 1; nsp.to(unit.zoneId).emit('police:unit:update', unitPayload(unit));
+          if (unit.groundReady) { unit.seq += 1; nsp.to(unit.zoneId).emit('police:unit:update', unitPayload(unit)); }
         }
       }
       if (incident.wanted.size > 0) tickEscape(incident, timestamp);
@@ -549,14 +632,14 @@ function createPoliceRuntime({
     // Presence registration restores it through getSnapshot on reconnect.
     handleDisconnect: () => false, refreshConfig: () => loadConfig(true),
     getUnitsInZone: (zoneId) => [...incidents.values()].filter((item) => item.zoneId === zoneId)
-      .flatMap((item) => [...item.units.values()]),
+      .flatMap((item) => [...item.units.values()].filter((unit) => unit.groundReady)),
     hasActivePursuitInZone,
     isUnitHostileToUser,
     applyBulletDamage,
     getSnapshot: (zoneId) => ({
       policeIncidents: [...incidents.values()].filter((item) => item.zoneId === zoneId).map(incidentPayload),
       policeUnits: [...incidents.values()].filter((item) => item.zoneId === zoneId)
-        .flatMap((item) => [...item.units.values()].map(unitPayload)),
+        .flatMap((item) => [...item.units.values()].filter((unit) => unit.groundReady).map(unitPayload)),
       policeProjectiles: [...projectiles.values()].filter((item) => item.zoneId === zoneId).map(projectilePayload),
       policeWanted: [...wantedUsers.values()].filter((item) => incidents.get(item.incidentId)?.zoneId === zoneId)
         .map(wantedPayload),

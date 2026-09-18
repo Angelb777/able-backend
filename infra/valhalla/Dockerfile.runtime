@@ -1,0 +1,10 @@
+FROM ghcr.io/valhalla/valhalla-scripted:3.8.3
+USER root
+# Context: the completed custom_files/es-panama-v1 directory, not the repo.
+COPY valhalla_tiles.tar admins.sqlite timezones.sqlite valhalla.json /custom_files/
+RUN python3 -c 'import json; p="/custom_files/valhalla.json"; c=json.load(open(p)); m=c["mjolnir"]; m.update(tile_dir="/custom_files/valhalla_tiles", tile_extract="/custom_files/valhalla_tiles.tar", admin="/custom_files/admins.sqlite", timezone="/custom_files/timezones.sqlite", concurrency=1, max_cache_size=33554432); json.dump(c,open(p,"w"))'
+ENV PORT=8002
+EXPOSE 8002
+# Serve the prebuilt graph directly: no downloads or rebuilds on Render.
+ENTRYPOINT ["valhalla_service"]
+CMD ["/custom_files/valhalla.json", "1"]

@@ -92,7 +92,7 @@ test('Valhalla returns an empty route on timeout and never invokes Google', asyn
   assert.doesNotMatch(requestedUrl, /google/i);
 });
 
-test('ground provider rejects every provider other than Valhalla', () => {
+test('ground provider accepts Valhalla and rejects unsupported providers', () => {
   assert.equal(createGroundRouteProvider({
     provider: 'valhalla', baseUrl: 'http://valhalla:8002',
   }).provider, 'valhalla');
@@ -100,4 +100,27 @@ test('ground provider rejects every provider other than Valhalla', () => {
     () => createGroundRouteProvider({ provider: 'google' }),
     /no soportado/,
   );
+});
+
+
+test('paid route providers are rejected even when a Mapbox token is supplied', () => {
+  for (const provider of ['hybrid', 'mapbox']) {
+    assert.throws(() => createGroundRouteProvider({ provider, accessToken: 'test-token' }),
+      /rutas de pago estan desactivadas/);
+  }
+});
+
+test('missing Valhalla route outside coverage never calls another provider', async () => {
+  const urls = [];
+  const provider = createGroundRouteProvider({ provider: 'valhalla',
+    baseUrl: 'http://valhalla:8002', accessToken: 'test-token',
+    fetchImpl: async (url) => {
+      urls.push(url);
+      return { ok: true, json: async () => ({ trip: { legs: [] } }) };
+    },
+  });
+  const points = await provider.getRoute({ lat: 8.9824, lng: -79.5199 },
+    { lat: 8.9844, lng: -79.5190 }, 'walking');
+  assert.deepEqual(points, []);
+  assert.deepEqual(urls, ['http://valhalla:8002/route']);
 });

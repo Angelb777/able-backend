@@ -165,7 +165,7 @@ test('ambient patrol abandons an unreachable destination and resumes on a fresh 
     routeProvider: {
       getRoute: async (from, to) => {
         routeAttempts += 1;
-        return routeAttempts === 1 ? [] : [from, to];
+        return routeAttempts === 2 ? [] : [from, to];
       },
       clear() {},
     },
@@ -176,6 +176,7 @@ test('ambient patrol abandons an unreachable destination and resumes on a fresh 
   await fx.runtime.ensureAmbientPatrol(player, origin);
   const incident = [...fx.runtime._debug.incidents.values()][0];
   const leader = [...incident.units.values()][0];
+  leader.route = []; leader.routeIndex = 0; leader.routeTarget = null;
 
   fx.tick(1);
   await new Promise((resolve) => setImmediate(resolve));
@@ -184,14 +185,14 @@ test('ambient patrol abandons an unreachable destination and resumes on a fresh 
 
   fx.advance(100); fx.tick(1);
   assert.notDeepEqual(incident.ambientPatrolTarget, unreachableTarget);
-  assert.equal(routeAttempts, 1, 'the retry delay still protects Directions');
+  assert.equal(routeAttempts, 2, 'the retry delay still protects Directions');
 
   const before = { lat: leader.lat, lng: leader.lng };
   fx.advance(10000); fx.tick(1);
   await new Promise((resolve) => setImmediate(resolve));
   assert.ok(leader.route.length > 1, 'the valid route is installed before movement');
   fx.advance(100); fx.tick(1);
-  assert.equal(routeAttempts, 2);
+  assert.equal(routeAttempts, 3);
   assert.ok(geo.distanceMeters(before, leader) > 0, 'the patrol resumes after a valid route');
 });
 
@@ -304,7 +305,8 @@ test('road follows a cached route while air orbits and snapshots are shared', as
   assert.ok(geo.distanceMeters(airStart, helicopter) > 0);
   assert.ok(geo.distanceMeters(helicopter, player) > 1,
     'the helicopter never targets the exact player coordinate');
-  assert.equal(fx.routeCalls.filter((call) => call.mode === 'walking').length, 1);
+  assert.equal(fx.routeCalls.filter((call) => call.mode === 'walking').length, 2,
+    'initial road placement and the new wave each request one route');
   const snapshot = fx.runtime.getSnapshot('GLOBAL_TEST_ROOM');
   assert.equal(snapshot.policeIncidents.length, 1);
   assert.equal(snapshot.policeUnits.length, 2);
@@ -379,4 +381,46 @@ test('ending the last pursuit restores only the initial ambient foot patrol', as
     [...incident.units.values()].map((unit) => unit.unitType),
     ['foot', 'foot'],
   );
+});
+
+
+test('ground police stays unpublished until a real road spawn is available', async (t) => {
+  let available = false;
+  const origin = { lat: 41.6567, lng: -0.8785 };
+  const road = geo.computeOffset(origin, 60, 0);
+  const fx = fixture((config) => { config.stars[0].footOfficers = 2; }, {
+    routeProvider: { getRoute: async (from, to) => available ? [origin, road] : [] },
+  });
+  t.after(() => fx.runtime.shutdown());
+  const player = fx.addPlayer('coast', origin);
+  await fx.runtime.ensureAmbientPatrol(player, origin);
+  assert.equal(fx.runtime.getSnapshot(player.zoneId).policeUnits.length, 0);
+  assert.equal(fx.events.filter((event) => event.event === 'police:unit:spawn').length, 0);
+  const incident = [...fx.runtime._debug.incidents.values()][0];
+  const leader = [...incident.units.values()][0];
+  const failedCandidate = { lat: leader.lat, lng: leader.lng };
+  available = true; fx.advance(10000); fx.tick(0);
+  await new Promise((resolve) => setImmediate(resolve));
+  fx.tick(0);
+  const snapshot = fx.runtime.getSnapshot(player.zoneId);
+  assert.equal(snapshot.policeUnits.length, 2);
+  assert.ok(geo.distanceMeters(leader, road) < 0.01);
+  assert.ok(geo.distanceMeters(leader, failedCandidate) > 1);
+  fx.advance(100); fx.tick(1);
+  assert.ok(geo.distanceMeters(leader, road) > 1, 'the patrol moves on its road route');
+  for (const unit of incident.units.values()) {
+    assert.ok(Math.abs(unit.lng - origin.lng) < 0.000001,
+      'both agents remain on the road instead of lateral water coordinates');
+  }
+});
+
+test('a snapped spawn outside the incident area is never published', async (t) => {
+  const origin = { lat: 41.6567, lng: -0.8785 };
+  const fx = fixture(() => {}, { routeProvider: {
+    getRoute: async () => [origin, geo.computeOffset(origin, 2000, 0)],
+  } });
+  t.after(() => fx.runtime.shutdown());
+  const player = fx.addPlayer('outside-coverage', origin);
+  await fx.runtime.ensureAmbientPatrol(player, origin);
+  assert.equal(fx.runtime.getSnapshot(player.zoneId).policeUnits.length, 0);
 });

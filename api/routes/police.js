@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const PoliceConfig = require('../models/PoliceConfig');
+const { createGroundRouteProvider } = require('../services/groundRouteProvider');
 const { saveImage } = require('../utils/mediaStorage');
 const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
 
@@ -55,8 +56,8 @@ router.get('/', ...adminOnly, async (_req, res) => {
     const stored = await PoliceConfig.findOne({ key: 'global' }).lean();
     const normalized = stored ? parseConfig({ config: JSON.stringify(stored) }) : PoliceConfig.defaults();
     return res.json({ ...normalized,
-      routingConfigured: String(process.env.GROUND_ROUTING_PROVIDER || 'valhalla').toLowerCase() === 'valhalla' &&
-        Boolean(process.env.VALHALLA_BASE_URL) });
+      routingProvider: String(process.env.GROUND_ROUTING_PROVIDER || 'valhalla').trim().toLowerCase(),
+      routingConfigured: createGroundRouteProvider().configured });
   } catch (_) {
     return res.status(500).json({ error: 'No se pudo cargar la configuración policial' });
   }

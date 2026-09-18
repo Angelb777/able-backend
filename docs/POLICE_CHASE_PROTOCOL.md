@@ -29,9 +29,15 @@ Cada usuario conserva su propio nivel (0-5), secuencia y estado de escape.
 - `air`: interpola directamente mediante distancia, bearing y velocidad, sin
   llamadas de ruta.
 
-Para `road` se requiere `GROUND_ROUTING_PROVIDER=valhalla` y
-`VALHALLA_BASE_URL`. Si Valhalla no esta disponible, las unidades road se
-mantienen quietas de forma segura y no existe fallback automatico a Google.
+Todas las rutas `road` requieren `GROUND_ROUTING_PROVIDER=valhalla` y
+`VALHALLA_BASE_URL` apuntando al servicio interno existente en Render. El
+extracto regional preparado cubre Espana, Canarias y Panama. Los proveedores
+mapbox e hybrid se rechazan para impedir rutas de pago por error.
+
+Las unidades se publican tras validar una posicion en una ruta real cerca del
+incidente. La pareja patrulla siguiendo el mismo camino con separacion.
+Si Valhalla falla, se reintenta sin llamar a ningun proveedor de pago.
+Consulta [GROUND_ROUTING.md](GROUND_ROUTING.md) para el despliegue regional.
 
 ## Eventos Socket.IO
 

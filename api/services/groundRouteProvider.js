@@ -6,7 +6,7 @@ function createGroundRouteProvider({
 } = {}) {
   const normalized = String(provider).trim().toLowerCase();
   if (normalized !== 'valhalla') {
-    throw new Error(`GROUND_ROUTING_PROVIDER no soportado: ${normalized || '(vacio)'}`);
+    throw new Error(`GROUND_ROUTING_PROVIDER no soportado: ${normalized || '(vacio)'}. Solo Valhalla; las rutas de pago estan desactivadas.`);
   }
   return createValhallaDirections(options);
 }
