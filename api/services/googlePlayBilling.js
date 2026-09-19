@@ -10,16 +10,24 @@ const SCOPES = ['https://www.googleapis.com/auth/androidpublisher'];
 const PACKAGE_NAME = process.env.GOOGLE_PLAY_PACKAGE_NAME || 'com.able73.app';
 
 function loadCredentials() {
-  const inline = process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON;
+  const inline = process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
+    || process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (inline) {
     try {
-      return JSON.parse(inline);
+      const parsed = JSON.parse(inline);
+      if (typeof parsed.private_key === 'string') {
+        parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+      }
+      return parsed;
     } catch (err) {
       console.error('❌ GOOGLE_PLAY_SERVICE_ACCOUNT_JSON no es un JSON valido:', err);
       return null;
     }
   }
-  const path = process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_PATH;
+  const path = [
+    process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_PATH,
+    process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
+  ].find((candidate) => candidate && fs.existsSync(candidate));
   if (path && fs.existsSync(path)) {
     try {
       return JSON.parse(fs.readFileSync(path, 'utf8'));
@@ -65,20 +73,15 @@ async function getProductPurchase(productId, purchaseToken) {
   );
 }
 
-async function acknowledgeProductPurchase(productId, purchaseToken) {
-  try {
-    await callAndroidPublisher(
-      `/purchases/products/${encodeURIComponent(productId)}/tokens/${encodeURIComponent(purchaseToken)}:acknowledge`,
-      { method: 'POST', data: {} },
-    );
-  } catch (err) {
-    // Google devuelve 400 si ya estaba confirmada/consumida en el cliente; no es un fallo real.
-    if (err?.response?.status !== 400) throw err;
-  }
+async function consumeProductPurchase(productId, purchaseToken) {
+  await callAndroidPublisher(
+    `/purchases/products/${encodeURIComponent(productId)}/tokens/${encodeURIComponent(purchaseToken)}:consume`,
+    { method: 'POST', data: {} },
+  );
 }
 
 module.exports = {
   playBillingAvailable,
   getProductPurchase,
-  acknowledgeProductPurchase,
+  consumeProductPurchase,
 };

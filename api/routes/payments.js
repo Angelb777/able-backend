@@ -12,7 +12,7 @@ const {
 const {
   playBillingAvailable,
   getProductPurchase,
-  acknowledgeProductPurchase,
+  consumeProductPurchase,
 } = require('../services/googlePlayBilling');
 
 const adminOnly = [verifyToken, checkRole(['admin'])];
@@ -286,11 +286,13 @@ router.post('/stepcoins/verify-play-purchase', verifyToken, checkRole(['cliente'
       }], { session });
     });
 
-    if (!duplicate) {
+    if (Number(purchase.consumptionState) !== 1) {
       try {
-        await acknowledgeProductPurchase(productId, purchaseToken);
+        await consumeProductPurchase(productId, purchaseToken);
       } catch (error) {
-        console.error('⚠️ No se pudo confirmar (acknowledge) la compra en Google Play:', error?.response?.data || error);
+        // El abono es idempotente. Si Google falla temporalmente, la app
+        // reenviara la compra sin consumir y este bloque volvera a intentarlo.
+        console.error('⚠️ No se pudo consumir la compra en Google Play:', error?.response?.data || error);
       }
     }
 
