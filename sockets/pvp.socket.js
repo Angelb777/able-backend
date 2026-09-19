@@ -1827,6 +1827,7 @@ module.exports = function(io, dependencies = {}) {
     try {
       const identity = await resolveSocketIdentity(token);
       if (!identity?.id) return next(new Error('Token PVP sin usuario'));
+      socket.data.authToken = token;
       socket.data.authUserId = String(identity.id);
       // El rol procede del documento MongoDB, nunca del handshake del cliente.
       socket.data.authRole = identity.role;
@@ -1842,6 +1843,12 @@ module.exports = function(io, dependencies = {}) {
     const packetLimit = Math.max(100, Number(process.env.SOCKET_EVENTS_PER_10_SECONDS) || 300);
     let packetWindowStartedAt = Date.now();
     let packetCount = 0;
+    const sessionTimer = requireSocketAuth ? setInterval(async () => {
+      try { await resolveSocketIdentity(socket.data.authToken); }
+      catch (_) { socket.emit('session:replaced'); socket.disconnect(true); }
+    }, 10000) : null;
+    sessionTimer?.unref?.();
+    socket.once('disconnect', () => { if (sessionTimer) clearInterval(sessionTimer); });
     socket.use((_packet, next) => {
       const now = Date.now();
       if (now - packetWindowStartedAt >= packetWindowMs) {

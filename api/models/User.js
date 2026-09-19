@@ -95,6 +95,8 @@ const userSchema = new mongoose.Schema({
     required() { return !this.firebaseUid; },
   },
   firebaseUid: { type: String, trim: true, unique: true, sparse: true },
+  latestFirebaseAuthTime: { type: Number, select: false },
+  activeSessionId: { type: String, select: false },
   authProviders: { type: [String], default: [] },
   termsVersionAccepted: { type: String, default: '' },
   termsAcceptedAt: { type: Date },

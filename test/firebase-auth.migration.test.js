@@ -458,7 +458,7 @@ test('web Firebase session cookie is HttpOnly and logout revokes and clears sess
     });
     assert.equal(login.status, 200);
     const sessionSetCookie = login.headers.get('set-cookie');
-    assert.match(sessionSetCookie, /able73_session=firebase-session-value/);
+    assert.match(sessionSetCookie, /able73_legacy=/);
     assert.match(sessionSetCookie, /HttpOnly/i);
     const sessionCookie = sessionSetCookie.split(';')[0];
 
@@ -470,9 +470,9 @@ test('web Firebase session cookie is HttpOnly and logout revokes and clears sess
       },
     });
     assert.equal(logout.status, 204);
-    assert.match(logout.headers.get('set-cookie'), /able73_session=;/);
+    assert.match(logout.headers.get('set-cookie'), /able73_legacy=;/);
   });
-  assert.deepEqual(revoked, ['firebase-web']);
+  assert.deepEqual(revoked, []);
 });
 
 test('invalid Firebase token is rejected', async () => {

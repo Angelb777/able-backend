@@ -2,6 +2,7 @@ const {
   AuthenticationError,
   normalizeRole,
   resolveBearerToken,
+  userFromFirebaseToken,
   userFromSessionCookie,
 } = require('../services/authIdentity');
 const {
@@ -51,6 +52,14 @@ async function verifyToken(req, res, next) {
       : await resolveBearerToken(legacyCookie);
     return next();
   } catch (error) {
+    if (error?.code === 'SESSION_REPLACED' && req.path === '/terms/accept') {
+      try {
+        const authorization = String(req.headers.authorization || '');
+        const bearer = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+        req.user = await userFromFirebaseToken(bearer, { allowReplacedSession: true });
+        return next();
+      } catch (_) { /* Return the original authentication failure below. */ }
+    }
     if (error instanceof AuthenticationError) return authFailure(res, error);
     return next(error);
   }

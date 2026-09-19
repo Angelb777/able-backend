@@ -1,16 +1,17 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const { rateLimit } = require('express-rate-limit');
 const { createLimiter, requestIpKey } = require('../middlewares/securityLimits');
 const User = require('../models/User');
 const { getFirebaseAuth } = require('../services/firebaseAdmin');
 const {
   AuthenticationError,
+  issueAccountSession,
+  accountSessionIdentity,
+  assertVerifiedEmail,
   decodeFirebaseIdToken,
   normalizeRole,
   providerIds,
-  userFromFirebaseToken,
 } = require('../services/authIdentity');
 const { verifyToken } = require('../middlewares/authMiddleware');
 const { validateNickname } = require('../utils/nickname');
@@ -130,6 +131,40 @@ async function linkGoogleProfile(profile, decoded) {
   return profile;
 }
 
+async function statusAccountToken(req, profile, decoded, UserModel) {
+  let token;
+  const verifiedProvider = decoded.email_verified === true ||
+    decoded.firebase?.sign_in_provider !== 'password';
+  if (req.body?.newSession === undefined ||
+      !hasAcceptedCurrentTerms(profile) || !verifiedProvider) return token;
+
+  if (req.body.newSession === true) {
+    if (Date.now() / 1000 - Number(decoded.auth_time || 0) > 300) {
+      throw new AuthenticationError('RECENT_LOGIN_REQUIRED');
+    }
+    return issueAccountSession(profile, UserModel, undefined, decoded.auth_time);
+  }
+
+  const previous = String(req.headers['x-able-session'] || '');
+  if (previous) {
+    const identity = await accountSessionIdentity(previous, { UserModel }, true);
+    if (identity.firebaseUid !== decoded.uid) {
+      throw new AuthenticationError('INVALID_ACCOUNT_SESSION');
+    }
+    return issueAccountSession(profile, UserModel, identity.sessionId);
+  }
+
+  // Upgrade an existing installation once; never reactivate a displaced session.
+  const sessionId = require('crypto').randomUUID();
+  const result = await UserModel.updateOne(
+    { _id: profile._id, activeSessionId: { $exists: false } },
+    { $set: { activeSessionId: sessionId, latestFirebaseAuthTime: decoded.auth_time } },
+  );
+  if (result.modifiedCount !== 1) throw new AuthenticationError('SESSION_REPLACED');
+  token = await issueAccountSession(profile, UserModel, sessionId);
+  return token;
+}
+
 function createAuthRouter(dependencies = {}) {
   const router = express.Router();
   const UserModel = dependencies.UserModel || User;
@@ -192,7 +227,9 @@ function createAuthRouter(dependencies = {}) {
       });
       const linked = await UserModel.findOne({ firebaseUid: decoded.uid });
       if (linked) {
+        const token = await statusAccountToken(req, linked, decoded, UserModel);
         return res.json({
+          token,
           status: hasAcceptedCurrentTerms(linked) ? 'linked' : 'terms_required',
           termsVersion: CURRENT_TERMS_VERSION,
           user: serializeUser(linked, 'firebase'),
@@ -204,7 +241,9 @@ function createAuthRouter(dependencies = {}) {
       if (collision) {
         if (canLinkVerifiedGoogleProfile(decoded)) {
           const migrated = await linkGoogleProfile(collision, decoded);
+          const token = await statusAccountToken(req, migrated, decoded, UserModel);
           return res.json({
+            token,
             status: hasAcceptedCurrentTerms(migrated) ? 'linked' : 'terms_required',
             termsVersion: CURRENT_TERMS_VERSION,
             user: serializeUser(migrated, 'firebase'),
@@ -370,9 +409,10 @@ function createAuthRouter(dependencies = {}) {
         }
         await recordCurrentTermsAcceptance(user);
       }
-      const token = jwt.sign({ id: user._id, legacy: true }, process.env.JWT_SECRET, {
-        expiresIn: '7d',
-      });
+      if (req.body.webSession === true && !validCsrfRequest(req)) {
+        return res.status(403).json({ error: 'Solicitud no valida', code: 'INVALID_CSRF_TOKEN' });
+      }
+      const token = await issueAccountSession(user, UserModel);
       if (req.body.webSession === true) {
         if (!validCsrfRequest(req)) {
           return res.status(403).json({ error: 'Solicitud no valida', code: 'INVALID_CSRF_TOKEN' });
@@ -399,10 +439,9 @@ function createAuthRouter(dependencies = {}) {
       if (Math.floor(Date.now() / 1000) - Number(decoded.auth_time || 0) > 5 * 60) {
         return res.status(401).json({ error: 'Vuelve a iniciar sesion', code: 'RECENT_LOGIN_REQUIRED' });
       }
-      const identity = await userFromFirebaseToken(idToken, {
-        firebaseAuth: currentFirebaseAuth(), UserModel,
-      });
-      const profile = await UserModel.findById(identity.id);
+      assertVerifiedEmail(decoded);
+      const profile = await UserModel.findOne({ firebaseUid: decoded.uid });
+      if (!profile) throw new AuthenticationError('FIREBASE_PROFILE_NOT_LINKED');
       if (!hasAcceptedCurrentTerms(profile)) {
         return res.status(428).json({
           error: 'Debes aceptar los Terminos de Uso para continuar',
@@ -410,11 +449,10 @@ function createAuthRouter(dependencies = {}) {
           termsVersion: CURRENT_TERMS_VERSION,
         });
       }
-      const sessionCookie = await currentFirebaseAuth().createSessionCookie(idToken, {
-        expiresIn: SESSION_MAX_AGE_MS,
-      });
-      res.cookie(sessionCookieName(), sessionCookie, sessionCookieOptions(SESSION_MAX_AGE_MS));
-      return res.json({ user: identity });
+      const token = await issueAccountSession(profile, UserModel, undefined, decoded.auth_time);
+      res.clearCookie(sessionCookieName(), sessionCookieOptions(SESSION_MAX_AGE_MS));
+      res.cookie(legacySessionCookieName(), token, sessionCookieOptions(SESSION_MAX_AGE_MS));
+      return res.json({ user: serializeUser(profile, 'firebase') });
     } catch (error) {
       if (error instanceof AuthenticationError) {
         return res.status(error.status).json({ error: error.message, code: error.code });
@@ -428,14 +466,13 @@ function createAuthRouter(dependencies = {}) {
       return res.status(403).json({ error: 'Solicitud no valida', code: 'INVALID_CSRF_TOKEN' });
     }
     const cookies = parseCookies(req.headers.cookie);
-    const cookie = cookies[sessionCookieName()];
+    const cookie = cookies[legacySessionCookieName()];
     if (cookie) {
       try {
-        const decoded = await currentFirebaseAuth().verifySessionCookie(cookie, false);
-        await currentFirebaseAuth().revokeRefreshTokens(decoded.uid);
-      } catch (_error) {
-        // La cookie se elimina igualmente si estaba caducada o no era valida.
-      }
+        const identity = await accountSessionIdentity(cookie, { UserModel }, true);
+        await UserModel.updateOne({ _id: identity.id, activeSessionId: identity.sessionId },
+          { $set: { activeSessionId: require('crypto').randomUUID() } });
+      } catch (_) { /* Always clear the local cookie, without affecting another session. */ }
     }
     res.clearCookie(sessionCookieName(), sessionCookieOptions(0));
     res.clearCookie(legacySessionCookieName(), sessionCookieOptions(0));
@@ -483,9 +520,7 @@ function createAuthRouter(dependencies = {}) {
 
   router.post('/logout', verifyToken, async (req, res, next) => {
     try {
-      if (req.user.firebaseUid) {
-        await currentFirebaseAuth().revokeRefreshTokens(req.user.firebaseUid);
-      }
+      await UserModel.updateOne({ _id: req.user.id, activeSessionId: req.user.sessionId }, { $set: { activeSessionId: require('crypto').randomUUID() } });
       return res.status(204).end();
     } catch (error) {
       return next(error);
