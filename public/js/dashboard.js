@@ -3043,7 +3043,9 @@ function initializePoliceForm() {
       <label>Render <select name="${type}_renderType"><option value="classic">Clásico</option><option value="flame_spritesheet">Spritesheet</option></select></label>
       <input type="hidden" name="${type}_spritesheetMetadata">
       <label>Filas <input type="number" name="${type}_spritesheetRows" min="1" step="1" required></label>
-      <label>Columnas <input type="number" name="${type}_spritesheetColumns" min="1" step="1" required></label><br>
+      <label>Columnas <input type="number" name="${type}_spritesheetColumns" min="1" step="1" required></label>
+      <label>Frames usados <input type="number" name="${type}_spritesheetFrames" min="1" step="1" required></label>
+      <label>FPS <input type="number" name="${type}_spritesheetFps" min="0.01" step="0.01" required></label><br>
       <label>Vida <input type="number" name="${type}_life" min="1" required></label>
       <label>Velocidad m/s <input type="number" name="${type}_speedMetersPerSecond" min="0.1" step="0.1" required></label>
       <label>Daño <input type="number" name="${type}_damage" min="0" required></label>
@@ -3168,6 +3170,8 @@ async function loadPoliceConfig() {
       setPoliceFormValue(form, `${type}_spritesheetMetadata`, JSON.stringify(spritesheet));
       setPoliceFormValue(form, `${type}_spritesheetRows`, spritesheet.rows || 1);
       setPoliceFormValue(form, `${type}_spritesheetColumns`, spritesheet.columns || 1);
+      setPoliceFormValue(form, `${type}_spritesheetFrames`, spritesheet.frames || 1);
+      setPoliceFormValue(form, `${type}_spritesheetFps`, spritesheet.fps || 12);
       for (const effect of ["projectile", "impact"]) {
         const sheet = unit[`${effect}Spritesheet`] || {};
         setPoliceFormValue(form, `${type}_${effect}RenderType`, unit[`${effect}RenderType`] || "classic");
@@ -3195,14 +3199,15 @@ function collectPoliceSpritesheet(form, prefix, defaultLoop = true) {
   const gridChanged = rows !== Number(storedSheet.rows) || columns !== Number(storedSheet.columns);
   const storedFrames = Number(storedSheet.frames);
   const directional = prefix.endsWith("spritesheet") && !prefix.includes("projectile") && !prefix.includes("impact");
-  const frames = directional && rows > 1 ? columns
+  const frames = directional ? policeNumber(form, `${prefix}Frames`)
     : (!gridChanged && Number.isInteger(storedFrames) && storedFrames > 0 ? storedFrames : rows * columns);
+  const fps = directional ? policeNumber(form, `${prefix}Fps`) : (Number(storedSheet.fps) || 12);
   const orientationRows = directional && rows > 1 && !storedSheet.orientationRows?.length
     ? (rows === 2 ? ["south", "north"] : rows === 3 ? ["south", "west", "north"]
       : rows === 4 ? ["south", "southWest", "west", "north"]
         : ["south", "southWest", "west", "northWest", "north"])
     : storedSheet.orientationRows;
-  return { ...storedSheet, rows, columns, frames,
+  return { ...storedSheet, rows, columns, frames, fps,
     multipleOrientations: directional && rows > 1 ? true : Boolean(storedSheet.multipleOrientations),
     orientationRows: orientationRows || [],
     loop: storedSheet.loop == null ? defaultLoop : Boolean(storedSheet.loop) };

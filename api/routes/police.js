@@ -24,10 +24,12 @@ const directionalRows = (rows) => {
 const normalizeDirectionalSheet = (sheet = {}) => {
   const rows = Math.max(1, Number(sheet.rows) || 1);
   const columns = Math.max(1, Number(sheet.columns) || 1);
-  if (rows <= 1) return { ...sheet, rows, columns };
+  const frames = Math.max(1, Number(sheet.frames) || columns);
+  const fps = Math.max(0.01, Number(sheet.fps) || 12);
+  if (rows <= 1) return { ...sheet, rows, columns, frames, fps };
   const orientations = Array.isArray(sheet.orientationRows) && sheet.orientationRows.length
     ? sheet.orientationRows : directionalRows(rows);
-  return { ...sheet, rows, columns, frames: columns,
+  return { ...sheet, rows, columns, frames, fps,
     multipleOrientations: true, orientationRows: orientations };
 };
 

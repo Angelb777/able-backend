@@ -221,7 +221,7 @@ app.use('/api/rankings', require('./api/routes/rankings'));
 app.use('/api/social', require('./api/routes/social'));
 app.use('/api/ubicaciones', require('./api/routes/ubicaciones'));
 app.use('/api/mobility', require('./api/routes/mobility'));
-app.use('/api/google-maps', require('./api/routes/googleMaps'));
+app.use('/api/navigation', require('./api/routes/navigation'));
 app.use('/api/weather', require('./api/routes/weather'));
 app.use('/api/ufo', require('./api/routes/ufo'));
 app.use('/api/police', require('./api/routes/police'));

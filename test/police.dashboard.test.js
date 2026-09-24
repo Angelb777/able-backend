@@ -10,7 +10,7 @@ const jwt = require('jsonwebtoken');
 const PoliceConfig = require('../api/models/PoliceConfig');
 const User = require('../api/models/User');
 
-test('Police dashboard uses shared session fetch and exposes rows and columns', () => {
+test('Police dashboard uses shared session fetch and exposes spritesheet animation fields', () => {
   const dashboard = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'dashboard.js'),
     'utf8'
@@ -25,6 +25,8 @@ test('Police dashboard uses shared session fetch and exposes rows and columns', 
   assert.doesNotMatch(policeSection, /Config spritesheet JSON/);
   assert.match(policeSection, /Filas <input[^>]+spritesheetRows/);
   assert.match(policeSection, /Columnas <input[^>]+spritesheetColumns/);
+  assert.match(policeSection, /Frames usados <input[^>]+spritesheetFrames/);
+  assert.match(policeSection, /FPS <input[^>]+spritesheetFps/);
   assert.match(policeSection, /const gridChanged = rows !== Number\(storedSheet\.rows\)/);
   assert.match(policeSection, /spritesheet: collectPoliceSpritesheet\(form/);
   assert.match(policeSection, /projectileSpritesheet: collectPoliceSpritesheet\(form/);
@@ -61,6 +63,8 @@ test('Police dashboard uses shared session fetch and exposes rows and columns', 
     }));
     field(`${type}_spritesheetRows`, type === 'car' ? 2 : (type === 'foot' ? 2 : 1));
     field(`${type}_spritesheetColumns`, type === 'car' ? 3 : (type === 'foot' ? 4 : 1));
+    field(`${type}_spritesheetFrames`, type === 'car' ? 2 : (type === 'foot' ? 3 : 1));
+    field(`${type}_spritesheetFps`, type === 'car' ? 9 : 12);
     for (const effect of ['projectile', 'impact']) {
       field(`${type}_${effect}RenderType`, 'flame_spritesheet');
       field(`${type}_${effect}SpritesheetMetadata`, JSON.stringify({ fps: 10 }));
@@ -81,11 +85,13 @@ test('Police dashboard uses shared session fetch and exposes rows and columns', 
     enabled: { checked: true },
     elements: { namedItem: (name) => fields.get(name) },
   });
-  assert.equal(collected.units.foot.spritesheet.frames, 4);
+  assert.equal(collected.units.foot.spritesheet.frames, 3);
+  assert.equal(collected.units.foot.spritesheet.fps, 12);
   assert.equal(collected.units.foot.spritesheet.multipleOrientations, true);
   assert.equal(collected.units.car.spritesheet.rows, 2);
   assert.equal(collected.units.car.spritesheet.columns, 3);
-  assert.equal(collected.units.car.spritesheet.frames, 3);
+  assert.equal(collected.units.car.spritesheet.frames, 2);
+  assert.equal(collected.units.car.spritesheet.fps, 9);
   assert.equal(collected.units.foot.projectileSpritesheet.frames, 4);
   assert.equal(collected.units.foot.impactSpritesheet.frames, 6);
   assert.equal(collected.units.foot.impactSpritesheet.loop, false);
@@ -149,7 +155,7 @@ test('Police configuration saves, reloads and edits spritesheet grids', async (t
   firstConfig.units.foot.renderType = 'flame_spritesheet';
   firstConfig.units.foot.spritesheet = {
     url: '/uploads/police/foot.png', rows: 2, columns: 4,
-    frames: 8, fps: 12, loop: true,
+    frames: 3, fps: 9, loop: true,
   };
   firstConfig.units.foot.projectileRenderType = 'flame_spritesheet';
   firstConfig.units.foot.projectileSpriteUrl = '/uploads/police/foot-shot.png';
@@ -175,7 +181,8 @@ test('Police configuration saves, reloads and edits spritesheet grids', async (t
   const reloaded = await firstReload.json();
   assert.equal(reloaded.units.foot.spritesheet.rows, 2);
   assert.equal(reloaded.units.foot.spritesheet.columns, 4);
-  assert.equal(reloaded.units.foot.spritesheet.frames, 4);
+  assert.equal(reloaded.units.foot.spritesheet.frames, 3);
+  assert.equal(reloaded.units.foot.spritesheet.fps, 9);
   assert.equal(reloaded.units.foot.spritesheet.multipleOrientations, true);
   assert.equal(reloaded.units.foot.projectileSpritesheet.columns, 4);
   assert.equal(reloaded.units.foot.impactSpritesheet.frames, 6);
@@ -187,7 +194,8 @@ test('Police configuration saves, reloads and edits spritesheet grids', async (t
     ...reloaded.units.foot.spritesheet,
     rows: 3,
     columns: 5,
-    frames: 5,
+    frames: 4,
+    fps: 7,
   };
   const editBody = new FormData();
   editBody.set('config', JSON.stringify(editedConfig));
@@ -201,7 +209,8 @@ test('Police configuration saves, reloads and edits spritesheet grids', async (t
   const edited = await editedReload.json();
   assert.equal(edited.units.foot.spritesheet.rows, 3);
   assert.equal(edited.units.foot.spritesheet.columns, 5);
-  assert.equal(edited.units.foot.spritesheet.frames, 5);
+  assert.equal(edited.units.foot.spritesheet.frames, 4);
+  assert.equal(edited.units.foot.spritesheet.fps, 7);
   assert.equal(edited.units.foot.spritesheet.url, '/uploads/police/foot.png');
   assert.equal(edited.units.foot.projectileSpriteUrl, '/uploads/police/foot-shot.png');
   assert.equal(edited.units.foot.impactSpriteUrl, '/uploads/police/foot-impact.png');

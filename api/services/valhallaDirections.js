@@ -79,21 +79,27 @@ function createValhallaDirections({
     }
   };
 
-  const getRoute = async (from, to, mode = 'driving', options = {}) => {
+  const getRouteDetails = async (from, to, mode = 'driving', options = {}) => {
     if (!endpoint || typeof fetchImpl !== 'function') {
       if (!missingConfigurationReported) {
         console.error('[ROUTING:VALHALLA] VALHALLA_BASE_URL no esta configurada');
         missingConfigurationReported = true;
       }
-      return [];
+      throw new Error('VALHALLA_NOT_CONFIGURED');
     }
-    if (!validPoint(from) || !validPoint(to)) return [];
-    const costing = mode === 'walking' ? 'pedestrian' : mode === 'driving' ? 'auto' : '';
-    if (!costing) return [];
+    if (!validPoint(from) || !validPoint(to)) throw new Error('INVALID_COORDINATES');
+    const costing = mode === 'walking' || mode === 'pedestrian'
+      ? 'pedestrian'
+      : mode === 'driving' || mode === 'auto'
+        ? 'auto'
+        : mode === 'bicycling' || mode === 'bicycle'
+          ? 'bicycle'
+          : '';
+    if (!costing) throw new Error('UNSUPPORTED_ROUTING_MODE');
 
-    const key = keyFor(from, to, mode);
+    const key = keyFor(from, to, costing);
     const cached = cache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached.points;
+    if (cached && cached.expiresAt > Date.now()) return cached.route;
     if (inFlight.has(key)) return inFlight.get(key);
 
     const request = requestJson('/route', {
@@ -115,20 +121,43 @@ function createValhallaDirections({
         }
         points.push(...decoded);
       }
-      if (points.length > 1) {
-        const effectiveTtlMs = Math.max(30000, Number(options.ttlMs) || ttlMs);
-        cache.set(key, { points, expiresAt: Date.now() + effectiveTtlMs });
-        while (cache.size > maxEntries) cache.delete(cache.keys().next().value);
+      const tripSummary = data?.trip?.summary || {};
+      const legs = data?.trip?.legs || [];
+      const lengthKm = Number(tripSummary.length) || legs.reduce(
+        (total, leg) => total + (Number(leg?.summary?.length) || 0), 0,
+      );
+      const durationSeconds = Number(tripSummary.time) || legs.reduce(
+        (total, leg) => total + (Number(leg?.summary?.time) || 0), 0,
+      );
+      if (points.length < 2 || lengthKm <= 0 || durationSeconds <= 0) {
+        throw new Error('VALHALLA_EMPTY_ROUTE');
       }
-      return points;
-    }).catch((error) => {
-      const reason = error?.name === 'AbortError' ? 'timeout' : error?.message || 'unknown';
-      console.error(`[ROUTING:VALHALLA] route error: ${reason}`);
-      return [];
+      const route = {
+        provider: 'valhalla',
+        mode: costing,
+        geometry: points,
+        distanceMeters: lengthKm * 1000,
+        durationSeconds: Math.round(durationSeconds),
+      };
+      const effectiveTtlMs = Math.max(30000, Number(options.ttlMs) || ttlMs);
+      cache.set(key, { route, expiresAt: Date.now() + effectiveTtlMs });
+      while (cache.size > maxEntries) cache.delete(cache.keys().next().value);
+      return route;
     }).finally(() => inFlight.delete(key));
 
     inFlight.set(key, request);
     return request;
+  };
+
+  const getRoute = async (from, to, mode = 'driving', options = {}) => {
+    try {
+      const route = await getRouteDetails(from, to, mode, options);
+      return route.geometry;
+    } catch (error) {
+      const reason = error?.name === 'AbortError' ? 'timeout' : error?.message || 'unknown';
+      console.error(`[ROUTING:VALHALLA] route error: ${reason}`);
+      return [];
+    }
   };
 
   const healthCheck = async () => {
@@ -152,6 +181,7 @@ function createValhallaDirections({
     provider: 'valhalla',
     configured: Boolean(endpoint),
     getRoute,
+    getRouteDetails,
     healthCheck,
     clear: () => {
       cache.clear();

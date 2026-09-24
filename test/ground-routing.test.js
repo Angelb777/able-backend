@@ -49,7 +49,10 @@ test('Valhalla maps driving to auto, walking to pedestrian and caches routes', a
       bodies.push(JSON.parse(options.body));
       return {
         ok: true,
-        json: async () => ({ trip: { legs: [{ shape: encodePolyline6(points) }] } }),
+        json: async () => ({ trip: {
+          summary: { length: 0.2, time: 120 },
+          legs: [{ shape: encodePolyline6(points) }],
+        } }),
       };
     },
   });
@@ -90,6 +93,30 @@ test('Valhalla returns an empty route on timeout and never invokes Google', asyn
   assert.deepEqual(route, []);
   assert.match(requestedUrl, /^http:\/\/valhalla:8002\/route$/);
   assert.doesNotMatch(requestedUrl, /google/i);
+});
+
+test('Valhalla exposes geometry, distance and duration for user navigation', async () => {
+  const points = [
+    { lat: 41.656745, lng: -0.878594 },
+    { lat: 41.658002, lng: -0.876992 },
+  ];
+  const provider = createValhallaDirections({
+    baseUrl: 'http://valhalla:8002',
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ trip: {
+        summary: { length: 1.25, time: 420 },
+        legs: [{ shape: encodePolyline6(points) }],
+      } }),
+    }),
+  });
+
+  const route = await provider.getRouteDetails(points[0], points[1], 'bicycle');
+  assert.equal(route.provider, 'valhalla');
+  assert.equal(route.mode, 'bicycle');
+  assert.equal(route.distanceMeters, 1250);
+  assert.equal(route.durationSeconds, 420);
+  assert.deepEqual(route.geometry, points);
 });
 
 test('ground provider accepts Valhalla and rejects unsupported providers', () => {
