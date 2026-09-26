@@ -135,6 +135,7 @@ test("el endpoint responde 502 sin exponer trazas si no hay datos", async (t) =>
           throw new Error("detalle interno sensible");
         },
       },
+      persistentCache: { get: async () => null, put: async () => true },
     }),
   );
   const server = app.listen(0, "127.0.0.1");
@@ -150,4 +151,78 @@ test("el endpoint responde 502 sin exponer trazas si no hay datos", async (t) =>
   assert.equal(body.error, "BIZI_STATIONS_UNAVAILABLE");
   assert.equal(JSON.stringify(body).includes("detalle interno sensible"), false);
   assert.equal(JSON.stringify(body).includes("stack"), false);
+});
+
+test("el endpoint recupera la ultima instantanea persistida si Bizi falla", async (t) => {
+  const cachedAt = "2026-09-26T10:00:00.000Z";
+  const app = express();
+  app.use(
+    "/api/mobility",
+    createMobilityRouter({
+      biziStations: {
+        getStations: async () => {
+          throw new Error("origen caido");
+        },
+      },
+      persistentCache: {
+        put: async () => true,
+        get: async (key) => ({
+          provider: "bizi_zaragoza",
+          stations: [normalizeStation(upstreamStation)],
+          fromCache: true,
+          stale: true,
+          persistentCache: true,
+          cachedAt,
+        }),
+      },
+    }),
+  );
+  const server = app.listen(0, "127.0.0.1");
+  t.after(() => server.close());
+  await once(server, "listening");
+
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/mobility/bizi/stations`,
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.stale, true);
+  assert.equal(body.persistentCache, true);
+  assert.equal(body.cachedAt, cachedAt);
+  assert.equal(body.stations.length, 1);
+});
+
+test("una respuesta stale en memoria no rejuvenece la instantanea persistida", async (t) => {
+  let writes = 0;
+  const app = express();
+  app.use(
+    "/api/mobility",
+    createMobilityRouter({
+      biziStations: {
+        getStations: async () => ({
+          provider: "bizi_zaragoza",
+          stations: [normalizeStation(upstreamStation)],
+          fromCache: true,
+          stale: true,
+        }),
+      },
+      persistentCache: {
+        put: async () => {
+          writes += 1;
+        },
+        get: async () => null,
+      },
+    }),
+  );
+  const server = app.listen(0, "127.0.0.1");
+  t.after(() => server.close());
+  await once(server, "listening");
+
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/mobility/bizi/stations`,
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(writes, 0);
 });

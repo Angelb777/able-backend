@@ -15,17 +15,48 @@ const {
   ZaragozaTramProviderError,
   ZaragozaTramStopNotFoundError,
 } = require("../services/zaragozaTramProvider");
+const {
+  createPersistentMobilityCache,
+} = require("../services/persistentMobilityCache");
+
+const BIZI_SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
+const STOP_SNAPSHOT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1_000;
 
 function createMobilityRouter({
   biziStations = createBiziStationService(),
   busStops = createBusStopService(),
   tramStops = createTramStopService(),
+  persistentCache = createPersistentMobilityCache(),
 } = {}) {
   const router = express.Router();
 
+  async function loadWithPersistentFallback(key, loader, maxAgeMs) {
+    try {
+      const value = await loader();
+      if (value?.fromCache !== true && value?.stale !== true) {
+        persistentCache.put(key, value).catch((error) => {
+          console.warn(`[mobility:cache:write] ${key}: ${error.message}`);
+        });
+      }
+      return value;
+    } catch (upstreamError) {
+      try {
+        const cached = await persistentCache.get(key, { maxAgeMs });
+        if (cached) return cached;
+      } catch (cacheError) {
+        console.warn(`[mobility:cache:read] ${key}: ${cacheError.message}`);
+      }
+      throw upstreamError;
+    }
+  }
+
   router.get("/bizi/stations", async (_req, res) => {
     try {
-      res.json(await biziStations.getStations());
+      res.json(await loadWithPersistentFallback(
+        "bizi-stations",
+        () => biziStations.getStations(),
+        BIZI_SNAPSHOT_MAX_AGE_MS,
+      ));
     } catch (error) {
       const controlledError =
         error instanceof BiziUpstreamError
@@ -41,7 +72,11 @@ function createMobilityRouter({
 
   router.get("/bus/stops", async (_req, res) => {
     try {
-      res.json(await busStops.getStops());
+      res.json(await loadWithPersistentFallback(
+        "bus-stops",
+        () => busStops.getStops(),
+        STOP_SNAPSHOT_MAX_AGE_MS,
+      ));
     } catch (error) {
       const controlledError =
         error instanceof ZaragozaBusProviderError
@@ -87,7 +122,11 @@ function createMobilityRouter({
 
   router.get("/tram/stops", async (_req, res) => {
     try {
-      res.json(await tramStops.getStops());
+      res.json(await loadWithPersistentFallback(
+        "tram-stops",
+        () => tramStops.getStops(),
+        STOP_SNAPSHOT_MAX_AGE_MS,
+      ));
     } catch (error) {
       const controlledError =
         error instanceof ZaragozaTramProviderError
@@ -135,3 +174,5 @@ function createMobilityRouter({
 
 module.exports = createMobilityRouter();
 module.exports.createMobilityRouter = createMobilityRouter;
+module.exports.BIZI_SNAPSHOT_MAX_AGE_MS = BIZI_SNAPSHOT_MAX_AGE_MS;
+module.exports.STOP_SNAPSHOT_MAX_AGE_MS = STOP_SNAPSHOT_MAX_AGE_MS;
