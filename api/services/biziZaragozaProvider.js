@@ -1,5 +1,8 @@
 const BIZI_API_URL =
   "https://www.zaragoza.es/sede/servicio/urbanismo-infraestructuras/estacion-bicicleta.json?srsname=wgs84&rows=500";
+const BIZI_GBFS_DISCOVERY_URL =
+  "https://zaragoza.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json";
+const BIZI_MIRROR_API_URL = "https://datosbizi.com/api/stations";
 
 const PROVIDER = "bizi_zaragoza";
 const SOURCE = "zaragoza_open_data";
@@ -97,6 +100,59 @@ function normalizeStations(payload) {
   return [...byId.values()];
 }
 
+function normalizeMirrorStations(payload) {
+  if (!payload || typeof payload !== "object" || !Array.isArray(payload.stations)) {
+    throw new BiziUpstreamError("La respuesta alternativa de Bizi no contiene una lista válida");
+  }
+
+  return normalizeStations({
+    result: payload.stations.map((station) => ({
+      id: station.id,
+      title: station.name,
+      estado: station.isOperational === false ? "OUT_OF_SERVICE" : "IN_SERVICE",
+      bicisDisponibles: station.bikesAvailable,
+      anclajesDisponibles: station.anchorsFree,
+      geometry: { coordinates: [station.lon, station.lat] },
+      lastUpdated: station.recordedAt ?? payload.generatedAt,
+    })),
+  });
+}
+
+function normalizeGbfsStations(informationPayload, statusPayload) {
+  const information = informationPayload?.data?.stations;
+  const statuses = statusPayload?.data?.stations;
+  if (!Array.isArray(information) || !Array.isArray(statuses)) {
+    throw new BiziUpstreamError("La respuesta GBFS de Bizi no contiene estaciones válidas");
+  }
+
+  const statusById = new Map(
+    statuses.map((status) => [String(status.station_id ?? ""), status]),
+  );
+  const result = information.map((station) => {
+    const status = statusById.get(String(station.station_id ?? "")) ?? {};
+    const operational = status.is_installed !== false && status.is_installed !== 0 &&
+      status.is_renting !== false && status.is_renting !== 0 &&
+      status.is_returning !== false && status.is_returning !== 0;
+    const reportedAt = status.last_reported;
+    const numericTimestamp = Number(reportedAt);
+    const lastUpdated = reportedAt !== null && reportedAt !== "" &&
+      Number.isFinite(numericTimestamp)
+      ? new Date(numericTimestamp * 1_000).toISOString()
+      : isoDateOrNull(reportedAt);
+    return {
+      id: station.station_id,
+      title: station.name,
+      estado: operational ? "IN_SERVICE" : "OUT_OF_SERVICE",
+      bicisDisponibles:
+        status.num_vehicles_available ?? status.num_bikes_available,
+      anclajesDisponibles: status.num_docks_available,
+      geometry: { coordinates: [station.lon, station.lat] },
+      lastUpdated,
+    };
+  });
+  return normalizeStations({ result });
+}
+
 function createBiziStationService({
   fetchImpl = globalThis.fetch,
   now = () => Date.now(),
@@ -109,33 +165,71 @@ function createBiziStationService({
   let lastValid = null;
   let inFlight = null;
 
-  async function fetchFresh() {
+  async function requestJson(url) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
     try {
-      const response = await fetchImpl(BIZI_API_URL, {
+      const response = await fetchImpl(url, {
         method: "GET",
         headers: {
           Accept: "application/json",
-          "User-Agent": "Able73/1.0",
+          "User-Agent": "Able73/1.0 (https://able73.com)",
         },
         signal: controller.signal,
       });
-
-      if (!response || !response.ok) {
+      if (!response?.ok) {
         throw new BiziUpstreamError(
           `La API de Bizi respondió con HTTP ${response?.status ?? "desconocido"}`,
         );
       }
+      return response.json();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
 
-      const payload = await response.json();
+  async function fetchFresh() {
+    try {
+      let stations;
+      try {
+        const discovery = await requestJson(BIZI_GBFS_DISCOVERY_URL);
+        // Mantiene compatibilidad con el contrato municipal y con los tests.
+        if (Array.isArray(discovery?.result)) {
+          stations = normalizeStations(discovery);
+        } else {
+          const feeds = discovery?.data?.feeds ?? discovery?.data?.es?.feeds;
+          const informationUrl = feeds?.find(
+            (feed) => feed.name === "station_information",
+          )?.url;
+          const statusUrl = feeds?.find(
+            (feed) => feed.name === "station_status",
+          )?.url;
+          if (!informationUrl || !statusUrl) {
+            throw new BiziUpstreamError("El descubrimiento GBFS de Bizi está incompleto");
+          }
+          const [information, status] = await Promise.all([
+            requestJson(informationUrl),
+            requestJson(statusUrl),
+          ]);
+          stations = normalizeGbfsStations(information, status);
+        }
+      } catch (gbfsError) {
+        try {
+          stations = normalizeMirrorStations(await requestJson(BIZI_MIRROR_API_URL));
+        } catch (mirrorError) {
+          try {
+            stations = normalizeStations(await requestJson(BIZI_API_URL));
+          } catch (municipalError) {
+            throw gbfsError instanceof BiziUpstreamError ? gbfsError : municipalError;
+          }
+        }
+      }
       const fetchedAt = now();
       const normalized = {
         provider: PROVIDER,
         source: SOURCE,
         updatedAt: new Date(fetchedAt).toISOString(),
-        stations: normalizeStations(payload),
+        stations,
       };
       lastValid = { fetchedAt, value: normalized };
 
@@ -151,8 +245,6 @@ function createBiziStationService({
           ? "La API de Bizi superó el tiempo de espera"
           : "No se pudo consultar la API de Bizi";
       throw new BiziUpstreamError(message, error);
-    } finally {
-      clearTimeout(timeout);
     }
   }
 
@@ -190,9 +282,13 @@ function createBiziStationService({
 
 module.exports = {
   BIZI_API_URL,
+  BIZI_GBFS_DISCOVERY_URL,
+  BIZI_MIRROR_API_URL,
   BiziUpstreamError,
   CACHE_TTL_MS,
   createBiziStationService,
   normalizeStation,
+  normalizeGbfsStations,
+  normalizeMirrorStations,
   normalizeStations,
 };

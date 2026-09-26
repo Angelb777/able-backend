@@ -4,6 +4,8 @@ const express = require("express");
 const { once } = require("node:events");
 const {
   createBiziStationService,
+  normalizeGbfsStations,
+  normalizeMirrorStations,
   normalizeStation,
   normalizeStations,
 } = require("../api/services/biziZaragozaProvider");
@@ -70,6 +72,30 @@ test("descarta registros inválidos y elimina duplicados por ID", () => {
 
   assert.equal(stations.length, 1);
   assert.equal(stations[0].name, "Nombre actualizado");
+});
+
+test("normaliza disponibilidad y estado desde el GBFS oficial", () => {
+  const stations = normalizeGbfsStations(
+    { data: { stations: [{ station_id: "34", name: "Puerta del Sol", lat: 41.654208, lon: -0.870556 }] } },
+    { data: { stations: [{ station_id: "34", num_vehicles_available: 7, num_docks_available: 12, is_installed: 1, is_renting: 1, is_returning: 1, last_reported: "2026-09-27T00:15:00Z" }] } },
+  );
+
+  assert.equal(stations.length, 1);
+  assert.equal(stations[0].vehiclesAvailable, 7);
+  assert.equal(stations[0].docksAvailable, 12);
+  assert.equal(stations[0].isOperational, true);
+  assert.equal(stations[0].lastUpdated, "2026-09-27T00:15:00.000Z");
+});
+
+test("normaliza la API alternativa de estaciones Bizi", () => {
+  const stations = normalizeMirrorStations({
+    generatedAt: "2026-09-27T00:15:00Z",
+    stations: [{ id: "34", name: "Puerta del Sol", lat: 41.654208, lon: -0.870556, bikesAvailable: 4, anchorsFree: 15 }],
+  });
+
+  assert.equal(stations.length, 1);
+  assert.equal(stations[0].vehiclesAvailable, 4);
+  assert.equal(stations[0].docksAvailable, 15);
 });
 
 test("reutiliza la caché durante 60 segundos", async () => {

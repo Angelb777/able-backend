@@ -2,11 +2,15 @@ const BUS_STOPS_API_URL =
   "https://www.zaragoza.es/sede/servicio/urbanismo-infraestructuras/transporte-urbano/poste-autobus.json";
 const BUS_STOP_DETAIL_API_URL =
   "https://www.zaragoza.es/sede/servicio/urbanismo-infraestructuras/transporte-urbano/poste-autobus";
+const LEGACY_BUS_STOPS_API_URL =
+  "https://www.zaragoza.es/api/recurso/urbanismo-infraestructuras/transporte-urbano/poste.json";
+const LEGACY_BUS_STOP_DETAIL_API_URL =
+  "https://www.zaragoza.es/api/recurso/urbanismo-infraestructuras/transporte-urbano/poste";
 
 const PROVIDER = "zaragoza_bus";
 const SOURCE = "Ayuntamiento de Zaragoza";
 const PAGE_SIZE = 500;
-const DEFAULT_TIMEOUT_MS = 8_000;
+const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_ARRIVALS_MAX_ATTEMPTS = 4;
 const DEFAULT_RETRY_DELAY_MS = 250;
 const URBAN_STOP_ID_PATTERN = /^tuzsa-\d+$/i;
@@ -436,17 +440,33 @@ function createZaragozaBusProvider({
     }
   }
 
+  async function requestJsonFromCandidates(urls, options = {}) {
+    let lastError;
+    const candidates = fetchImpl === globalThis.fetch ? urls : urls.slice(0, 1);
+    for (const url of candidates) {
+      try {
+        return await requestJson(url, options);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  }
+
   async function fetchStops() {
     const payloads = [];
     let start = 0;
     let totalCount = Number.POSITIVE_INFINITY;
 
     while (start < totalCount) {
-      const url = new URL(BUS_STOPS_API_URL);
-      url.searchParams.set("srsname", "wgs84");
-      url.searchParams.set("rows", String(PAGE_SIZE));
-      url.searchParams.set("start", String(start));
-      const { payload } = await requestJson(url.toString());
+      const urls = [LEGACY_BUS_STOPS_API_URL, BUS_STOPS_API_URL].map((base) => {
+        const url = new URL(base);
+        url.searchParams.set("srsname", "wgs84");
+        url.searchParams.set("rows", String(PAGE_SIZE));
+        url.searchParams.set("start", String(start));
+        return url.toString();
+      });
+      const { payload } = await requestJsonFromCandidates(urls);
       if (
         !payload ||
         typeof payload !== "object" ||
@@ -480,14 +500,14 @@ function createZaragozaBusProvider({
     if (!URBAN_STOP_ID_PATTERN.test(stopId)) {
       throw new ZaragozaBusStopNotFoundError(stopId);
     }
-    const url =
-      `${BUS_STOP_DETAIL_API_URL}/${encodeURIComponent(stopId)}.json` +
-      "?srsname=wgs84";
+    const urls = [LEGACY_BUS_STOP_DETAIL_API_URL, BUS_STOP_DETAIL_API_URL].map(
+      (base) => `${base}/${encodeURIComponent(stopId)}.json?srsname=wgs84`,
+    );
     const maxAttempts = Math.max(1, Math.trunc(arrivalsMaxAttempts));
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        const result = await requestJson(url, { validators });
+        const result = await requestJsonFromCandidates(urls, { validators });
         if (result.notModified) return result;
         return {
           value: normalizeArrivalsPayload(result.payload, stopId),
@@ -508,6 +528,8 @@ function createZaragozaBusProvider({
 module.exports = {
   BUS_STOPS_API_URL,
   BUS_STOP_DETAIL_API_URL,
+  LEGACY_BUS_STOPS_API_URL,
+  LEGACY_BUS_STOP_DETAIL_API_URL,
   DEFAULT_ARRIVALS_MAX_ATTEMPTS,
   DEFAULT_RETRY_DELAY_MS,
   DEFAULT_TIMEOUT_MS,
