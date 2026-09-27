@@ -642,6 +642,29 @@ function createZaragozaBusProvider({
       } catch (error) {
         console.warn(`[mobility:bus:avanza] ${error.message}`);
       }
+      try {
+        const result = await requestJson(proxyUrl.toString(), { validators });
+        if (result.notModified) return result;
+        return {
+          value: normalizeArrivalsPayload(result.payload, stopId),
+          validators: result.validators,
+        };
+      } catch (error) {
+        console.warn(`[mobility:bus:zgzmov-arrivals] ${error.message}`);
+        const stops = await fetchZgzMovStops();
+        const stop = stops.find((candidate) => candidate.id === stopId);
+        if (!stop) throw new ZaragozaBusStopNotFoundError(stopId);
+        return {
+          value: {
+            provider: PROVIDER,
+            source: "ZgzMov / Ayuntamiento de Zaragoza",
+            stop,
+            arrivals: [],
+            updatedAt: new Date().toISOString(),
+          },
+          validators: {},
+        };
+      }
     }
     const maxAttempts = Math.max(1, Math.trunc(arrivalsMaxAttempts));
 
