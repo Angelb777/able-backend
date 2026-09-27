@@ -6,6 +6,7 @@ const LEGACY_TRAM_STOPS_API_URL =
   "https://www.zaragoza.es/api/recurso/urbanismo-infraestructuras/tranvia.json";
 const LEGACY_TRAM_STOP_DETAIL_API_URL =
   "https://www.zaragoza.es/api/recurso/urbanismo-infraestructuras/tranvia";
+const ZGZ_MOV_PROXY_URL = "https://zgzmov.es/api.php";
 
 const PROVIDER = "zaragoza_tram";
 const SOURCE = "Ayuntamiento de Zaragoza";
@@ -230,6 +231,13 @@ function createZaragozaTramProvider({
   if (typeof fetchImpl !== "function") {
     throw new Error("Este runtime de Node.js no dispone de fetch");
   }
+  const usingNativeFetch = fetchImpl === globalThis.fetch;
+
+  function zgzMovProxyUrl(path) {
+    const url = new URL(ZGZ_MOV_PROXY_URL);
+    url.searchParams.set("p", path);
+    return url.toString();
+  }
 
   async function requestJson(url, { validators } = {}) {
     const controller = new AbortController();
@@ -310,7 +318,7 @@ function createZaragozaTramProvider({
     let start = 0;
     let totalCount = Number.POSITIVE_INFINITY;
     while (start < totalCount) {
-      const urls = [LEGACY_TRAM_STOPS_API_URL, TRAM_STOPS_API_URL].map((base) => {
+      const municipalUrls = [LEGACY_TRAM_STOPS_API_URL, TRAM_STOPS_API_URL].map((base) => {
         const url = new URL(base);
         url.searchParams.set("srsname", "wgs84");
         url.searchParams.set("rows", String(PAGE_SIZE));
@@ -318,6 +326,11 @@ function createZaragozaTramProvider({
         url.searchParams.set("fl", "id,title,geometry");
         return url.toString();
       });
+      const urls = usingNativeFetch
+        ? [zgzMovProxyUrl(
+          `urbanismo-infraestructuras/transporte-urbano/parada-tranvia.json?rows=${PAGE_SIZE}&start=${start}&srsname=wgs84&fl=id,title,geometry`,
+        ), ...municipalUrls]
+        : municipalUrls;
       const { payload } = await requestJsonFromCandidates(urls);
       if (!payload || typeof payload !== "object" || !Array.isArray(payload.result)) {
         throw new ZaragozaTramProviderError(
@@ -348,9 +361,14 @@ function createZaragozaTramProvider({
     if (!TRAM_STOP_ID_PATTERN.test(stopId)) {
       throw new ZaragozaTramStopNotFoundError(stopId);
     }
-    const urls = [LEGACY_TRAM_STOP_DETAIL_API_URL, TRAM_STOP_DETAIL_API_URL].map(
+    const municipalUrls = [LEGACY_TRAM_STOP_DETAIL_API_URL, TRAM_STOP_DETAIL_API_URL].map(
       (base) => `${base}/${encodeURIComponent(stopId)}.json?srsname=wgs84`,
     );
+    const urls = usingNativeFetch
+      ? [zgzMovProxyUrl(
+        `urbanismo-infraestructuras/transporte-urbano/parada-tranvia/${encodeURIComponent(stopId)}.json?srsname=wgs84`,
+      ), ...municipalUrls]
+      : municipalUrls;
     const result = await requestJsonFromCandidates(urls, { validators });
     if (result.notModified) return result;
     return {
@@ -371,6 +389,7 @@ module.exports = {
   TRAM_STOP_DETAIL_API_URL,
   LEGACY_TRAM_STOPS_API_URL,
   LEGACY_TRAM_STOP_DETAIL_API_URL,
+  ZGZ_MOV_PROXY_URL,
   TRAM_STOP_ID_PATTERN,
   ZaragozaTramProviderError,
   ZaragozaTramStopNotFoundError,

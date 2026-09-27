@@ -6,6 +6,10 @@ const LEGACY_BUS_STOPS_API_URL =
   "https://www.zaragoza.es/api/recurso/urbanismo-infraestructuras/transporte-urbano/poste.json";
 const LEGACY_BUS_STOP_DETAIL_API_URL =
   "https://www.zaragoza.es/api/recurso/urbanismo-infraestructuras/transporte-urbano/poste";
+const ZGZ_MOV_BUS_STOPS_URL = "https://zgzmov.es/data/bus_stops.json";
+const ZGZ_MOV_PROXY_URL = "https://zgzmov.es/api.php";
+const AVANZA_ARRIVALS_URL =
+  "https://zaragoza-pasobus.avanzagrupo.com/frm_esquemaparadatime.php";
 
 const PROVIDER = "zaragoza_bus";
 const SOURCE = "Ayuntamiento de Zaragoza";
@@ -136,6 +140,24 @@ function normalizeStopsPayloads(payloads) {
     );
   }
   return [...byId.values()];
+}
+
+function normalizeZgzMovBusStops(payload) {
+  if (!Array.isArray(payload)) {
+    throw new ZaragozaBusProviderError(
+      "La caché alternativa de paradas de autobús no es válida",
+      { code: "MALFORMED_RESPONSE" },
+    );
+  }
+  return normalizeStopsPayloads([{
+    result: payload
+      .filter((stop) => cleanText(stop.lines).toUpperCase() !== "TRA")
+      .map((stop) => ({
+      id: `tuzsa-${cleanText(stop.id)}`,
+      title: `(${cleanText(stop.id)}) ${cleanText(stop.name)} Líneas: ${cleanText(stop.lines)}`,
+      geometry: { coordinates: [stop.lng, stop.lat] },
+      })),
+  }]);
 }
 
 function zaragozaLocalToIso(value) {
@@ -380,6 +402,8 @@ function createZaragozaBusProvider({
   if (typeof fetchImpl !== "function") {
     throw new Error("Este runtime de Node.js no dispone de fetch");
   }
+  const usingNativeFetch = fetchImpl === globalThis.fetch;
+  let zgzMovStopsPromise = null;
 
   async function requestJson(url, { validators } = {}) {
     const controller = new AbortController();
@@ -453,7 +477,108 @@ function createZaragozaBusProvider({
     throw lastError;
   }
 
+  async function fetchZgzMovStops() {
+    if (!zgzMovStopsPromise) {
+      zgzMovStopsPromise = requestJson(ZGZ_MOV_BUS_STOPS_URL)
+        .then(({ payload }) => normalizeZgzMovBusStops(payload))
+        .catch((error) => {
+          zgzMovStopsPromise = null;
+          throw error;
+        });
+    }
+    return zgzMovStopsPromise;
+  }
+
+  function decodeHtml(value) {
+    return cleanText(String(value ?? "")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/&nbsp;|&#160;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;|&apos;/gi, "'")
+      .replace(/&aacute;/gi, "á").replace(/&eacute;/gi, "é")
+      .replace(/&iacute;/gi, "í").replace(/&oacute;/gi, "ó")
+      .replace(/&uacute;/gi, "ú").replace(/&ntilde;/gi, "ñ"));
+  }
+
+  async function fetchAvanzaArrivals(stopId) {
+    const code = stopId.replace(/^tuzsa-/i, "");
+    const url = new URL(AVANZA_ARRIVALS_URL);
+    url.searchParams.set("poste", code);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetchImpl(url.toString(), {
+        headers: { Accept: "text/html", "User-Agent": "Able73/1.0 (https://able73.com)" },
+        signal: controller.signal,
+      });
+      if (!response?.ok) {
+        throw new ZaragozaBusProviderError("Avanza no devolvió los tiempos", {
+          status: response?.status,
+          code: "UPSTREAM_HTTP_ERROR",
+        });
+      }
+      const html = await response.text();
+      if (!new RegExp(`POSTE\\s*:?\\s*${code}\\b`, "i").test(decodeHtml(html))) {
+        throw new ZaragozaBusProviderError("Avanza no identifica la parada solicitada", {
+          code: "MALFORMED_RESPONSE",
+        });
+      }
+      const arrivals = [];
+      for (const rowMatch of html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
+        const cells = [...rowMatch[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)]
+          .map((match) => decodeHtml(match[1]))
+          .filter(Boolean);
+        const timeIndex = cells.findIndex((cell) =>
+          /\b\d+\s*(?:min|minuto)|en (?:la )?parada|llegando|menos de\s*1/i.test(cell));
+        if (timeIndex < 2) continue;
+        const line = cleanText(cells[0]);
+        const timing = normalizeDisplayTime(cells[timeIndex]);
+        if (!line || !timing) continue;
+        arrivals.push({
+          line,
+          destination: cleanDestination(cells[timeIndex - 1]),
+          minutes: timing.minutes,
+          estimatedArrival: null,
+          displayTime: timing.displayTime,
+          status: timing.status,
+          _sortMinutes: timing.sortMinutes,
+        });
+      }
+      arrivals.sort((left, right) => left._sortMinutes - right._sortMinutes);
+      for (const arrival of arrivals) delete arrival._sortMinutes;
+      const stops = await fetchZgzMovStops();
+      const stop = stops.find((candidate) => candidate.id === stopId);
+      if (!stop) throw new ZaragozaBusStopNotFoundError(stopId);
+      return {
+        value: {
+          provider: PROVIDER,
+          source: "Avanza Zaragoza",
+          stop,
+          arrivals,
+          updatedAt: new Date().toISOString(),
+        },
+        validators: {},
+      };
+    } catch (error) {
+      if (error instanceof ZaragozaBusProviderError) throw error;
+      throw new ZaragozaBusProviderError("No se pudo consultar Avanza", {
+        cause: error,
+        code: error?.name === "AbortError" ? "TIMEOUT" : "NETWORK_ERROR",
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async function fetchStops() {
+    if (usingNativeFetch) {
+      try {
+        return await fetchZgzMovStops();
+      } catch (error) {
+        console.warn(`[mobility:bus:zgzmov] ${error.message}`);
+      }
+    }
     const payloads = [];
     let start = 0;
     let totalCount = Number.POSITIVE_INFINITY;
@@ -500,9 +625,24 @@ function createZaragozaBusProvider({
     if (!URBAN_STOP_ID_PATTERN.test(stopId)) {
       throw new ZaragozaBusStopNotFoundError(stopId);
     }
-    const urls = [LEGACY_BUS_STOP_DETAIL_API_URL, BUS_STOP_DETAIL_API_URL].map(
+    const municipalUrls = [LEGACY_BUS_STOP_DETAIL_API_URL, BUS_STOP_DETAIL_API_URL].map(
       (base) => `${base}/${encodeURIComponent(stopId)}.json?srsname=wgs84`,
     );
+    const proxyUrl = new URL(ZGZ_MOV_PROXY_URL);
+    proxyUrl.searchParams.set(
+      "p",
+      `urbanismo-infraestructuras/transporte-urbano/poste-autobus/${encodeURIComponent(stopId)}.json?srsname=wgs84`,
+    );
+    const urls = usingNativeFetch
+      ? [proxyUrl.toString(), ...municipalUrls]
+      : municipalUrls;
+    if (usingNativeFetch) {
+      try {
+        return await fetchAvanzaArrivals(stopId);
+      } catch (error) {
+        console.warn(`[mobility:bus:avanza] ${error.message}`);
+      }
+    }
     const maxAttempts = Math.max(1, Math.trunc(arrivalsMaxAttempts));
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -530,6 +670,9 @@ module.exports = {
   BUS_STOP_DETAIL_API_URL,
   LEGACY_BUS_STOPS_API_URL,
   LEGACY_BUS_STOP_DETAIL_API_URL,
+  ZGZ_MOV_BUS_STOPS_URL,
+  ZGZ_MOV_PROXY_URL,
+  AVANZA_ARRIVALS_URL,
   DEFAULT_ARRIVALS_MAX_ATTEMPTS,
   DEFAULT_RETRY_DELAY_MS,
   DEFAULT_TIMEOUT_MS,
@@ -545,6 +688,7 @@ module.exports = {
   normalizeDisplayTime,
   normalizeStop,
   normalizeStopsPayloads,
+  normalizeZgzMovBusStops,
   parseStopTitle,
   zaragozaLocalToIso,
 };

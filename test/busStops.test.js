@@ -10,6 +10,7 @@ const {
   normalizeDisplayTime,
   normalizeStop,
   normalizeStopsPayloads,
+  normalizeZgzMovBusStops,
 } = require("../api/services/zaragozaBusProvider");
 const {
   createBusStopService,
@@ -94,6 +95,17 @@ test("normaliza una parada urbana, coordenadas, código, nombre y líneas", () =
     longitude: -0.9059113788285126,
     lines: ["57", "58", "N4", "42"],
   });
+});
+
+test("normaliza la caché alternativa de postes y excluye tranvías", () => {
+  const stops = normalizeZgzMovBusStops([
+    { id: "905", name: "Vía Ibérica / Hospital Militar", lines: "57, 58", lat: 41.63082484981311, lng: -0.9059113788285126 },
+    { id: "2", name: "Mago de Oz", lines: "TRA", lat: 41.6243, lng: -0.9364 },
+  ]);
+
+  assert.equal(stops.length, 1);
+  assert.equal(stops[0].id, "tuzsa-905");
+  assert.deepEqual(stops[0].lines, ["57", "58"]);
 });
 
 test("rechaza rurales, coordenadas nulas, no numéricas y fuera de rango", () => {
