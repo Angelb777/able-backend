@@ -55,6 +55,12 @@ const CardSchema = new mongoose.Schema({
   },
   turretIdleSpritesheet: cardSpritesheetSchema,
   turretDeathSpritesheet: cardSpritesheetSchema,
+  turretBulletRenderType: {
+    type: String,
+    enum: ["classic", "flame_spritesheet"],
+    default: "classic"
+  },
+  turretBulletSpritesheet: cardSpritesheetSchema,
   vida: { type: Number, default: 0 },
   cadenciaDisparo: { type: Number, default: 10 }, // segundos entre disparos
   premioBajaTorreta: { type: Number, default: 100 },

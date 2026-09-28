@@ -3957,7 +3957,7 @@ async function cargarCartas() {
         ${carta.tipoArma === "Proyectil" ? `<p><strong>Alcance:</strong> ${carta.alcance}m</p>` : ""}
         ${carta.tipoArma === "Proyectil" ? `<p><strong>Render proyectil:</strong> ${carta.projectileRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p>` : ""}
         ${carta.tipoArma === "Proyectil" ? `<p><strong>Render explosión:</strong> ${carta.explosionRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p>` : ""}
-        ${carta.tipoArma === "Arrastre" ? `<p><strong>Render torre:</strong> ${carta.turretRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p>` : ""}
+        ${carta.tipoArma === "Arrastre" ? `<p><strong>Render torre:</strong> ${carta.turretRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p><p><strong>Render bala:</strong> ${carta.turretBulletRenderType === "flame_spritesheet" ? "Flame" : "Clásico"}</p>` : ""}
         ${carta.tipoArma === "TROPA" ? `<p><strong>Unidades:</strong> ${carta.numeroUnidades || 1}</p>` : ""}
         ${carta.tipoArma === "Disfraz" ? `<p><strong>Apariencia propia:</strong> ${carta.disguiseRenderType === "flame_spritesheet" ? "Spritesheet animado" : "Imagen clásica"}</p><p><strong>Duración:</strong> ${carta.duracionDisfraz || 0}s</p>` : ""}
         <p><strong>Daño:</strong> ${carta.dano}</p>
@@ -5527,7 +5527,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   document.getElementById("turretRenderType")?.addEventListener("change", () => setRenderFields("turret"));
 
-  ["projectile", "explosion", "turretIdle", "turretDeath", ...extendedCardSpriteKinds].forEach((kind) => {
+  ["projectile", "explosion", "turretIdle", "turretDeath", "turretBullet", ...extendedCardSpriteKinds].forEach((kind) => {
     document.getElementById(`${kind}RenderType`)?.addEventListener("change", () => setRenderFields(kind));
     const file = document.getElementById(`${kind}SpritesheetPng`);
     const preview = document.getElementById(`${kind}SpritesheetPreview`);
@@ -5560,7 +5560,8 @@ document.addEventListener("DOMContentLoaded", function () {
         projectile: "proyectil",
         explosion: "explosión",
         turretIdle: "Idle de torre",
-        turretDeath: "Death de torre"
+        turretDeath: "Death de torre",
+        turretBullet: "bala de torre"
       };
       const label = labels[kind] || kind;
       throw new Error(`Completa columnas, filas, frames y FPS (> 0) para ${label}.`);
@@ -5592,6 +5593,7 @@ document.addEventListener("DOMContentLoaded", function () {
           setRenderFields("explosion");
         } else if (key === "Arrastre") {
           setRenderFields("turret");
+          setRenderFields("turretBullet");
         } else if (key === "Trampa") {
           setRenderFields("mine"); setRenderFields("mineExplosion");
         } else if (key === "Invocacion") {
@@ -5804,6 +5806,21 @@ document.addEventListener("DOMContentLoaded", function () {
         }
       });
       setRenderFields("turret");
+      const bulletModeInput = document.getElementById("turretBulletRenderType");
+      if (bulletModeInput) bulletModeInput.value = carta.turretBulletRenderType || "classic";
+      const bulletConfig = carta.turretBulletSpritesheet || {};
+      Object.entries(bulletConfig).forEach(([key, value]) => {
+        const input = form.querySelector(`[data-sheet="turretBullet"][data-key="${key}"]`);
+        if (!input) return;
+        if (input.type === "checkbox") input.checked = Boolean(value);
+        else input.value = Array.isArray(value) ? JSON.stringify(value) : (value ?? "");
+      });
+      const bulletPreview = document.getElementById("turretBulletSpritesheetPreview");
+      if (bulletPreview && bulletConfig.url) {
+        bulletPreview.src = bulletConfig.url;
+        bulletPreview.style.display = "block";
+      }
+      setRenderFields("turretBullet");
     }
     extendedCardSpriteKinds.forEach((kind) => {
       const modeInput = document.getElementById(`${kind}RenderType`);
@@ -5865,6 +5882,9 @@ document.addEventListener("DOMContentLoaded", function () {
       if (document.getElementById("turretRenderType")?.value === "flame_spritesheet") {
         formData.set("turretIdleSpritesheetConfig", JSON.stringify(spritesheetConfig("turretIdle")));
         formData.set("turretDeathSpritesheetConfig", JSON.stringify(spritesheetConfig("turretDeath")));
+      }
+      if (document.getElementById("turretBulletRenderType")?.value === "flame_spritesheet") {
+        formData.set("turretBulletSpritesheetConfig", JSON.stringify(spritesheetConfig("turretBullet")));
       }
       extendedCardSpriteKinds.forEach((kind) => {
         if (document.getElementById(`${kind}RenderType`)?.value === "flame_spritesheet") {

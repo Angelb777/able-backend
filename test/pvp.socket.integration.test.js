@@ -94,6 +94,12 @@ test('two players share presence, movement, one hit, life and explosions', async
                 frames: 4, frameTime: 0.1, fps: 10, loop: false,
                 readOrder: 'row-major',
               },
+              turretBulletRenderType: 'flame_spritesheet',
+              turretBulletSpritesheet: {
+                url: '/uploads/cards/turret-bullet.png', columns: 3, rows: 1,
+                frames: 3, frameTime: 0.1, fps: 10, loop: true,
+                readOrder: 'row-major',
+              },
             },
             'card-turret-expiring': {
               tipoArma: 'Arrastre', alcance: 100, dano: 10, vida: 50,
@@ -802,12 +808,17 @@ test('two players share presence, movement, one hit, life and explosions', async
   assert.equal(spawnedTurret.seq, 1);
   assert.equal(spawnedTurret.renderType, 'flame_spritesheet');
   assert.equal(spawnedTurret.idleSpritesheet.loop, true);
+  assert.equal(spawnedTurret.bulletRenderType, 'flame_spritesheet');
+  assert.equal(spawnedTurret.bulletSpritesheet.frames, 3);
   assert.deepEqual(spawnedTurret.imagenesMovimiento, ['/uploads/cards/turret-classic.png']);
 
   const turretShot = await turretShotOnA;
   assert.equal(turretShot.turretId, 'turret-test-1');
   assert.equal(turretShot.targetUserId, '507f191e810c19729de860eb');
   assert.equal(turretShot.dano, 10);
+  assert.equal(turretShot.renderType, 'flame_spritesheet');
+  assert.equal(turretShot.spriteUrl, '/uploads/cards/turret-bullet.png');
+  assert.equal(turretShot.spritesheet.loop, true);
   assert.equal(spawnedTurret.idleSpritesheet.url, '/uploads/cards/turret-idle.png');
   turretAllianceEnabled = false;
   const enemyLeaveOnA = waitForEvent(playerA, 'presence:leave');

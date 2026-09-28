@@ -216,6 +216,10 @@ module.exports = function(io, dependencies = {}) {
       : 'classic',
     idleSpritesheet: t.idleSpritesheet || null,
     deathSpritesheet: t.deathSpritesheet || null,
+    bulletRenderType: t.bulletRenderType === 'flame_spritesheet' && t.bulletSpritesheet?.url
+      ? 'flame_spritesheet'
+      : 'classic',
+    bulletSpritesheet: t.bulletSpritesheet || null,
     seq: Number(t.seq) || 1,
     serverTimestamp: Date.now(),
   });
@@ -1384,7 +1388,12 @@ module.exports = function(io, dependencies = {}) {
         targetUnitId: unitTarget?.unitId || null,
         from: { lat: turret.lat, lng: turret.lng }, to: { lat: target.lat, lng: target.lng },
         speed: TURRET_BULLET_SPEED, dano: turret.dano,
-        spriteUrl: turret.imagenesDisparo?.[0] || '', serverTimestamp: now,
+        spriteUrl: turret.bulletRenderType === 'flame_spritesheet'
+          ? (turret.bulletSpritesheet?.url || '')
+          : (turret.imagenesDisparo?.[0] || ''),
+        renderType: turret.bulletRenderType || 'classic',
+        spritesheet: turret.bulletSpritesheet || null,
+        serverTimestamp: now,
       });
       setTimeout(async () => {
         if (!turrets.has(turretId)) return;
@@ -2856,6 +2865,8 @@ module.exports = function(io, dependencies = {}) {
           renderType: card.turretRenderType || 'classic',
           idleSpritesheet: card.turretIdleSpritesheet || undefined,
           deathSpritesheet: card.turretDeathSpritesheet || undefined,
+          bulletRenderType: card.turretBulletRenderType || 'classic',
+          bulletSpritesheet: card.turretBulletSpritesheet || undefined,
         });
         const plain = turret.toObject();
         plain.seq = 1;

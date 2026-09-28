@@ -25,6 +25,12 @@ const turretSchema = new mongoose.Schema({
   },
   idleSpritesheet: spritesheetSchema,
   deathSpritesheet: spritesheetSchema,
+  bulletRenderType: {
+    type: String,
+    enum: ['classic', 'flame_spritesheet'],
+    default: 'classic',
+  },
+  bulletSpritesheet: spritesheetSchema,
 }, { timestamps: true });
 
 module.exports = mongoose.model('Turret', turretSchema);

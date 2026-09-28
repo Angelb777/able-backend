@@ -625,9 +625,37 @@
     </div>
   </fieldset><br>
 
-  <label>Imágenes de bala (opcional, máx 4):</label>
-  <input type="file" id="imagenesBala" name="imagenesDisparo" accept="image/*" multiple><br>
-  <div id="previewImagenesBala"></div><br>
+  <fieldset>
+    <legend>Visual de la bala de la torre</legend>
+    <label>Tipo de render:</label>
+    <select id="turretBulletRenderType" name="turretBulletRenderType">
+      <option value="classic">Clásico (imágenes)</option>
+      <option value="flame_spritesheet">Animado con Flame (spritesheet)</option>
+    </select><br><br>
+
+    <div id="turretBulletClassicFields">
+      <label>Imágenes de bala (opcional, máx 4):</label>
+      <input type="file" id="imagenesBala" name="imagenesDisparo" accept="image/*" multiple><br>
+      <div id="previewImagenesBala"></div><br>
+    </div>
+
+    <div id="turretBulletFlameFields" style="display:none;">
+      <p>Sube un único PNG spritesheet para animar la bala mientras se desplaza.</p>
+      <input type="file" id="turretBulletSpritesheetPng" name="turretBulletSpritesheetPng" accept="image/png"><br>
+      <img id="turretBulletSpritesheetPreview" alt="Vista previa del spritesheet de la bala de torre" style="display:none;max-width:320px;max-height:180px;margin:8px 0;"><br>
+      <label>Columnas: <input type="number" min="1" value="1" required data-sheet="turretBullet" data-key="columns"></label>
+      <label>Filas: <input type="number" min="1" value="1" required data-sheet="turretBullet" data-key="rows"></label>
+      <label>Frames usados: <input type="number" min="1" value="1" required data-sheet="turretBullet" data-key="frames"></label>
+      <label>FPS: <input type="number" min="0.01" step="0.01" value="12" required data-sheet="turretBullet" data-key="fps"></label><br><br>
+      <label><input type="checkbox" checked data-sheet="turretBullet" data-key="loop"> Reproducir en bucle</label>
+      <label><input type="checkbox" data-sheet="turretBullet" data-key="multipleOrientations"> Contiene orientaciones</label><br><br>
+      <label>Orden de lectura:
+        <select data-sheet="turretBullet" data-key="readOrder"><option value="row-major">Por filas</option><option value="column-major">Por columnas</option><option value="row-major-reverse">Por filas, inverso</option></select>
+      </label>
+      <label>Orientaciones/filas (JSON): <input type="text" placeholder='["north","east","south","west"]' data-sheet="turretBullet" data-key="orientationRows"></label>
+      <label>Orden de frames (JSON, opcional): <input type="text" placeholder="[0,1,2,3]" data-sheet="turretBullet" data-key="frameOrder"></label>
+    </div>
+  </fieldset><br>
 
   <label>Alcance de la bala:</label>
   <input type="number" name="alcance" min="1" required><br><br>

@@ -26,8 +26,10 @@ test('legacy turret cards remain classic without requiring spritesheets', () => 
 
   assert.equal(card.validateSync(), undefined);
   assert.equal(card.turretRenderType, 'classic');
+  assert.equal(card.turretBulletRenderType, 'classic');
   assert.equal(card.turretIdleSpritesheet, undefined);
   assert.equal(card.turretDeathSpritesheet, undefined);
+  assert.equal(card.turretBulletSpritesheet, undefined);
   assert.equal(card.imagenesMovimiento[0], '/uploads/cards/turret.png');
 });
 
@@ -66,7 +68,7 @@ test('animated projectile and explosion keep complete Flame metadata', () => {
   assert.deepEqual(card.projectileSpritesheet.frameOrder, [0, 1, 2, 3]);
 });
 
-test('animated turret keeps Idle and Death Flame metadata with safe loop defaults', () => {
+test('animated turret keeps Idle, Death and bullet Flame metadata with safe loop defaults', () => {
   const card = new Card({
     titulo: 'Flame turret',
     tipoArma: 'Arrastre',
@@ -90,6 +92,17 @@ test('animated turret keeps Idle and Death Flame metadata with safe loop default
       loop: false,
       readOrder: 'row-major-reverse',
     },
+    turretBulletRenderType: 'flame_spritesheet',
+    turretBulletSpritesheet: {
+      url: '/uploads/cards/turret-bullet.png',
+      columns: 6,
+      rows: 1,
+      frames: 6,
+      frameTime: 1 / 15,
+      fps: 15,
+      loop: true,
+      readOrder: 'row-major',
+    },
   });
 
   assert.equal(card.validateSync(), undefined);
@@ -97,6 +110,9 @@ test('animated turret keeps Idle and Death Flame metadata with safe loop default
   assert.equal(card.turretDeathSpritesheet.loop, false);
   assert.equal(card.turretIdleSpritesheet.frames, 8);
   assert.equal(card.turretDeathSpritesheet.readOrder, 'row-major-reverse');
+  assert.equal(card.turretBulletRenderType, 'flame_spritesheet');
+  assert.equal(card.turretBulletSpritesheet.frames, 6);
+  assert.equal(card.turretBulletSpritesheet.loop, true);
 });
 
 test('mine and airstrike cards preserve every spritesheet independently', () => {

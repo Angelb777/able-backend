@@ -23,6 +23,7 @@ const SPRITESHEET_FIELDS = new Set([
   "explosionSpritesheetPng",
   "turretIdleSpritesheetPng",
   "turretDeathSpritesheetPng",
+  "turretBulletSpritesheetPng",
   "mineSpritesheetPng",
   "mineExplosionSpritesheetPng",
   "airstrikePlaneSpritesheetPng",
@@ -189,6 +190,7 @@ router.post(
     { name: "explosionSpritesheetPng", maxCount: 1 },
     { name: "turretIdleSpritesheetPng", maxCount: 1 },
     { name: "turretDeathSpritesheetPng", maxCount: 1 },
+    { name: "turretBulletSpritesheetPng", maxCount: 1 },
     { name: "mineSpritesheetPng", maxCount: 1 },
     { name: "mineExplosionSpritesheetPng", maxCount: 1 },
     { name: "airstrikePlaneSpritesheetPng", maxCount: 1 },
@@ -230,6 +232,7 @@ router.post(
       const projectileRenderType = normalizedRenderType(body.projectileRenderType);
       const explosionRenderType = normalizedRenderType(body.explosionRenderType);
       const turretRenderType = normalizedRenderType(body.turretRenderType);
+      const turretBulletRenderType = normalizedRenderType(body.turretBulletRenderType);
       const mineRenderType = normalizedRenderType(body.mineRenderType);
       const mineExplosionRenderType = normalizedRenderType(body.mineExplosionRenderType);
       const airstrikePlaneRenderType = normalizedRenderType(body.airstrikePlaneRenderType);
@@ -255,6 +258,9 @@ router.post(
       }
       if (body.tipoArma === "Arrastre" && turretRenderType === "flame_spritesheet" && !files.turretIdleSpritesheetPng?.length) {
         return res.status(400).json({ error: "Debes subir un PNG spritesheet para el Idle Flame de la torre." });
+      }
+      if (body.tipoArma === "Arrastre" && turretBulletRenderType === "flame_spritesheet" && !files.turretBulletSpritesheetPng?.length) {
+        return res.status(400).json({ error: "Debes subir un PNG spritesheet para la bala Flame de la torre." });
       }
       const requiredSheet = (enabled, field, label) => {
         if (enabled && !files[field]?.length) invalidSpritesheet(`Debes subir un PNG spritesheet para ${label}.`);
@@ -324,6 +330,7 @@ router.post(
       const explosionSheetFile = files.explosionSpritesheetPng?.[0];
       const turretIdleSheetFile = files.turretIdleSpritesheetPng?.[0];
       const turretDeathSheetFile = files.turretDeathSpritesheetPng?.[0];
+      const turretBulletSheetFile = files.turretBulletSpritesheetPng?.[0];
       const mineSheetFile = files.mineSpritesheetPng?.[0];
       const mineExplosionSheetFile = files.mineExplosionSpritesheetPng?.[0];
       const airstrikePlaneSheetFile = files.airstrikePlaneSpritesheetPng?.[0];
@@ -344,6 +351,9 @@ router.post(
         : undefined;
       const turretDeathSpritesheet = turretRenderType === "flame_spritesheet" && turretDeathSheetFile
         ? parseSpritesheetConfig(body.turretDeathSpritesheetConfig, "Death de torre", normalizarRuta(turretDeathSheetFile), turretDeathSheetFile, null, false)
+        : undefined;
+      const turretBulletSpritesheet = turretBulletRenderType === "flame_spritesheet"
+        ? parseSpritesheetConfig(body.turretBulletSpritesheetConfig, "bala de torre", normalizarRuta(turretBulletSheetFile), turretBulletSheetFile, null, true)
         : undefined;
       const mineSpritesheet = mineRenderType === "flame_spritesheet"
         ? parseSpritesheetConfig(body.mineSpritesheetConfig, "mina", normalizarRuta(mineSheetFile), mineSheetFile, null, true) : undefined;
@@ -409,6 +419,8 @@ router.post(
         turretRenderType,
         turretIdleSpritesheet,
         turretDeathSpritesheet,
+        turretBulletRenderType,
+        turretBulletSpritesheet,
         mineRenderType,
         mineSpritesheet,
         mineExplosionRenderType,
@@ -499,6 +511,7 @@ router.put(
     { name: "explosionSpritesheetPng", maxCount: 1 },
     { name: "turretIdleSpritesheetPng", maxCount: 1 },
     { name: "turretDeathSpritesheetPng", maxCount: 1 },
+    { name: "turretBulletSpritesheetPng", maxCount: 1 },
     { name: "mineSpritesheetPng", maxCount: 1 },
     { name: "mineExplosionSpritesheetPng", maxCount: 1 },
     { name: "airstrikePlaneSpritesheetPng", maxCount: 1 },
@@ -609,6 +622,7 @@ router.put(
       const projectileRenderType = normalizedRenderType(body.projectileRenderType || card.projectileRenderType);
       const explosionRenderType = normalizedRenderType(body.explosionRenderType || card.explosionRenderType);
       const turretRenderType = normalizedRenderType(body.turretRenderType || card.turretRenderType);
+      const turretBulletRenderType = normalizedRenderType(body.turretBulletRenderType || card.turretBulletRenderType);
       const mineRenderType = normalizedRenderType(body.mineRenderType || card.mineRenderType);
       const mineExplosionRenderType = normalizedRenderType(body.mineExplosionRenderType || card.mineExplosionRenderType);
       const airstrikePlaneRenderType = normalizedRenderType(body.airstrikePlaneRenderType || card.airstrikePlaneRenderType);
@@ -618,6 +632,7 @@ router.put(
       const explosionSheetFile = files.explosionSpritesheetPng?.[0];
       const turretIdleSheetFile = files.turretIdleSpritesheetPng?.[0];
       const turretDeathSheetFile = files.turretDeathSpritesheetPng?.[0];
+      const turretBulletSheetFile = files.turretBulletSpritesheetPng?.[0];
       const mineSheetFile = files.mineSpritesheetPng?.[0];
       const mineExplosionSheetFile = files.mineExplosionSpritesheetPng?.[0];
       const airstrikePlaneSheetFile = files.airstrikePlaneSpritesheetPng?.[0];
@@ -640,6 +655,9 @@ router.put(
       const turretDeathSpritesheet = turretRenderType === "flame_spritesheet" && hasTurretDeath
         ? parseSpritesheetConfig(body.turretDeathSpritesheetConfig, "Death de torre", normalizarRuta(turretDeathSheetFile) || card.turretDeathSpritesheet?.url, turretDeathSheetFile, card.turretDeathSpritesheet, false)
         : card.turretDeathSpritesheet;
+      const turretBulletSpritesheet = turretBulletRenderType === "flame_spritesheet"
+        ? parseSpritesheetConfig(body.turretBulletSpritesheetConfig, "bala de torre", normalizarRuta(turretBulletSheetFile) || card.turretBulletSpritesheet?.url, turretBulletSheetFile, card.turretBulletSpritesheet, true)
+        : card.turretBulletSpritesheet;
       const updateSheet = (renderType, raw, label, file, previous, loop) => renderType === "flame_spritesheet"
         ? parseSpritesheetConfig(raw, label, normalizarRuta(file) || previous?.url, file, previous, loop)
         : previous;
@@ -713,6 +731,8 @@ router.put(
         turretRenderType,
         turretIdleSpritesheet,
         turretDeathSpritesheet,
+        turretBulletRenderType,
+        turretBulletSpritesheet,
         mineRenderType,
         mineSpritesheet,
         mineExplosionRenderType,
