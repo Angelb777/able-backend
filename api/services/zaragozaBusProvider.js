@@ -16,6 +16,7 @@ const SOURCE = "Ayuntamiento de Zaragoza";
 const PAGE_SIZE = 500;
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_ARRIVALS_MAX_ATTEMPTS = 4;
+const DEFAULT_AVANZA_MAX_ATTEMPTS = 2;
 const DEFAULT_RETRY_DELAY_MS = 250;
 const URBAN_STOP_ID_PATTERN = /^tuzsa-\d+$/i;
 
@@ -395,14 +396,16 @@ function createZaragozaBusProvider({
   fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   arrivalsMaxAttempts = DEFAULT_ARRIVALS_MAX_ATTEMPTS,
+  avanzaMaxAttempts = DEFAULT_AVANZA_MAX_ATTEMPTS,
   retryDelayMs = DEFAULT_RETRY_DELAY_MS,
+  useAlternativeSources = fetchImpl === globalThis.fetch,
   sleep = (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
   if (typeof fetchImpl !== "function") {
     throw new Error("Este runtime de Node.js no dispone de fetch");
   }
-  const usingNativeFetch = fetchImpl === globalThis.fetch;
+  const alternativeSourcesEnabled = Boolean(useAlternativeSources);
   let zgzMovStopsPromise = null;
 
   async function requestJson(url, { validators } = {}) {
@@ -466,7 +469,7 @@ function createZaragozaBusProvider({
 
   async function requestJsonFromCandidates(urls, options = {}) {
     let lastError;
-    const candidates = fetchImpl === globalThis.fetch ? urls : urls.slice(0, 1);
+    const candidates = alternativeSourcesEnabled ? urls : urls.slice(0, 1);
     for (const url of candidates) {
       try {
         return await requestJson(url, options);
@@ -571,8 +574,25 @@ function createZaragozaBusProvider({
     }
   }
 
+  async function fetchAvanzaArrivalsWithRetry(stopId) {
+    const maxAttempts = Math.max(1, Math.trunc(avanzaMaxAttempts));
+    let lastError;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await fetchAvanzaArrivals(stopId);
+      } catch (error) {
+        lastError = error;
+        if (error instanceof ZaragozaBusStopNotFoundError) throw error;
+        if (attempt < maxAttempts) {
+          await sleep(retryDelayMs * 2 ** (attempt - 1));
+        }
+      }
+    }
+    throw lastError;
+  }
+
   async function fetchStops() {
-    if (usingNativeFetch) {
+    if (alternativeSourcesEnabled) {
       try {
         return await fetchZgzMovStops();
       } catch (error) {
@@ -633,12 +653,12 @@ function createZaragozaBusProvider({
       "p",
       `urbanismo-infraestructuras/transporte-urbano/poste-autobus/${encodeURIComponent(stopId)}.json?srsname=wgs84`,
     );
-    const urls = usingNativeFetch
+    const urls = alternativeSourcesEnabled
       ? [proxyUrl.toString(), ...municipalUrls]
       : municipalUrls;
-    if (usingNativeFetch) {
+    if (alternativeSourcesEnabled) {
       try {
-        return await fetchAvanzaArrivals(stopId);
+        return await fetchAvanzaArrivalsWithRetry(stopId);
       } catch (error) {
         console.warn(`[mobility:bus:avanza] ${error.message}`);
       }
@@ -651,19 +671,7 @@ function createZaragozaBusProvider({
         };
       } catch (error) {
         console.warn(`[mobility:bus:zgzmov-arrivals] ${error.message}`);
-        const stops = await fetchZgzMovStops();
-        const stop = stops.find((candidate) => candidate.id === stopId);
-        if (!stop) throw new ZaragozaBusStopNotFoundError(stopId);
-        return {
-          value: {
-            provider: PROVIDER,
-            source: "ZgzMov / Ayuntamiento de Zaragoza",
-            stop,
-            arrivals: [],
-            updatedAt: new Date().toISOString(),
-          },
-          validators: {},
-        };
+        throw error;
       }
     }
     const maxAttempts = Math.max(1, Math.trunc(arrivalsMaxAttempts));
@@ -696,6 +704,7 @@ module.exports = {
   ZGZ_MOV_BUS_STOPS_URL,
   ZGZ_MOV_PROXY_URL,
   AVANZA_ARRIVALS_URL,
+  DEFAULT_AVANZA_MAX_ATTEMPTS,
   DEFAULT_ARRIVALS_MAX_ATTEMPTS,
   DEFAULT_RETRY_DELAY_MS,
   DEFAULT_TIMEOUT_MS,

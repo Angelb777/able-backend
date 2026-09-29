@@ -68,6 +68,15 @@ function responseWith(payload, { status = 200, responseHeaders = {} } = {}) {
   };
 }
 
+function textResponse(body, { status = 200 } = {}) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: headers(),
+    text: async () => body,
+  };
+}
+
 function normalizedDetails(overrides = {}) {
   return {
     provider: "zaragoza_bus",
@@ -442,6 +451,70 @@ test("reintenta los timeouts internos del Ayuntamiento hasta obtener tiempos", a
   assert.deepEqual(delays, [10, 20]);
   assert.equal(result.value.stop.id, "tuzsa-905");
   assert.ok(result.value.arrivals.length > 0);
+});
+
+test("reintenta Avanza antes de recurrir al proxy municipal", async () => {
+  let avanzaCalls = 0;
+  const delays = [];
+  const provider = createZaragozaBusProvider({
+    useAlternativeSources: true,
+    avanzaMaxAttempts: 2,
+    retryDelayMs: 10,
+    sleep: async (milliseconds) => delays.push(milliseconds),
+    fetchImpl: async (url) => {
+      if (String(url).includes("frm_esquemaparadatime.php")) {
+        avanzaCalls += 1;
+        if (avanzaCalls === 1) return textResponse("", { status: 503 });
+        return textResponse(`
+          <h4>POSTE: 905</h4>
+          <table><tr><th>LINEA</th><th>DESTINO</th><th>MIN</th></tr>
+          <tr><td>42</td><td>LA PAZ</td><td>7 minutos.</td></tr></table>
+        `);
+      }
+      if (String(url).includes("bus_stops.json")) {
+        return responseWith([{
+          id: "905",
+          name: "VÃ­a IbÃ©rica / Hospital Militar",
+          lines: "42",
+          lat: 41.63082484981311,
+          lng: -0.9059113788285126,
+        }]);
+      }
+      throw new Error(`URL inesperada: ${url}`);
+    },
+  });
+
+  const result = await provider.fetchArrivals("tuzsa-905");
+
+  assert.equal(avanzaCalls, 2);
+  assert.deepEqual(delays, [10]);
+  assert.equal(result.value.source, "Avanza Zaragoza");
+  assert.equal(result.value.arrivals[0].displayTime, "7 min");
+});
+
+test("no convierte en tiempos vacíos el fallo de Avanza y del proxy", async () => {
+  let avanzaCalls = 0;
+  const provider = createZaragozaBusProvider({
+    useAlternativeSources: true,
+    avanzaMaxAttempts: 2,
+    sleep: async () => {},
+    fetchImpl: async (url) => {
+      if (String(url).includes("frm_esquemaparadatime.php")) {
+        avanzaCalls += 1;
+        return textResponse("", { status: 503 });
+      }
+      return responseWith(
+        { status: 400, mensaje: "(500)Internal Server Error" },
+        { status: 400 },
+      );
+    },
+  });
+
+  await assert.rejects(
+    provider.fetchArrivals("tuzsa-905"),
+    ZaragozaBusProviderError,
+  );
+  assert.equal(avanzaCalls, 2);
 });
 
 test("agota los reintentos y conserva el error municipal", async () => {
