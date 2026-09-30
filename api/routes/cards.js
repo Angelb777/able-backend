@@ -991,8 +991,8 @@ router.put("/user-cards/:userId", verifyToken, requireSelfOrAdmin(), async (req,
   try {
     const { mazo } = req.body;
 
-    if (!Array.isArray(mazo) || mazo.length !== 4) {
-      return res.status(400).json({ error: "El mazo debe tener exactamente 4 cartas" });
+    if (!Array.isArray(mazo) || mazo.length < 1 || mazo.length > 4) {
+      return res.status(400).json({ error: "El mazo debe tener entre 1 y 4 cartas" });
     }
 
     const cardIds = mazo.map(String);
