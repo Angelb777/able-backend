@@ -15,6 +15,7 @@ const {
 } = require('../services/authIdentity');
 const { verifyToken } = require('../middlewares/authMiddleware');
 const { validateNickname } = require('../utils/nickname');
+const { deleteAccountData } = require('../services/accountDeletion');
 const {
   CSRF_COOKIE,
   csrfCookieOptions,
@@ -116,12 +117,12 @@ async function findProfileByEmail(UserModel, email) {
   return UserModel.findOne(emailQuery(email));
 }
 
-function canLinkVerifiedGoogleProfile(decoded) {
+function canLinkVerifiedFederatedProfile(decoded) {
   return decoded.email_verified === true &&
-    decoded.firebase?.sign_in_provider === 'google.com';
+    ['google.com', 'apple.com'].includes(decoded.firebase?.sign_in_provider);
 }
 
-async function linkGoogleProfile(profile, decoded) {
+async function linkFederatedProfile(profile, decoded) {
   profile.firebaseUid = decoded.uid;
   profile.authProviders = Array.from(new Set([
     ...(Array.isArray(profile.authProviders) ? profile.authProviders : []),
@@ -178,6 +179,7 @@ function createAuthRouter(dependencies = {}) {
     disabled: limiterDisabled,
   });
   const loginAccountLimiter = accountLoginLimiter({ disabled: limiterDisabled });
+  const deleteData = dependencies.deleteAccountData || deleteAccountData;
 
   const currentFirebaseAuth = () => firebaseAuth || getFirebaseAuth();
 
@@ -239,8 +241,8 @@ function createAuthRouter(dependencies = {}) {
       if (!email) return res.status(400).json({ error: 'Firebase no ha proporcionado un email' });
       const collision = await findProfileByEmail(UserModel, email);
       if (collision) {
-        if (canLinkVerifiedGoogleProfile(decoded)) {
-          const migrated = await linkGoogleProfile(collision, decoded);
+        if (canLinkVerifiedFederatedProfile(decoded)) {
+          const migrated = await linkFederatedProfile(collision, decoded);
           const token = await statusAccountToken(req, migrated, decoded, UserModel);
           return res.json({
             token,
@@ -310,12 +312,12 @@ function createAuthRouter(dependencies = {}) {
         return res.json({ user: serializeUser(linked, 'firebase') });
       }
 
-      // Google verificado puede recuperar el perfil del mismo correo sin
-      // duplicar ni perder sus datos. Otros proveedores siguen bloqueados.
+      // Google o Apple verificados pueden recuperar el perfil del mismo correo
+      // sin duplicar ni perder sus datos. Otros proveedores siguen bloqueados.
       const emailCollision = await findProfileByEmail(UserModel, email);
       if (emailCollision) {
-        if (canLinkVerifiedGoogleProfile(decoded)) {
-          const migrated = await linkGoogleProfile(emailCollision, decoded);
+        if (canLinkVerifiedFederatedProfile(decoded)) {
+          const migrated = await linkFederatedProfile(emailCollision, decoded);
           if (!hasAcceptedCurrentTerms(migrated)) {
             await recordCurrentTermsAcceptance(migrated);
           }
@@ -523,6 +525,62 @@ function createAuthRouter(dependencies = {}) {
       await UserModel.updateOne({ _id: req.user.id, activeSessionId: req.user.sessionId }, { $set: { activeSessionId: require('crypto').randomUUID() } });
       return res.status(204).end();
     } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.delete('/account', loginLimiter, verifyToken, async (req, res, next) => {
+    try {
+      const profile = await UserModel.findById(req.user.id)
+        .select('+password firebaseUid');
+      if (!profile) return res.status(404).json({
+        error: 'La cuenta ya no existe',
+        code: 'ACCOUNT_NOT_FOUND',
+      });
+
+      if (profile.firebaseUid) {
+        const decoded = await decodeFirebaseIdToken(
+          String(req.body?.firebaseIdToken || ''),
+          {
+            firebaseAuth: currentFirebaseAuth(),
+            requireVerifiedEmail: false,
+          },
+        );
+        if (decoded.uid !== profile.firebaseUid) {
+          return res.status(403).json({
+            error: 'La reautenticacion no pertenece a esta cuenta',
+            code: 'ACCOUNT_MISMATCH',
+          });
+        }
+        if (Math.floor(Date.now() / 1000) - Number(decoded.auth_time || 0) > 300) {
+          return res.status(401).json({
+            error: 'Vuelve a autenticarte para eliminar la cuenta',
+            code: 'RECENT_LOGIN_REQUIRED',
+          });
+        }
+      } else {
+        const password = typeof req.body?.password === 'string'
+          ? req.body.password
+          : '';
+        if (!profile.password || !password ||
+            !await bcrypt.compare(password, profile.password)) {
+          return res.status(401).json({
+            error: 'La contrasena no es correcta',
+            code: 'INVALID_CREDENTIALS',
+          });
+        }
+      }
+
+      const deleted = await deleteData(String(profile._id));
+      if (!deleted) return res.status(404).json({
+        error: 'La cuenta ya no existe',
+        code: 'ACCOUNT_NOT_FOUND',
+      });
+      return res.status(204).end();
+    } catch (error) {
+      if (error instanceof AuthenticationError) {
+        return res.status(error.status).json({ error: error.message, code: error.code });
+      }
       return next(error);
     }
   });

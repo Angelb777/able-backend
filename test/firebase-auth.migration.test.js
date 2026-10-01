@@ -205,6 +205,45 @@ test('verified Google login links an existing profile and preserves its identity
   assert.equal(existing.password, 'existing-hash');
 });
 
+test('verified Apple login links the existing profile without duplicating it', async () => {
+  const existing = {
+    _id: 'legacy-apple',
+    email: 'private@privaterelay.appleid.com',
+    password: 'existing-hash',
+    nickname: 'ApplePlayer',
+    role: 'cliente',
+    termsVersionAccepted: '1.0',
+    termsAcceptedAt: new Date(),
+    authProviders: [],
+    async save() {},
+  };
+  class FakeUser {
+    static findOne(filter) { return query(filter.firebaseUid ? null : existing); }
+  }
+  const router = createAuthRouter({
+    UserModel: FakeUser,
+    firebaseAuth: firebaseAuth({
+      uid: 'apple-uid',
+      email: existing.email,
+      email_verified: true,
+      firebase: { sign_in_provider: 'apple.com' },
+    }),
+    disableRateLimit: true,
+  });
+  await withServer(router, async (base) => {
+    const response = await fetch(`${base}/api/auth/firebase/status`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer firebase-token' },
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.status, 'linked');
+    assert.equal(body.user.id, existing._id);
+  });
+  assert.equal(existing.firebaseUid, 'apple-uid');
+  assert.deepEqual(existing.authProviders, ['apple.com']);
+});
+
 test('legacy login accepts only existing profiles without firebaseUid and hides enumeration', async (t) => {
   const originalCompare = bcrypt.compare;
   bcrypt.compare = async () => true;

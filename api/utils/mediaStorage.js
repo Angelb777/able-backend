@@ -84,6 +84,27 @@ function saveMaterial(file, folder) {
   });
 }
 
+function mediaIdFromUrl(value) {
+  const match = String(value || '').match(/^\/api\/media\/([a-f\d]{24})$/i);
+  return match ? new mongoose.Types.ObjectId(match[1]) : null;
+}
+
+async function deleteMediaUrls(values) {
+  const ids = Array.from(new Set(
+    (values || [])
+      .map(mediaIdFromUrl)
+      .filter(Boolean)
+      .map((id) => String(id))
+  )).map((id) => new mongoose.Types.ObjectId(id));
+  if (!ids.length || mongoose.connection.readyState !== 1 || !mongoose.connection.db) return;
+  await Promise.all([
+    mongoose.connection.db.collection(`${BUCKET_NAME}.files`)
+      .deleteMany({ _id: { $in: ids } }),
+    mongoose.connection.db.collection(`${BUCKET_NAME}.chunks`)
+      .deleteMany({ files_id: { $in: ids } }),
+  ]);
+}
+
 async function sendImage(req, res) {
   if (!mongoose.isValidObjectId(req.params.id)) {
     return res.status(404).json({ error: "Imagen no encontrada" });
@@ -120,4 +141,5 @@ module.exports = {
   saveImage,
   saveMaterial,
   sendImage,
+  deleteMediaUrls,
 };
