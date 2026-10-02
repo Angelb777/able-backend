@@ -14,6 +14,7 @@ const {
   getProductPurchase,
   consumeProductPurchase,
 } = require('../services/googlePlayBilling');
+const appleAppStore = require('../services/appleAppStore');
 
 const adminOnly = [verifyToken, checkRole(['admin'])];
 
@@ -67,6 +68,9 @@ const PLAY_PRODUCT_ID_BY_STEPCOINS = new Map([
 const STEPCOIN_AMOUNT_BY_PLAY_PRODUCT_ID = new Map(
   Array.from(PLAY_PRODUCT_ID_BY_STEPCOINS, ([stepcoins, id]) => [id, stepcoins]),
 );
+const STEPCOIN_AMOUNT_BY_APP_STORE_PRODUCT_ID = new Map([
+  ['stepcoins_100', 100],
+]);
 
 router.get(
   '/stepcoins/packages',
@@ -312,6 +316,125 @@ router.post('/stepcoins/verify-play-purchase', verifyToken, checkRole(['cliente'
       });
     }
     console.error('❌ Error verificando compra de Stepcoins vía Google Play:', error);
+    return res.status(error.status || 500).json({
+      error: error.status ? error.message : 'Error interno al procesar la compra',
+    });
+  } finally {
+    await session.endSession();
+  }
+});
+
+// Verificacion de una compra consumible StoreKit 2. Flutter envia el JWS de
+// Apple; la cantidad acreditada siempre se resuelve desde este catalogo.
+router.post('/stepcoins/verify-app-store-purchase', verifyToken, checkRole(['cliente', 'comercio']), async (req, res) => {
+  if (!appleAppStore.appStoreVerificationAvailable()) {
+    return res.status(503).json({
+      error: 'La verificacion de compras de App Store no esta configurada en el servidor',
+      code: 'APP_STORE_NOT_CONFIGURED',
+    });
+  }
+
+  const productId = String(req.body.productId || '').trim();
+  const purchaseID = String(req.body.purchaseID || '').trim();
+  const verificationData = String(req.body.verificationData || '').trim();
+  const cantidad = STEPCOIN_AMOUNT_BY_APP_STORE_PRODUCT_ID.get(productId);
+  const price = cantidad != null ? stepcoinPackagesFor(req.user.role).get(cantidad) : null;
+
+  if (!productId || !purchaseID || !verificationData || cantidad == null || price == null) {
+    return res.status(400).json({ error: 'Producto o transaccion de App Store no validos' });
+  }
+
+  let verified;
+  let transactionId;
+  try {
+    verified = await appleAppStore.verifyAppStoreTransaction(verificationData);
+    transactionId = appleAppStore.validateAppStoreTransaction(
+      verified.transaction,
+      { productId, purchaseID },
+    );
+  } catch (error) {
+    console.error('❌ Error verificando compra de App Store:', error);
+    return res.status(error.status || 400).json({
+      error: error.status ? error.message : 'No se pudo verificar la compra con App Store',
+    });
+  }
+
+  const userId = String(req.user.id);
+  const providerReference = `app-store:${transactionId}`;
+  const session = await mongoose.startSession();
+  let user;
+  let payment;
+  let duplicate = false;
+
+  try {
+    await session.withTransaction(async () => {
+      payment = await Payment.findOne({ providerReference }).session(session);
+      if (payment) {
+        if (String(payment.userId) !== userId) {
+          throw Object.assign(new Error('La transaccion pertenece a otro usuario'), { status: 409 });
+        }
+        duplicate = true;
+        user = await User.findById(userId).select('stepcoins').session(session);
+        return;
+      }
+
+      user = await User.findOneAndUpdate(
+        { _id: userId, role: req.user.role },
+        { $inc: { stepcoins: cantidad } },
+        { new: true, session },
+      ).select('stepcoins nombre nickname email');
+      if (!user) throw Object.assign(new Error('Usuario no encontrado'), { status: 404 });
+
+      [payment] = await Payment.create([{
+        userId,
+        nombre: user.nombre || user.nickname || user.email || 'Usuario',
+        cantidad: price,
+        stepcoinsDelta: cantidad,
+        motivo: `Compra de ${cantidad} Stepcoins (App Store)`,
+        currency: 'EUR',
+        fecha: new Date(),
+        verified: true,
+        verifiedAt: new Date(),
+        source: 'payment_provider',
+        providerReference,
+      }], { session });
+      await StepcoinTransaction.create([{
+        userId,
+        cantidad,
+        tipo: 'compra',
+        descripcion: `Compra de ${cantidad} Stepcoins (App Store)`,
+        operationKey: `stepcoin-pack:${providerReference}`,
+        metadata: {
+          paymentId: payment._id,
+          providerReference,
+          price,
+          currency: 'EUR',
+          productId,
+          transactionId,
+          environment: verified.environment,
+        },
+      }], { session });
+    });
+
+    return res.status(duplicate ? 200 : 201).json({
+      message: duplicate ? 'Compra ya procesada' : 'Compra completada',
+      duplicate,
+      payment,
+      user: { stepcoins: Number(user.stepcoins) },
+    });
+  } catch (error) {
+    if (error?.code === 11000) {
+      const previous = await Payment.findOne({ providerReference });
+      if (previous && String(previous.userId) !== userId) {
+        return res.status(409).json({ error: 'La transaccion pertenece a otro usuario' });
+      }
+      const current = await User.findById(userId).select('stepcoins');
+      return res.json({
+        message: 'Compra ya procesada', duplicate: true,
+        payment: previous, user: { stepcoins: Number(current?.stepcoins || 0) },
+      });
+    }
+    console.error('❌ Error acreditando compra de Stepcoins via App Store:', error);
     return res.status(error.status || 500).json({
       error: error.status ? error.message : 'Error interno al procesar la compra',
     });

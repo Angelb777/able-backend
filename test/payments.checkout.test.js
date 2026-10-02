@@ -10,7 +10,7 @@ const Payment = require('../api/models/Payment');
 const StepcoinTransaction = require('../api/models/StepcoinTransaction');
 const paymentsRouter = require('../api/routes/payments');
 
-test('web and Flutter Stepcoin stores use the same checkout route', () => {
+test('web and Flutter Stepcoin stores use their server-verified checkout routes', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const dashboard = fs.readFileSync(path.join(__dirname, '../public/js/dashboard.js'), 'utf8');
@@ -18,8 +18,14 @@ test('web and Flutter Stepcoin stores use the same checkout route', () => {
     path.join(__dirname, '../../ablee/lib/roles/client/store_screen.dart'),
     'utf8',
   );
+  const flutterBilling = fs.readFileSync(
+    path.join(__dirname, '../../ablee/lib/services/play_billing_service.dart'),
+    'utf8',
+  );
   assert.match(dashboard, /fetch\("\/api\/payments\/stepcoins\/checkout"/);
-  assert.match(flutterStore, /payments\/stepcoins\/checkout/);
+  assert.match(flutterStore, /PlayBillingService\.instance\.buy/);
+  assert.match(flutterBilling, /verify-play-purchase/);
+  assert.match(flutterBilling, /verify-app-store-purchase/);
   assert.doesNotMatch(
     dashboard,
     /classList\.contains\("boton-compra"\)[\s\S]{0,800}\/api\/stepcoins\/adjust/,
