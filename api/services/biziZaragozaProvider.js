@@ -32,6 +32,23 @@ function isoDateOrNull(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+function localizedText(value) {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    const preferred = value.find((entry) =>
+      entry && typeof entry === "object" &&
+      String(entry.language ?? entry.lang ?? "").toLowerCase().startsWith("es")
+    );
+    return localizedText(preferred ?? value[0]);
+  }
+  if (value && typeof value === "object") {
+    return localizedText(
+      value.text ?? value.name ?? value.value ?? value.es ?? value.en,
+    );
+  }
+  return value === null || value === undefined ? "" : String(value).trim();
+}
+
 function normalizeStation(raw) {
   if (!raw || typeof raw !== "object") return null;
 
@@ -65,7 +82,8 @@ function normalizeStation(raw) {
     "OPERATIVA",
   ].includes(status);
 
-  const name = String(raw.title ?? raw.address ?? `Estación ${externalId}`).trim();
+  const name = localizedText(raw.title) || localizedText(raw.address) ||
+    `Estación ${externalId}`;
 
   return {
     externalId,
@@ -288,6 +306,7 @@ module.exports = {
   CACHE_TTL_MS,
   createBiziStationService,
   normalizeStation,
+  localizedText,
   normalizeGbfsStations,
   normalizeMirrorStations,
   normalizeStations,

@@ -48,6 +48,19 @@ test("normaliza tipos, coordenadas, disponibilidad, estado y fecha", () => {
   });
 });
 
+test("extrae el nombre en español de los textos localizados de GBFS v3", () => {
+  const station = normalizeStation({
+    ...upstreamStation,
+    title: [
+      { text: "Spain Square", language: "en" },
+      { text: "Plaza de España", language: "es" },
+    ],
+  });
+
+  assert.equal(station.name, "Plaza de España");
+  assert.equal(station.name.includes("[object Object]"), false);
+});
+
 test("conserva la hora local ISO del Ayuntamiento cuando no incluye zona", () => {
   const station = normalizeStation({
     ...upstreamStation,
