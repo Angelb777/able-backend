@@ -188,10 +188,21 @@ test('server movement session consumes each sequence once and keeps retries idem
   assert.equal(first.status, 200);
   assert.equal(user.stepcoins, 1100);
   assert.equal(user.movementSessions[0].nextSequence, 2);
+  assert.equal(
+    ledger.get(`movement:${userId}:${sessionId}:1`).metadata.claimId,
+    'durable-client-claim-1',
+  );
 
   const retry = await claim(1, 'durable-client-claim-1');
   assert.equal(retry.status, 200);
   assert.equal((await retry.json()).duplicate, true);
+  assert.equal(user.stepcoins, 1100);
+
+  const conflictingClaim = await claim(1, 'different-claim-for-used-sequence');
+  const conflictingBody = await conflictingClaim.json();
+  assert.equal(conflictingClaim.status, 409);
+  assert.equal(conflictingBody.code, 'INVALID_MOVEMENT_SEQUENCE');
+  assert.equal(conflictingBody.nextSequence, 2);
   assert.equal(user.stepcoins, 1100);
 
   const second = await claim(2, 'durable-client-claim-2');

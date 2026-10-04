@@ -198,15 +198,32 @@ router.post("/adjust", verifyToken, commerceCannotUseClientEconomy, economyWrite
         .lean();
       if (previous) {
         const current = await User.findById(targetUserId)
-          .select('stepcoins')
+          .select('stepcoins +movementSessions')
           .session(session)
           .lean();
         await session.abortTransaction();
+        const previousClaimId = String(previous.metadata?.claimId || '');
+        const currentMovementSession = movementSource
+          ? current?.movementSessions?.find(
+            (entry) => entry.source === movementSource && entry.id === movementSessionId,
+          )
+          : null;
+        if (movementSource && previousClaimId !== normalizedClaimId) {
+          return res.status(409).json({
+            error: 'Secuencia de movimiento ya utilizada por otro lote',
+            code: 'INVALID_MOVEMENT_SEQUENCE',
+            nextSequence: currentMovementSession?.nextSequence,
+          });
+        }
         return res.json({
           message: 'Recompensa ya procesada',
-          user: current,
+          user: current ? { stepcoins: current.stepcoins } : current,
           duplicate: true,
-          claimId: normalizedClaimId,
+          claimId: previousClaimId || normalizedClaimId,
+          movementSession: movementSource && currentMovementSession ? {
+            sessionId: currentMovementSession.id,
+            nextSequence: currentMovementSession.nextSequence,
+          } : undefined,
         });
       }
     }
@@ -358,6 +375,7 @@ router.post("/adjust", verifyToken, commerceCannotUseClientEconomy, economyWrite
         level,
         movementSessionId: movementSession?.id,
         movementSequence: movementSession ? movementSequence : undefined,
+        claimId: movementSession ? normalizedClaimId : undefined,
       },
     });
     await trans.save({ session });
@@ -376,12 +394,37 @@ router.post("/adjust", verifyToken, commerceCannotUseClientEconomy, economyWrite
   } catch (err) {
     if (session?.inTransaction()) await session.abortTransaction();
     if (err?.code === 11000) {
-      const current = await User.findById(targetUserId).select('stepcoins').lean();
+      const duplicateOperationKey = movementSource
+        ? `movement:${targetUserId}:${movementSessionId}:${movementSequence}`
+        : `client-reward:${targetUserId}:${clientSource}:${normalizedClaimId}`;
+      const previous = await StepcoinTransaction.findOne({
+        operationKey: duplicateOperationKey,
+      }).lean();
+      const current = await User.findById(targetUserId)
+        .select('stepcoins +movementSessions')
+        .lean();
+      const previousClaimId = String(previous?.metadata?.claimId || '');
+      const currentMovementSession = movementSource
+        ? current?.movementSessions?.find(
+          (entry) => entry.source === movementSource && entry.id === movementSessionId,
+        )
+        : null;
+      if (movementSource && previousClaimId !== normalizedClaimId) {
+        return res.status(409).json({
+          error: 'Secuencia de movimiento ya utilizada por otro lote',
+          code: 'INVALID_MOVEMENT_SEQUENCE',
+          nextSequence: currentMovementSession?.nextSequence,
+        });
+      }
       return res.json({
         message: 'Recompensa ya procesada',
-        user: current,
+        user: current ? { stepcoins: current.stepcoins } : current,
         duplicate: true,
-        claimId: normalizedClaimId || undefined,
+        claimId: previousClaimId || normalizedClaimId || undefined,
+        movementSession: movementSource && currentMovementSession ? {
+          sessionId: currentMovementSession.id,
+          nextSequence: currentMovementSession.nextSequence,
+        } : undefined,
       });
     }
     console.error("❌ Error ajustando stepcoins:", err);
