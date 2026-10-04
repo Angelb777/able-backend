@@ -47,7 +47,7 @@ test('App Store transaction validation accepts Sandbox and rejects tampering or 
   }));
 });
 
-test('App Store purchase credits 100 once and stores Apple idempotency keys', async (t) => {
+test('App Store purchase credits an expanded package once and stores Apple idempotency keys', async (t) => {
   const previousSecret = process.env.JWT_SECRET;
   process.env.JWT_SECRET = 'app-store-purchase-test-secret';
   const originals = {
@@ -86,7 +86,7 @@ test('App Store purchase credits 100 once and stores Apple idempotency keys', as
     transaction: {
       transactionId,
       bundleId: 'com.able73.app',
-      productId: 'stepcoins_100',
+      productId: 'stepcoins_100000',
       type: 'Consumable',
       quantity: 1,
       environment: 'Sandbox',
@@ -137,7 +137,7 @@ test('App Store purchase credits 100 once and stores Apple idempotency keys', as
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        productId: 'stepcoins_100',
+        productId: 'stepcoins_100000',
         purchaseID: transactionId,
         verificationData: 'signed-jws-for-test',
         cantidad: 999999,
@@ -148,9 +148,9 @@ test('App Store purchase credits 100 once and stores Apple idempotency keys', as
   const first = await call();
   const firstBody = await first.json();
   assert.equal(first.status, 201, firstBody.error);
-  assert.equal(firstBody.user.stepcoins, 125);
+  assert.equal(firstBody.user.stepcoins, 100025);
   assert.equal(increments, 1);
-  assert.equal(storedPayment.stepcoinsDelta, 100);
+  assert.equal(storedPayment.stepcoinsDelta, 100000);
   assert.equal(storedPayment.providerReference, `app-store:${transactionId}`);
   assert.equal(
     storedTransaction.operationKey,
@@ -161,6 +161,6 @@ test('App Store purchase credits 100 once and stores Apple idempotency keys', as
   const retryBody = await retry.json();
   assert.equal(retry.status, 200, retryBody.error);
   assert.equal(retryBody.duplicate, true);
-  assert.equal(retryBody.user.stepcoins, 125);
+  assert.equal(retryBody.user.stepcoins, 100025);
   assert.equal(increments, 1);
 });

@@ -70,6 +70,17 @@ const STEPCOIN_AMOUNT_BY_PLAY_PRODUCT_ID = new Map(
 );
 const STEPCOIN_AMOUNT_BY_APP_STORE_PRODUCT_ID = new Map([
   ['stepcoins_100', 100],
+  ['stepcoins_500', 500],
+  ['stepcoins_1000', 1000],
+  ['stepcoins_2000', 2000],
+  ['stepcoins_5000', 5000],
+  ['stepcoins_10000', 10000],
+  ['stepcoins_15000', 15000],
+  ['stepcoins_20000', 20000],
+  ['stepcoins_30000', 30000],
+  ['stepcoins_40000', 40000],
+  ['stepcoins_50000', 50000],
+  ['stepcoins_100000', 100000],
 ]);
 
 router.get(
