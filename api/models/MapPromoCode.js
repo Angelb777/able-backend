@@ -15,6 +15,7 @@ const mapPromoCodeSchema = new mongoose.Schema({
   validFrom: Date,
   validUntil: Date,
   maxRedemptions: { type: Number, min: 1 },
+  stripeCouponId: { type: String, trim: true },
   redemptions: { type: [redemptionSchema], default: [] },
 }, { timestamps: true });
 

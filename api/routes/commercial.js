@@ -15,7 +15,7 @@ const MapPlan = require('../models/MapPlan');
 const MapPromoCode = require('../models/MapPromoCode');
 const { saveImage, saveMaterial } = require('../utils/mediaStorage');
 const {
-  ensureDefaultMapPlans, renewExpiredMapSubscriptions,
+  addMonths, ensureDefaultMapPlans, renewExpiredMapSubscriptions,
 } = require('../services/mapSubscriptions');
 const {
   configuredBaseUrl, stripeClient, syncStripeSubscription,
@@ -183,6 +183,110 @@ function assertLocationPayload(payload) {
   }
 }
 
+function assertAvailableMapPromoCode(promotion, locationId, now = new Date()) {
+  const alreadyUsed = (promotion?.redemptions || []).some(
+    (item) => String(item.establishmentId) === String(locationId),
+  );
+  const unavailable = !promotion || !promotion.active
+    || (promotion.validFrom && promotion.validFrom > now)
+    || (promotion.validUntil && promotion.validUntil < now)
+    || (promotion.maxRedemptions
+      && (promotion.redemptions || []).length >= promotion.maxRedemptions)
+    || alreadyUsed;
+  if (unavailable) {
+    const error = new Error('El código promocional no es válido para este local');
+    error.status = 409;
+    error.code = 'INVALID_PROMOTION_CODE';
+    throw error;
+  }
+}
+
+async function stripeCouponForMapPromotion(promotion) {
+  if (promotion.stripeCouponId) return promotion.stripeCouponId;
+  const remainingRedemptions = promotion.maxRedemptions
+    ? Number(promotion.maxRedemptions) - (promotion.redemptions || []).length
+    : null;
+  const coupon = await stripeClient().coupons.create({
+    percent_off: Number(promotion.discountPercent),
+    duration: 'once',
+    name: `Able73 · ${promotion.code}`,
+    ...(remainingRedemptions ? { max_redemptions: remainingRedemptions } : {}),
+    ...(promotion.validUntil ? {
+      redeem_by: Math.floor(new Date(promotion.validUntil).getTime() / 1000),
+    } : {}),
+    metadata: { able73PromotionCode: promotion.code },
+  }, { idempotencyKey: `map-promo-coupon:${promotion._id}` });
+  promotion.stripeCouponId = coupon.id;
+  await promotion.save();
+  return coupon.id;
+}
+
+async function publishFreeMapPromotion({ location, ownerId, plan, promotion }) {
+  let session;
+  try {
+    session = await mongoose.startSession();
+    let subscription;
+    await session.withTransaction(async () => {
+      const freshPromotion = await MapPromoCode.findOne({
+        _id: promotion._id, code: promotion.code, active: true,
+      }).session(session);
+      assertAvailableMapPromoCode(freshPromotion, location._id);
+
+      const now = new Date();
+      const current = await PromocionComprada.findOne({
+        comercioId: ownerId, establishmentId: location._id,
+      }).session(session);
+      if (current?.stripeSubscriptionId
+          && !['canceled', 'unpaid', 'incomplete_expired'].includes(current.stripeSubscriptionStatus)) {
+        const error = new Error('Este local ya tiene una suscripción activa');
+        error.status = 409;
+        error.code = 'SUBSCRIPTION_ALREADY_EXISTS';
+        throw error;
+      }
+      const baseDate = current?.activo && current.fechaFin > now ? current.fechaFin : now;
+      const end = addMonths(baseDate, Number(freshPromotion.freeMonths));
+      subscription = await PromocionComprada.findOneAndUpdate(
+        { comercioId: ownerId, establishmentId: location._id },
+        {
+          $set: {
+            comercioId: ownerId, establishmentId: location._id,
+            mapPlanId: plan._id, planCode: plan.code,
+            titulo: location.publicName, publicName: location.publicName,
+            description: location.description, address: location.address,
+            logoComercio: location.logoUrl, imagenBase: '/img/local.png',
+            lat: location.lat, lng: location.lng,
+            proximityMessage: String(
+              location.proximityMessage || `¿Te apetece visitar ${location.publicName}?`,
+            ).trim().slice(0, 50),
+            proximityRadiusMeters: 250,
+            duracionMeses: Number(freshPromotion.freeMonths),
+            precioEuros: 0, originalPriceEuros: Number(plan.priceEuros),
+            fechaInicio: now, fechaFin: end,
+            activo: true, status: 'published', paymentStatus: 'waived',
+            autoRenew: false, cancelAtPeriodEnd: false,
+            stoppedAt: null, retiredAt: null, publishedAt: now,
+            promotionCode: freshPromotion.code,
+            checkoutReference: `PROMO-${freshPromotion.code}-${location._id}-${Date.now()}`,
+          },
+          $unset: {
+            paymentId: '', stepcoinTransactionId: '', precioStepcoins: '',
+            originalPriceStepcoins: '', stripeCustomerId: '', stripeSubscriptionId: '',
+            stripeCheckoutSessionId: '', stripeSubscriptionStatus: '', stripeLatestInvoiceId: '',
+          },
+        },
+        { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true, session },
+      );
+      freshPromotion.redemptions.push({
+        userId: ownerId, establishmentId: location._id, redeemedAt: now,
+      });
+      await freshPromotion.save({ session });
+    });
+    return subscription;
+  } finally {
+    if (session) await session.endSession();
+  }
+}
+
 async function locationsWithSubscriptions(ownerId) {
   try {
     await renewExpiredMapSubscriptions();
@@ -332,14 +436,32 @@ router.post('/locations/:id/checkout', ...commerceOnly, async (req, res) => {
       });
     }
 
+    const promotionCode = String(req.body.promotionCode || '').trim().toUpperCase();
+    let promotion = null;
+    if (promotionCode) {
+      promotion = await MapPromoCode.findOne({ code: promotionCode });
+      assertAvailableMapPromoCode(promotion, location._id);
+      if (Number(promotion.freeMonths) > 0) {
+        const subscription = await publishFreeMapPromotion({
+          location, ownerId: req.user.id, plan, promotion,
+        });
+        return res.status(201).json({ free: true, subscription });
+      }
+    }
+
     const owner = await User.findById(req.user.id).select('email nombre nickname').lean();
     if (!owner?.email) return res.status(409).json({ error: 'La cuenta comercio no tiene email' });
     const metadata = {
       ownerId: String(req.user.id), establishmentId: String(location._id),
       planId: String(plan._id), planCode: String(plan.code),
+      ...(promotion ? {
+        promotionCode: promotion.code,
+        discountPercent: String(Number(promotion.discountPercent || 0)),
+      } : {}),
     };
     const baseUrl = configuredBaseUrl(req);
     const automaticTax = String(process.env.STRIPE_AUTOMATIC_TAX || '').toLowerCase() === 'true';
+    const stripeCouponId = promotion ? await stripeCouponForMapPromotion(promotion) : '';
     const checkout = await stripeClient().checkout.sessions.create({
       mode: 'subscription',
       locale: 'es',
@@ -364,6 +486,7 @@ router.post('/locations/:id/checkout', ...commerceOnly, async (req, res) => {
           },
         },
       }],
+      ...(stripeCouponId ? { discounts: [{ coupon: stripeCouponId }] } : {}),
       metadata,
       subscription_data: { metadata },
       success_url: `${baseUrl}/dashboard.html?stripe_checkout=success&session_id={CHECKOUT_SESSION_ID}`,

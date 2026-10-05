@@ -581,7 +581,9 @@ function commerceLocationCard(location) {
     <p>${commercialEscape(location.address)}</p>
     <p><strong>${commercialEscape(commerceSubscriptionState(subscription))}</strong></p>
     <p><small>${commercialEscape(location.lat)}, ${commercialEscape(location.lng)} · Aviso de proximidad fijo a 250 m</small></p>
-    ${plans ? `<div class="commerce-plan-grid">${plans}</div><p class="commerce-secure-note">🔒 Pago seguro en Stripe · Renovación automática · Cancela cuando quieras</p>` : ""}
+    ${plans ? `<label>Código promocional
+      <input type="text" id="commerce-promo-${commercialEscape(id)}" maxlength="40" placeholder="Opcional" autocomplete="off">
+    </label><div class="commerce-plan-grid">${plans}</div><p class="commerce-secure-note">🔒 Pago seguro en Stripe · Renovación automática · Cancela cuando quieras</p>` : ""}
     <div class="commerce-card-actions">
       <button type="button" class="commerce-secondary" data-commercial-action="edit-location" data-entity-id="${commercialEscape(id)}">Editar local</button>
       ${active && subscription?.stripeSubscriptionId ? `<button type="button" class="commerce-secondary" data-commercial-action="toggle-location-renew" data-entity-id="${commercialEscape(id)}" data-auto-renew="${subscription.autoRenew ? "false" : "true"}">${subscription.autoRenew ? "Cancelar al final del periodo" : "Reactivar renovación"}</button>` : ""}
@@ -688,14 +690,23 @@ async function subscribeCommerceLocation(id, planId) {
   const location = commerceLocationsCache.find((item) => commercialId(item) === String(id));
   const plan = commerceMapPlansCache.find((item) => commercialId(item) === String(planId));
   if (!location || !plan) return alert("El local o el plan ya no están disponibles.");
+  const promotionCode = document.getElementById(`commerce-promo-${id}`)?.value?.trim() || "";
   const cadence = plan.recurringInterval === "year" ? "año" : "mes";
-  if (!confirm(`Contratar ${location.publicName} por ${plan.priceEuros} €/${cadence}, IVA incluido. La suscripción se renovará automáticamente hasta que la canceles.`)) return;
+  const confirmation = promotionCode
+    ? `Aplicar el código ${promotionCode} a ${location.publicName}? Si regala meses, el local se publicará sin pago. Si aplica un descuento, Stripe mostrará el precio final antes de cobrar.`
+    : `Contratar ${location.publicName} por ${plan.priceEuros} €/${cadence}, IVA incluido. La suscripción se renovará automáticamente hasta que la canceles.`;
+  if (!confirm(confirmation)) return;
   const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try {
     const result = await commerceResponse(await fetch(`/api/commercial/locations/${id}/checkout`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ planId, requestId }),
+      body: JSON.stringify({ planId, promotionCode, requestId }),
     }));
+    if (result.free) {
+      await renderCommerceLocations();
+      alert("Código aplicado. El local ya está publicado gratis durante el periodo indicado.");
+      return;
+    }
     if (!result.url) throw new Error("Stripe no ha devuelto la página de pago");
     window.location.assign(result.url);
   } catch (error) { alert(error.message); }

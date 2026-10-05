@@ -667,6 +667,220 @@ test('a commerce opens Stripe Checkout with authoritative recurring prices', asy
   assert.match(checkoutOptions.idempotencyKey, /checkout_test_123$/);
 });
 
+test('a free-month code publishes the location without opening Stripe', async (t) => {
+  const previousJwt = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = 'free-map-promo-secret';
+  const originals = {
+    userFindById: User.findById,
+    establishmentFindOne: Establishment.findOne,
+    planUpdateOne: MapPlan.updateOne,
+    planFind: MapPlan.find,
+    planFindOne: MapPlan.findOne,
+    promoFindOne: MapPromoCode.findOne,
+    subscriptionFindOne: PromocionComprada.findOne,
+    subscriptionUpsert: PromocionComprada.findOneAndUpdate,
+    startSession: mongoose.startSession,
+  };
+  t.after(() => {
+    if (previousJwt == null) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousJwt;
+    User.findById = originals.userFindById;
+    Establishment.findOne = originals.establishmentFindOne;
+    MapPlan.updateOne = originals.planUpdateOne;
+    MapPlan.find = originals.planFind;
+    MapPlan.findOne = originals.planFindOne;
+    MapPromoCode.findOne = originals.promoFindOne;
+    PromocionComprada.findOne = originals.subscriptionFindOne;
+    PromocionComprada.findOneAndUpdate = originals.subscriptionUpsert;
+    mongoose.startSession = originals.startSession;
+  });
+
+  const ownerId = new mongoose.Types.ObjectId();
+  const locationId = new mongoose.Types.ObjectId();
+  const planId = new mongoose.Types.ObjectId();
+  const location = {
+    _id: locationId, ownerId, status: 'approved', archived: false,
+    publicName: 'Local gratuito', address: 'Calle Gratis', logoUrl: '/logo.png',
+    description: '', lat: 41.65, lng: -0.88, proximityMessage: '',
+  };
+  const plan = {
+    _id: planId, code: 'MAP_MONTHLY', title: '1 mes', durationMonths: 1,
+    priceEuros: 10, priceCents: 1000, currency: 'EUR',
+    recurringInterval: 'month', recurringIntervalCount: 1, active: true,
+  };
+  const promotion = {
+    _id: new mongoose.Types.ObjectId(), code: 'CUATROMES', active: true,
+    freeMonths: 4, discountPercent: 0, redemptions: [],
+    async save() {},
+  };
+  User.findById = () => ({
+    select() { return this; },
+    lean: async () => ({
+      _id: ownerId, id: String(ownerId), role: 'comercio', firebaseUid: null,
+      email: 'free@example.test', nombre: 'Comercio',
+    }),
+  });
+  Establishment.findOne = async () => location;
+  MapPlan.updateOne = async () => ({});
+  MapPlan.find = () => ({ sort() { return this; }, lean: async () => [plan] });
+  MapPlan.findOne = async () => plan;
+  MapPromoCode.findOne = () => ({
+    session: async () => promotion,
+    then(resolve) { return Promise.resolve(resolve(promotion)); },
+  });
+  PromocionComprada.findOne = () => ({
+    lean: async () => null,
+    session: async () => null,
+  });
+  let written;
+  PromocionComprada.findOneAndUpdate = async (_filter, update) => {
+    written = update;
+    return { _id: new mongoose.Types.ObjectId(), ...update.$set };
+  };
+  mongoose.startSession = async () => ({
+    async withTransaction(callback) { await callback(); },
+    async endSession() {},
+  });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/commercial', commercialRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const token = jwt.sign({ id: String(ownerId), legacy: true }, process.env.JWT_SECRET);
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/commercial/locations/${locationId}/checkout`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        planId: String(planId), promotionCode: 'cuatromes', requestId: 'promo_free_123',
+      }),
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 201, body.error);
+  assert.equal(body.free, true);
+  assert.equal(written.$set.paymentStatus, 'waived');
+  assert.equal(written.$set.status, 'published');
+  assert.equal(written.$set.duracionMeses, 4);
+  assert.equal(written.$set.promotionCode, 'CUATROMES');
+  assert.equal(promotion.redemptions.length, 1);
+});
+
+test('a percentage code is applied to Stripe Checkout', async (t) => {
+  const previous = {
+    jwt: process.env.JWT_SECRET,
+    stripeKey: process.env.STRIPE_SECRET_KEY,
+    baseUrl: process.env.APP_BASE_URL,
+  };
+  process.env.JWT_SECRET = 'discount-map-promo-secret';
+  process.env.STRIPE_SECRET_KEY = 'rk_test_discount';
+  process.env.APP_BASE_URL = 'https://able73.com';
+  const originals = {
+    userFindById: User.findById,
+    establishmentFindOne: Establishment.findOne,
+    planUpdateOne: MapPlan.updateOne,
+    planFind: MapPlan.find,
+    planFindOne: MapPlan.findOne,
+    promoFindOne: MapPromoCode.findOne,
+    subscriptionFindOne: PromocionComprada.findOne,
+  };
+  t.after(() => {
+    for (const [key, value] of Object.entries({
+      JWT_SECRET: previous.jwt,
+      STRIPE_SECRET_KEY: previous.stripeKey,
+      APP_BASE_URL: previous.baseUrl,
+    })) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+    User.findById = originals.userFindById;
+    Establishment.findOne = originals.establishmentFindOne;
+    MapPlan.updateOne = originals.planUpdateOne;
+    MapPlan.find = originals.planFind;
+    MapPlan.findOne = originals.planFindOne;
+    MapPromoCode.findOne = originals.promoFindOne;
+    PromocionComprada.findOne = originals.subscriptionFindOne;
+    stripeMapSubscriptions.setStripeClientForTests(null);
+  });
+
+  const ownerId = new mongoose.Types.ObjectId();
+  const locationId = new mongoose.Types.ObjectId();
+  const planId = new mongoose.Types.ObjectId();
+  Establishment.findOne = async () => ({
+    _id: locationId, ownerId, status: 'approved', archived: false,
+    publicName: 'Local descuento', address: 'Calle Dos', logoUrl: '/logo.png',
+    lat: 41.65, lng: -0.88,
+  });
+  const plan = {
+    _id: planId, code: 'MAP_YEARLY', title: '1 año', durationMonths: 12,
+    priceEuros: 65, priceCents: 6500, currency: 'EUR',
+    recurringInterval: 'year', recurringIntervalCount: 1, active: true,
+  };
+  MapPlan.updateOne = async () => ({});
+  MapPlan.find = () => ({ sort() { return this; }, lean: async () => [plan] });
+  MapPlan.findOne = async () => plan;
+  PromocionComprada.findOne = () => ({ lean: async () => null });
+  User.findById = () => ({
+    select() { return this; },
+    lean: async () => ({
+      _id: ownerId, id: String(ownerId), role: 'comercio', firebaseUid: null,
+      email: 'discount@example.test', nombre: 'Comercio',
+    }),
+  });
+  const promotion = {
+    _id: new mongoose.Types.ObjectId(), code: 'MITAD', active: true,
+    freeMonths: 0, discountPercent: 50, maxRedemptions: 10, redemptions: [],
+    async save() {},
+  };
+  MapPromoCode.findOne = async () => promotion;
+  let checkoutPayload;
+  stripeMapSubscriptions.setStripeClientForTests({
+    coupons: {
+      create: async (payload) => {
+        assert.equal(payload.percent_off, 50);
+        assert.equal(payload.duration, 'once');
+        return { id: 'coupon_half' };
+      },
+    },
+    checkout: {
+      sessions: {
+        create: async (payload) => {
+          checkoutPayload = payload;
+          return { id: 'cs_discount', url: 'https://checkout.stripe.com/discount' };
+        },
+      },
+    },
+  });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/commercial', commercialRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const token = jwt.sign({ id: String(ownerId), legacy: true }, process.env.JWT_SECRET);
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/commercial/locations/${locationId}/checkout`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        planId: String(planId), promotionCode: 'mitad', requestId: 'promo_discount_123',
+      }),
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 201, body.error);
+  assert.equal(checkoutPayload.discounts[0].coupon, 'coupon_half');
+  assert.equal(checkoutPayload.subscription_data.metadata.promotionCode, 'MITAD');
+  assert.equal(checkoutPayload.subscription_data.metadata.discountPercent, '50');
+});
+
 test('the public Flutter map endpoint exposes active location and proximity data', async (t) => {
   const originalFind = PromocionComprada.find;
   let calls = 0;

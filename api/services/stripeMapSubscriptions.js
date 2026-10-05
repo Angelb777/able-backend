@@ -2,6 +2,7 @@ const Stripe = require('stripe');
 const mongoose = require('mongoose');
 const Establishment = require('../models/Establishment');
 const MapPlan = require('../models/MapPlan');
+const MapPromoCode = require('../models/MapPromoCode');
 const Payment = require('../models/Payment');
 const PromocionComprada = require('../models/PromocionComprada');
 const User = require('../models/User');
@@ -68,6 +69,8 @@ async function syncStripeSubscription(subscription, checkoutSessionId = '') {
   const ownerId = String(metadata.ownerId || '');
   const establishmentId = String(metadata.establishmentId || '');
   const planCode = String(metadata.planCode || '').toUpperCase();
+  const promotionCode = String(metadata.promotionCode || '').trim().toUpperCase();
+  const discountPercent = Math.min(100, Math.max(0, Number(metadata.discountPercent || 0)));
   if (!mongoose.Types.ObjectId.isValid(ownerId)
       || !mongoose.Types.ObjectId.isValid(establishmentId)
       || !planCode) {
@@ -101,6 +104,12 @@ async function syncStripeSubscription(subscription, checkoutSessionId = '') {
   const latestInvoiceId = typeof subscription.latest_invoice === 'string'
     ? subscription.latest_invoice : subscription.latest_invoice?.id;
 
+  const fieldsToUnset = {
+    paymentId: '', stepcoinTransactionId: '', precioStepcoins: '',
+    originalPriceStepcoins: '',
+  };
+  if (!promotionCode) fieldsToUnset.promotionCode = '';
+
   return PromocionComprada.findOneAndUpdate(
     { establishmentId: location._id },
     {
@@ -122,8 +131,9 @@ async function syncStripeSubscription(subscription, checkoutSessionId = '') {
         ).trim().slice(0, 50),
         proximityRadiusMeters: 250,
         duracionMeses: plan.durationMonths,
-        precioEuros: Number(plan.priceEuros),
+        precioEuros: Number((Number(plan.priceEuros) * (1 - discountPercent / 100)).toFixed(2)),
         originalPriceEuros: Number(plan.priceEuros),
+        ...(promotionCode ? { promotionCode } : {}),
         fechaInicio: start,
         fechaFin: end,
         activo: paidAndVisible,
@@ -140,12 +150,19 @@ async function syncStripeSubscription(subscription, checkoutSessionId = '') {
         retiredAt: terminal ? new Date() : null,
         publishedAt: paidAndVisible ? new Date() : null,
       },
-      $unset: {
-        paymentId: '', stepcoinTransactionId: '', precioStepcoins: '',
-        originalPriceStepcoins: '', promotionCode: '',
-      },
+      $unset: fieldsToUnset,
     },
     { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
+  );
+}
+
+async function recordPromotionRedemption(promotionCode, ownerId, establishmentId) {
+  const code = String(promotionCode || '').trim().toUpperCase();
+  if (!code || !mongoose.Types.ObjectId.isValid(ownerId)
+      || !mongoose.Types.ObjectId.isValid(establishmentId)) return;
+  await MapPromoCode.updateOne(
+    { code, 'redemptions.establishmentId': { $ne: establishmentId } },
+    { $push: { redemptions: { userId: ownerId, establishmentId, redeemedAt: new Date() } } },
   );
 }
 
@@ -188,6 +205,11 @@ async function handleStripeEvent(event) {
       { expand: ['items.data.price'] },
     );
     await syncStripeSubscription(subscription, object.id);
+    await recordPromotionRedemption(
+      object.metadata?.promotionCode || subscription.metadata?.promotionCode,
+      object.metadata?.ownerId || subscription.metadata?.ownerId,
+      object.metadata?.establishmentId || subscription.metadata?.establishmentId,
+    );
     return;
   }
   if (['customer.subscription.created', 'customer.subscription.updated',
