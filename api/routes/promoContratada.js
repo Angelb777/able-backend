@@ -87,8 +87,8 @@ router.post('/', verifyToken, checkRole(['comercio']), upload.single('logo'), as
   }
 });
 
-// Endpoint público consumido por el mapa. Los documentos antiguos sin status
-// se conservan activos; los nuevos solo aparecen después de publicación.
+// Endpoint público consumido por el mapa. Solo expone contratos publicados,
+// vigentes y con pago confirmado, cortesía explícita o migración verificada.
 router.get('/activas', async (_req, res) => {
   try {
     await renewExpiredMapSubscriptions();
@@ -99,7 +99,8 @@ router.get('/activas', async (_req, res) => {
       logoComercio: { $type: 'string', $ne: '' },
       lat: { $gte: -90, $lte: 90 },
       lng: { $gte: -180, $lte: 180 },
-      $or: [{ status: 'published' }, { status: { $exists: false } }],
+      status: 'published',
+      paymentStatus: { $in: ['confirmed', 'waived', 'legacy_confirmed'] },
     }).select('-__v').lean();
     res.json(active.map((item) => ({
       ...item, id: String(item._id), _id: item._id,

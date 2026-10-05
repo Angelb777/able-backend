@@ -84,6 +84,10 @@ app.use(['/login.html', '/register.html'], helmet.crossOriginOpenerPolicy({
   policy: 'same-origin-allow-popups',
 }));
 
+// Stripe exige el cuerpo binario exacto para verificar la firma. Por eso este
+// endpoint debe registrarse antes de express.json/urlencoded.
+app.use('/api/payments/stripe/webhook', require('./api/routes/stripeWebhook'));
+
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '100kb', strict: true }));
 app.use(express.urlencoded({
   extended: true,

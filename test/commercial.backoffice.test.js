@@ -51,11 +51,12 @@ test('the dashboard exposes direct multi-location map subscriptions', () => {
   }
   assert.match(script, /role = String\(user\.role \|\| ""\)\.toLowerCase\(\)/);
   assert.match(html, /Promociona tu local físico en el mapa/);
-  assert.match(html, /Llega a más clientes de verdad/);
-  assert.match(script, /\/api\/commercial\/locations\/\$\{id\}\/subscribe/);
-  assert.match(script, /Se han descontado.*SC.*El local ya está publicado/);
-  assert.match(script, /plan\.priceStepcoins/);
-  assert.doesNotMatch(script, /plan\.priceEuros/);
+  assert.match(html, /paga de forma segura en Stripe/);
+  assert.match(script, /\/api\/commercial\/locations\/\$\{id\}\/checkout/);
+  assert.match(script, /window\.location\.assign\(result\.url\)/);
+  assert.match(script, /plan\.priceEuros/);
+  assert.doesNotMatch(script, /plan\.priceStepcoins/);
+  assert.doesNotMatch(script, /buy-merchant-stepcoins/);
   assert.doesNotMatch(html, /id="gestionComercial"/);
   assert.doesNotMatch(html, /id="commercePositioning"/);
   assert.doesNotMatch(html, /id="commerceRequests"/);

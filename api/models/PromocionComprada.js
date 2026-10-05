@@ -35,6 +35,11 @@ const promocionCompradaSchema = new mongoose.Schema({
   checkoutReference: { type: String, trim: true, index: true },
   originalPriceEuros: Number,
   originalPriceStepcoins: Number,
+  stripeCustomerId: { type: String, trim: true, index: true },
+  stripeSubscriptionId: { type: String, trim: true, unique: true, sparse: true },
+  stripeCheckoutSessionId: { type: String, trim: true, index: true },
+  stripeSubscriptionStatus: { type: String, trim: true },
+  stripeLatestInvoiceId: { type: String, trim: true },
 
   activo: { type: Boolean, default: true }, // por si quieres desactivarla manualmente
   status: {
@@ -44,7 +49,7 @@ const promocionCompradaSchema = new mongoose.Schema({
   },
   paymentStatus: {
     type: String,
-    enum: ["pending", "confirmed", "waived", "legacy_confirmed"],
+    enum: ["pending", "confirmed", "failed", "canceled", "waived", "legacy_confirmed"],
     default: "pending"
   },
   commercialRequestId: { type: mongoose.Schema.Types.ObjectId, ref: "CommercialRequest", index: true },

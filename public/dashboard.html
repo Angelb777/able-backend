@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Dashboard Able 73</title>
-  <link rel="stylesheet" href="css/dashboard.css?v=user-home-csr-5" />
+  <link rel="stylesheet" href="css/dashboard.css?v=stripe-subscriptions-1" />
     <link rel="icon" href="img/favicon.png" type="image/png">
 </head>
 <body data-require-terms-check="true" data-hide-legal-chrome="true">
@@ -260,7 +260,12 @@
     <!-- Locales físicos del comercio: alta, contratación y publicación directa -->
     <section id="commerceEstablishment" class="seccion commerce-section" style="display:none;">
       <h2>Promociona tu local físico en el mapa</h2>
-      <p>Llega a más clientes de verdad. Añade uno o varios locales, elige cuánto tiempo quieres mostrarlos y publícalos directamente en el mapa de Able73.</p>
+      <p>Añade tu local, elige una suscripción y paga de forma segura en Stripe. Lo publicaremos en el mapa cuando Stripe confirme el cobro.</p>
+      <ol class="commerce-steps" aria-label="Pasos para publicar un local">
+        <li><strong>1. Datos</strong><span>Guarda la información del local.</span></li>
+        <li><strong>2. Plan</strong><span>Elige mensual o anual.</span></li>
+        <li><strong>3. Pago</strong><span>Finaliza en la web segura de Stripe.</span></li>
+      </ol>
       <div id="commerceLocationsStatus" class="commerce-notice">Cargando locales...</div>
       <div id="commerceLocationsList" class="commerce-card-grid"></div>
 
@@ -1056,7 +1061,7 @@
 
 </main>
 
-<script src="js/dashboard.js?v=rewards-csp-actions-1"></script>
+<script src="js/dashboard.js?v=stripe-subscriptions-1"></script>
 <script type="module">
 import { logoutWebSession } from './js/firebase-client.js';
 document.getElementById('able73-logout').addEventListener('click', async () => {

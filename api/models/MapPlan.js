@@ -5,11 +5,14 @@ const mapPlanSchema = new mongoose.Schema({
   title: { type: String, required: true, trim: true, maxlength: 120 },
   description: { type: String, trim: true, maxlength: 500, default: '' },
   durationMonths: { type: Number, required: true, min: 1, max: 120 },
-  // Campo legado para leer planes anteriores. Las nuevas contrataciones de
-  // presencia de locales usan exclusivamente Stepcoins.
-  priceEuros: { type: Number, min: 0 },
-  priceStepcoins: { type: Number, required: true, min: 0 },
-  referencePriceEuros: { type: Number, required: true, min: 0 },
+  priceEuros: { type: Number, required: true, min: 0 },
+  priceCents: { type: Number, required: true, min: 1 },
+  currency: { type: String, enum: ['EUR'], default: 'EUR' },
+  recurringInterval: { type: String, enum: ['month', 'year'], required: true },
+  recurringIntervalCount: { type: Number, min: 1, max: 12, default: 1 },
+  // Campos antiguos conservados solo para poder leer documentos previos.
+  priceStepcoins: { type: Number, min: 0 },
+  referencePriceEuros: { type: Number, min: 0 },
   active: { type: Boolean, default: true, index: true },
   sortOrder: { type: Number, default: 0 },
 }, { timestamps: true });

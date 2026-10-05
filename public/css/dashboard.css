@@ -952,6 +952,48 @@ section {
   gap: 16px;
 }
 
+.commerce-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 20px 0 24px;
+  padding: 0;
+  list-style: none;
+}
+
+.commerce-steps li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid #cfe0d4;
+  border-radius: 10px;
+  background: #f4faf6;
+}
+
+.commerce-steps span,
+.commerce-secure-note { color: #526158; font-size: 13px; }
+
+.commerce-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 18px 0 8px;
+}
+
+.commerce-plan-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
+  padding: 15px;
+  text-align: left;
+}
+
+.commerce-plan-button strong { font-size: 18px; }
+.commerce-plan-button span { font-size: 12px; }
+
 .commerce-card,
 .commerce-request-card,
 .commerce-specification,
@@ -1087,6 +1129,9 @@ section {
   .commerce-form-grid {
     grid-template-columns: 1fr;
   }
+
+  .commerce-steps,
+  .commerce-plan-grid { grid-template-columns: 1fr; }
 
   .commerce-wide {
     grid-column: auto;

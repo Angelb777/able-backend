@@ -10,14 +10,16 @@ const Reward = require('../models/Reward');
 const Skin = require('../models/Skin');
 const Card = require('../models/Card');
 const Payment = require('../models/Payment');
-const StepcoinTransaction = require('../models/StepcoinTransaction');
 const User = require('../models/User');
 const MapPlan = require('../models/MapPlan');
 const MapPromoCode = require('../models/MapPromoCode');
 const { saveImage, saveMaterial } = require('../utils/mediaStorage');
 const {
-  addMonths, ensureDefaultMapPlans, renewExpiredMapSubscriptions,
+  ensureDefaultMapPlans, renewExpiredMapSubscriptions,
 } = require('../services/mapSubscriptions');
+const {
+  configuredBaseUrl, stripeClient, syncStripeSubscription,
+} = require('../services/stripeMapSubscriptions');
 const {
   FIXED_PRICES, fixedPrice, pendingStatus, assertCanApprove,
   addOneYear, recordTransition,
@@ -258,6 +260,14 @@ router.put('/locations/:id', ...commerceOnly, uploadFields, async (req, res) => 
 
 router.delete('/locations/:id', ...commerceOnly, async (req, res) => {
   try {
+    const current = await PromocionComprada.findOne({
+      establishmentId: req.params.id, comercioId: req.user.id,
+    });
+    if (current?.stripeSubscriptionId
+        && !['canceled', 'unpaid', 'incomplete_expired'].includes(current.stripeSubscriptionStatus)) {
+      const canceled = await stripeClient().subscriptions.cancel(current.stripeSubscriptionId);
+      await syncStripeSubscription(canceled);
+    }
     const location = await Establishment.findOneAndUpdate(
       { _id: req.params.id, ownerId: req.user.id, archived: { $ne: true } },
       { $set: { archived: true } }, { new: true },
@@ -281,19 +291,19 @@ router.get('/map-plans', ...commerceOnly, async (_req, res, next) => {
       title: item.title,
       description: item.description,
       durationMonths: item.durationMonths,
-      priceStepcoins: item.priceStepcoins,
-      referencePriceEuros: item.referencePriceEuros,
+      priceEuros: item.priceEuros,
+      priceCents: item.priceCents,
+      currency: item.currency,
+      recurringInterval: item.recurringInterval,
     })));
   } catch (error) { next(error); }
 });
 
-router.post('/locations/:id/subscribe', ...commerceOnly, async (req, res) => {
+router.post('/locations/:id/checkout', ...commerceOnly, async (req, res) => {
   const requestId = String(req.body.requestId || '').trim();
-  if (!/^[a-zA-Z0-9_-]{8,100}$/.test(requestId)) {
+  if (!/^[a-zA-Z0-9._:-]{8,120}$/.test(requestId)) {
     return res.status(400).json({ error: 'Identificador de operación no válido' });
   }
-
-  let session;
   try {
     const location = await Establishment.findOne({
       _id: req.params.id, ownerId: req.user.id, archived: { $ne: true },
@@ -308,171 +318,73 @@ router.post('/locations/:id/subscribe', ...commerceOnly, async (req, res) => {
 
     await ensureDefaultMapPlans();
     const plan = await MapPlan.findOne({ _id: req.body.planId, active: true });
-    if (!plan || !Number.isFinite(Number(plan.priceStepcoins))) {
+    if (!plan || !Number.isInteger(Number(plan.priceCents)) || Number(plan.priceCents) < 1) {
       return res.status(404).json({ error: 'Plan no disponible' });
     }
-
-    const operationKey = `merchant_local_promotion:${req.user.id}:${location._id}:${requestId}`;
-    const reference = `MAP-SC-${req.user.id}-${location._id}-${requestId}`;
-    let result;
-    session = await mongoose.startSession();
-    await session.withTransaction(async () => {
-      const previous = await StepcoinTransaction.findOne({ operationKey }).session(session).lean();
-      if (previous) {
-        const subscription = await PromocionComprada.findOne({
-          comercioId: req.user.id, establishmentId: location._id,
-        }).session(session).lean();
-        const owner = await User.findById(req.user.id).session(session).select('stepcoins').lean();
-        result = {
-          subscription, stepcoinTransaction: previous,
-          spentStepcoins: Math.abs(Number(previous.cantidad || 0)),
-          balance: Number(owner?.stepcoins || 0), repeated: true,
-        };
-        return;
-      }
-
-      let durationMonths = Number(plan.durationMonths);
-      let price = Math.max(0, Math.round(Number(plan.priceStepcoins)));
-      let promotion = null;
-      const promotionCode = String(req.body.promotionCode || '').trim().toUpperCase();
-      if (promotionCode) {
-        const now = new Date();
-        promotion = await MapPromoCode.findOne({ code: promotionCode, active: true }).session(session);
-        const unavailable = !promotion
-          || (promotion.validFrom && promotion.validFrom > now)
-          || (promotion.validUntil && promotion.validUntil < now)
-          || (promotion.maxRedemptions && promotion.redemptions.length >= promotion.maxRedemptions)
-          || promotion.redemptions.some(
-            (item) => String(item.establishmentId) === String(location._id),
-          );
-        if (unavailable) {
-          const error = new Error('El código promocional no es válido para este local');
-          error.status = 409;
-          throw error;
-        }
-        if (Number(promotion.freeMonths) > 0) {
-          durationMonths = Number(promotion.freeMonths);
-          price = 0;
-        } else {
-          price = Math.max(
-            0,
-            Math.round(price * (1 - Number(promotion.discountPercent || 0) / 100)),
-          );
-        }
-      }
-
-      const owner = await User.findOneAndUpdate(
-        { _id: req.user.id, role: 'comercio', stepcoins: { $gte: price } },
-        { $inc: { stepcoins: -price } },
-        { new: true, session },
-      );
-      if (!owner) {
-        const currentOwner = await User.findById(req.user.id)
-          .session(session).select('stepcoins').lean();
-        const error = new Error(
-          `Necesitas ${price} SC y tienes ${Number(currentOwner?.stepcoins || 0)} SC.`,
-        );
-        error.status = 402;
-        error.code = 'INSUFFICIENT_STEPCOINS';
-        error.requiredStepcoins = price;
-        error.balance = Number(currentOwner?.stepcoins || 0);
-        throw error;
-      }
-
-      const now = new Date();
-      const current = await PromocionComprada.findOne({
-        establishmentId: location._id,
-      }).session(session);
-      const baseDate = current?.activo && current.fechaFin > now ? current.fechaFin : now;
-      const end = addMonths(baseDate, durationMonths);
-      const subscription = await PromocionComprada.findOneAndUpdate(
-        { establishmentId: location._id },
-        {
-          $set: {
-            comercioId: req.user.id, establishmentId: location._id,
-            mapPlanId: plan._id, planCode: plan.code,
-            titulo: location.publicName, publicName: location.publicName,
-            description: location.description, address: location.address,
-            logoComercio: location.logoUrl, imagenBase: '/img/local.png',
-            lat: location.lat, lng: location.lng,
-            proximityMessage: String(
-              location.proximityMessage || `¿Te apetece visitar ${location.publicName}?`,
-            ).trim().slice(0, 50),
-            proximityRadiusMeters: 250,
-            duracionMeses: plan.durationMonths,
-            precioStepcoins: price,
-            originalPriceStepcoins: Number(plan.priceStepcoins),
-            fechaInicio: now, fechaFin: end,
-            activo: true, status: 'published',
-            paymentStatus: price === 0 ? 'waived' : 'confirmed',
-            autoRenew: Boolean(req.body.autoRenew), cancelAtPeriodEnd: false,
-            stoppedAt: null, retiredAt: null, publishedAt: now,
-            promotionCode, checkoutReference: reference,
-          },
-          $unset: { paymentId: '', precioEuros: '', originalPriceEuros: '' },
-        },
-        {
-          upsert: true, new: true, runValidators: true,
-          setDefaultsOnInsert: true, session,
-        },
-      );
-
-      const [transaction] = await StepcoinTransaction.create([{
-        userId: req.user.id,
-        cantidad: -price,
-        tipo: 'promocion_local_comercio',
-        descripcion: `Promoción en el mapa: ${location.publicName}`,
-        fecha: now,
-        operationKey,
-        metadata: {
-          source: 'merchant_local_promotion', action: 'subscription',
-          establishmentId: location._id, mapSubscriptionId: subscription._id,
-          planId: plan._id, planCode: plan.code,
-        },
-      }], { session });
-      subscription.stepcoinTransactionId = transaction._id;
-      await subscription.save({ session });
-
-      if (promotion) {
-        promotion.redemptions.push({
-          userId: req.user.id, establishmentId: location._id, redeemedAt: now,
-        });
-        await promotion.save({ session });
-      }
-
-      result = {
-        subscription, stepcoinTransaction: transaction,
-        spentStepcoins: price, balance: Number(owner.stepcoins), repeated: false,
-      };
-    });
-    return res.status(result.repeated ? 200 : 201).json(result);
-  } catch (error) {
-    if (error?.code === 11000) {
-      const operationKey = `merchant_local_promotion:${req.user.id}:${req.params.id}:${requestId}`;
-      const previous = await StepcoinTransaction.findOne({ operationKey }).lean();
-      if (previous) {
-        const subscription = await PromocionComprada.findOne({
-          comercioId: req.user.id, establishmentId: req.params.id,
-        }).lean();
-        const owner = await User.findById(req.user.id).select('stepcoins').lean();
-        return res.json({
-          subscription, stepcoinTransaction: previous,
-          spentStepcoins: Math.abs(Number(previous.cantidad || 0)),
-          balance: Number(owner?.stepcoins || 0), repeated: true,
-        });
-      }
+    const current = await PromocionComprada.findOne({
+      comercioId: req.user.id, establishmentId: location._id,
+    }).lean();
+    if (current?.stripeSubscriptionId
+        && !['canceled', 'unpaid', 'incomplete_expired'].includes(current.stripeSubscriptionStatus)) {
+      return res.status(409).json({
+        error: 'Este local ya tiene una suscripción. Cancélala antes de contratar otro plan.',
+        code: 'SUBSCRIPTION_ALREADY_EXISTS',
+      });
     }
-    return res.status(error.status || 400).json({
-      error: error.message,
-      ...(error.code ? { code: error.code } : {}),
-      ...(error.requiredStepcoins != null
-        ? { requiredStepcoins: error.requiredStepcoins, balance: error.balance }
-        : {}),
+
+    const owner = await User.findById(req.user.id).select('email nombre nickname').lean();
+    if (!owner?.email) return res.status(409).json({ error: 'La cuenta comercio no tiene email' });
+    const metadata = {
+      ownerId: String(req.user.id), establishmentId: String(location._id),
+      planId: String(plan._id), planCode: String(plan.code),
+    };
+    const baseUrl = configuredBaseUrl(req);
+    const automaticTax = String(process.env.STRIPE_AUTOMATIC_TAX || '').toLowerCase() === 'true';
+    const checkout = await stripeClient().checkout.sessions.create({
+      mode: 'subscription',
+      locale: 'es',
+      customer_email: owner.email,
+      client_reference_id: String(location._id),
+      billing_address_collection: 'required',
+      tax_id_collection: { enabled: true },
+      ...(automaticTax ? { automatic_tax: { enabled: true } } : {}),
+      line_items: [{
+        quantity: 1,
+        price_data: {
+          currency: 'eur',
+          unit_amount: Number(plan.priceCents),
+          tax_behavior: 'inclusive',
+          recurring: {
+            interval: plan.recurringInterval,
+            interval_count: Number(plan.recurringIntervalCount || 1),
+          },
+          product_data: {
+            name: `Able73 · Local en el mapa · ${plan.title}`,
+            description: `${location.publicName} · Precio final con IVA incluido`,
+          },
+        },
+      }],
+      metadata,
+      subscription_data: { metadata },
+      success_url: `${baseUrl}/dashboard.html?stripe_checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${baseUrl}/dashboard.html?stripe_checkout=cancelled`,
+    }, {
+      idempotencyKey: `map-sub:${req.user.id}:${location._id}:${requestId}`,
     });
-  } finally {
-    if (session) await session.endSession();
+    return res.status(201).json({ url: checkout.url, sessionId: checkout.id });
+  } catch (error) {
+    console.error('[STRIPE CHECKOUT] No se pudo crear la sesión:', error);
+    return res.status(error.status || 400).json({
+      error: error.status ? error.message : 'No se pudo abrir el pago seguro de Stripe',
+      ...(error.code ? { code: error.code } : {}),
+    });
   }
 });
+
+router.post('/locations/:id/subscribe', ...commerceOnly, (_req, res) => res.status(410).json({
+  error: 'La contratación con Stepcoins se ha retirado. Utiliza el pago seguro con Stripe.',
+  code: 'USE_STRIPE_CHECKOUT',
+}));
 
 router.patch('/locations/:id/subscription', ...commerceOnly, async (req, res) => {
   try {
@@ -482,25 +394,35 @@ router.patch('/locations/:id/subscription', ...commerceOnly, async (req, res) =>
       establishmentId: location._id, comercioId: req.user.id,
     });
     if (!subscription) return res.status(404).json({ error: 'Este local no tiene promoción' });
+    if (!subscription.stripeSubscriptionId) {
+      return res.status(409).json({ error: 'Esta publicación no es una suscripción de Stripe' });
+    }
+    let stripeSubscription;
     if (req.body.action === 'set_auto_renew') {
-      subscription.autoRenew = Boolean(req.body.autoRenew);
-      if (subscription.autoRenew) subscription.cancelAtPeriodEnd = false;
+      stripeSubscription = await stripeClient().subscriptions.update(
+        subscription.stripeSubscriptionId,
+        { cancel_at_period_end: !Boolean(req.body.autoRenew) },
+      );
     } else if (req.body.action === 'stop') {
       const mode = String(req.body.mode || 'period_end');
-      subscription.autoRenew = false;
       if (mode === 'now') {
-        subscription.activo = false;
-        subscription.status = 'retired';
-        subscription.cancelAtPeriodEnd = false;
-        subscription.stoppedAt = new Date();
-        subscription.retiredAt = subscription.stoppedAt;
+        stripeSubscription = await stripeClient().subscriptions.cancel(
+          subscription.stripeSubscriptionId,
+        );
       } else if (mode === 'period_end') {
-        subscription.cancelAtPeriodEnd = true;
+        stripeSubscription = await stripeClient().subscriptions.update(
+          subscription.stripeSubscriptionId,
+          { cancel_at_period_end: true },
+        );
       } else return res.status(400).json({ error: 'Modo de parada no válido' });
     } else return res.status(400).json({ error: 'Acción no válida' });
-    await subscription.save();
-    res.json(subscription);
-  } catch (error) { res.status(400).json({ error: error.message }); }
+    res.json(await syncStripeSubscription(stripeSubscription));
+  } catch (error) {
+    console.error('[STRIPE SUBSCRIPTION] No se pudo actualizar:', error);
+    res.status(error.status || 400).json({
+      error: error.status ? error.message : 'No se pudo actualizar la suscripción en Stripe',
+    });
+  }
 });
 
 router.post('/admin/map-promo-codes', ...adminOnly, async (req, res) => {

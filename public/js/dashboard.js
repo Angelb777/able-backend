@@ -129,10 +129,6 @@ function bindCommercialActions() {
         await archiveCommerceLocation(id);
       } else if (action === "subscribe-location") {
         await subscribeCommerceLocation(id, button.dataset.planId || "");
-      } else if (action === "buy-merchant-stepcoins") {
-        await buyMerchantStepcoins(Number(button.dataset.amount));
-      } else if (action === "stop-location") {
-        await stopCommerceLocation(id);
       } else if (action === "toggle-location-renew") {
         await toggleCommerceLocationRenew(id, button.dataset.autoRenew === "true");
       } else if (action === "cancel-location-edit") {
@@ -382,8 +378,8 @@ let commerceEstablishmentCache = null;
 let commercePackagesCache = [];
 let commerceLocationsCache = [];
 let commerceMapPlansCache = [];
-let commerceStepcoinPackagesCache = [];
 let commerceSpecificationsCache = null;
+let commerceCheckoutRefreshScheduled = false;
 
 const commerceStatusLabels = {
   draft: "Borrador",
@@ -553,50 +549,42 @@ async function renderCommercePositioning() {
 
 function commerceSubscriptionState(subscription) {
   if (!subscription) return "Sin promoción contratada";
+  if (subscription.paymentStatus === "waived") {
+    return `Publicación de ejemplo activa hasta ${commerceDate(subscription.fechaFin)}`;
+  }
   if (subscription.status === "published" && subscription.activo) {
     const ending = commerceDate(subscription.fechaFin);
     return subscription.cancelAtPeriodEnd
       ? `Visible hasta ${ending} · No se renovará`
       : `Visible en el mapa hasta ${ending}${subscription.autoRenew ? " · Renovación automática" : ""}`;
   }
-  if (subscription.status === "expired") return "Promoción finalizada";
-  return "Promoción detenida";
+  if (subscription.stripeSubscriptionStatus === "past_due") return "Pago pendiente en Stripe";
+  if (subscription.status === "expired") return "Suscripción finalizada";
+  return "Pendiente de confirmación del pago";
 }
 
 function commerceLocationCard(location) {
   const id = commercialId(location);
   const subscription = location.subscription;
   const active = subscription?.status === "published" && subscription?.activo;
-  const plans = commerceMapPlansCache.map((plan) => `
-    <button type="button" data-commercial-action="subscribe-location"
+  const plans = !active ? commerceMapPlansCache.map((plan) => {
+    const cadence = plan.recurringInterval === "year" ? "año" : "mes";
+    return `<button type="button" class="commerce-plan-button" data-commercial-action="subscribe-location"
       data-entity-id="${commercialEscape(id)}" data-plan-id="${commercialEscape(commercialId(plan))}">
-      ${active ? "Ampliar" : "Contratar"} ${commercialEscape(plan.title)} · ${Number(plan.priceStepcoins).toLocaleString("es-ES")} SC (≈ ${commercialEscape(plan.referencePriceEuros)} €)
-    </button>`).join("");
-  const stepcoinPacks = commerceStepcoinPackagesCache.map((pack) => `
-    <button type="button" class="commerce-secondary"
-      data-commercial-action="buy-merchant-stepcoins" data-amount="${Number(pack.stepcoins)}">
-      Comprar ${Number(pack.stepcoins).toLocaleString("es-ES")} SC · ${commercialEscape(pack.euros)} €
-    </button>`).join("");
+      <strong>${commercialEscape(plan.priceEuros)} € / ${cadence}</strong>
+      <span>${commercialEscape(plan.title)} · IVA incluido</span>
+    </button>`;
+  }).join("") : "";
   return `<article class="commerce-card commerce-location-card">
     ${location.logoUrl ? `<img class="commerce-logo-preview" src="${commercialEscape(location.logoUrl)}" alt="Logo de ${commercialEscape(location.publicName)}">` : ""}
     <h3>${commercialEscape(location.publicName)}</h3>
     <p>${commercialEscape(location.address)}</p>
     <p><strong>${commercialEscape(commerceSubscriptionState(subscription))}</strong></p>
-    <p><strong>Saldo para promociones: ${Number(user?.stepcoins || 0).toLocaleString("es-ES")} SC</strong></p>
-    <div class="commerce-card-actions">${stepcoinPacks}</div>
-    <p><small>La cuenta comercio no genera Stepcoins: solo puede comprarlos y usarlos para promocionar sus locales.</small></p>
     <p><small>${commercialEscape(location.lat)}, ${commercialEscape(location.lng)} · Aviso de proximidad fijo a 250 m</small></p>
-    <label>Código promocional
-      <input id="commerce-promo-${commercialEscape(id)}" type="text" maxlength="40" placeholder="Opcional">
-    </label>
-    <label class="commerce-inline-check">
-      <input id="commerce-renew-${commercialEscape(id)}" type="checkbox" ${subscription?.autoRenew ? "checked" : ""}> Renovación automática
-    </label>
-    <div class="commerce-card-actions">${plans}</div>
+    ${plans ? `<div class="commerce-plan-grid">${plans}</div><p class="commerce-secure-note">🔒 Pago seguro en Stripe · Renovación automática · Cancela cuando quieras</p>` : ""}
     <div class="commerce-card-actions">
       <button type="button" class="commerce-secondary" data-commercial-action="edit-location" data-entity-id="${commercialEscape(id)}">Editar local</button>
-      ${active ? `<button type="button" class="commerce-secondary" data-commercial-action="toggle-location-renew" data-entity-id="${commercialEscape(id)}" data-auto-renew="${subscription.autoRenew ? "false" : "true"}">${subscription.autoRenew ? "Quitar autorrenovación" : "Activar autorrenovación"}</button>
-      <button type="button" class="commerce-secondary" data-commercial-action="stop-location" data-entity-id="${commercialEscape(id)}">Detener promoción</button>` : ""}
+      ${active && subscription?.stripeSubscriptionId ? `<button type="button" class="commerce-secondary" data-commercial-action="toggle-location-renew" data-entity-id="${commercialEscape(id)}" data-auto-renew="${subscription.autoRenew ? "false" : "true"}">${subscription.autoRenew ? "Cancelar al final del periodo" : "Reactivar renovación"}</button>` : ""}
       <button type="button" class="commerce-secondary" data-commercial-action="archive-location" data-entity-id="${commercialEscape(id)}">Eliminar local</button>
     </div>
   </article>`;
@@ -660,19 +648,36 @@ async function renderCommerceLocations() {
   status.textContent = "Cargando locales...";
   list.innerHTML = "";
   try {
-    [commerceLocationsCache, commerceMapPlansCache, commerceStepcoinPackagesCache] = await Promise.all([
+    [commerceLocationsCache, commerceMapPlansCache] = await Promise.all([
       commerceResponse(await fetch("/api/commercial/locations")),
       commerceResponse(await fetch("/api/commercial/map-plans")),
-      commerceResponse(await fetch("/api/payments/stepcoins/packages")),
     ]);
     status.className = "commerce-notice";
-    status.textContent = commerceLocationsCache.length
-      ? `${commerceLocationsCache.length} local${commerceLocationsCache.length === 1 ? "" : "es"}. Cada uno se contrata y se renueva por separado.`
-      : "Añade tu primer local. No necesita aprobación del Superadmin.";
+    const checkoutResult = new URLSearchParams(window.location.search).get("stripe_checkout");
+    if (checkoutResult) {
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete("stripe_checkout");
+      cleanUrl.searchParams.delete("session_id");
+      history.replaceState({}, "", cleanUrl);
+    }
+    status.textContent = checkoutResult === "success"
+      ? "Pago completado. Estamos confirmándolo con Stripe; el local aparecerá en unos segundos."
+      : checkoutResult === "cancelled"
+        ? "Pago cancelado. No se ha activado ninguna suscripción."
+        : commerceLocationsCache.length
+          ? `${commerceLocationsCache.length} local${commerceLocationsCache.length === 1 ? "" : "es"}. Cada uno se contrata y se renueva por separado.`
+          : "Añade tu primer local. No necesita aprobación del Superadmin.";
     list.innerHTML = commerceLocationsCache.length
       ? commerceLocationsCache.map(commerceLocationCard).join("")
       : "<p>Todavía no tienes locales guardados.</p>";
     if (!document.getElementById("commerceEstablishmentForm").dataset.editingId) resetCommerceLocationForm();
+    if (checkoutResult === "success" && !commerceCheckoutRefreshScheduled) {
+      commerceCheckoutRefreshScheduled = true;
+      setTimeout(() => {
+        commerceCheckoutRefreshScheduled = false;
+        void renderCommerceLocations();
+      }, 3000);
+    }
   } catch (error) {
     status.className = "commerce-notice commerce-error";
     status.textContent = error.message;
@@ -683,54 +688,16 @@ async function subscribeCommerceLocation(id, planId) {
   const location = commerceLocationsCache.find((item) => commercialId(item) === String(id));
   const plan = commerceMapPlansCache.find((item) => commercialId(item) === String(planId));
   if (!location || !plan) return alert("El local o el plan ya no están disponibles.");
-  const code = document.getElementById(`commerce-promo-${id}`)?.value?.trim() || "";
-  const autoRenew = Boolean(document.getElementById(`commerce-renew-${id}`)?.checked);
-  if (!confirm(`Publicar ${location.publicName} durante ${plan.durationMonths} mes(es) por ${Number(plan.priceStepcoins).toLocaleString("es-ES")} SC (equivalentes a ${plan.referencePriceEuros} € en la tienda SC)${code ? ` usando el código ${code}` : ""}?`)) return;
+  const cadence = plan.recurringInterval === "year" ? "año" : "mes";
+  if (!confirm(`Contratar ${location.publicName} por ${plan.priceEuros} €/${cadence}, IVA incluido. La suscripción se renovará automáticamente hasta que la canceles.`)) return;
   const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try {
-    const result = await commerceResponse(await fetch(`/api/commercial/locations/${id}/subscribe`, {
+    const result = await commerceResponse(await fetch(`/api/commercial/locations/${id}/checkout`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ planId, promotionCode: code, autoRenew, requestId }),
+      body: JSON.stringify({ planId, requestId }),
     }));
-    await renderCommerceLocations();
-    alert(result.spentStepcoins > 0
-      ? `Se han descontado ${result.spentStepcoins} SC. Saldo disponible: ${result.balance} SC. El local ya está publicado.`
-      : `Código aplicado. Saldo disponible: ${result.balance} SC. El local ya está publicado gratis.`);
-  } catch (error) { alert(error.message); }
-}
-
-async function buyMerchantStepcoins(amount) {
-  const pack = commerceStepcoinPackagesCache.find(
-    (item) => Number(item.stepcoins) === Number(amount),
-  );
-  if (!pack) return alert("El paquete seleccionado ya no está disponible.");
-  if (!confirm(`Comprar ${Number(amount).toLocaleString("es-ES")} SC por ${pack.euros} €?`)) return;
-  const requestId = globalThis.crypto?.randomUUID?.()
-    || `merchant-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  try {
-    const result = await commerceResponse(await fetch("/api/payments/stepcoins/checkout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cantidad: amount, requestId }),
-    }));
-    user.stepcoins = Number(result.user?.stepcoins || 0);
-    localStorage.setItem("user", JSON.stringify(user));
-    await renderCommerceLocations();
-    alert(`Compra completada. Saldo disponible: ${user.stepcoins.toLocaleString("es-ES")} SC.`);
-  } catch (error) { alert(error.message); }
-}
-
-async function stopCommerceLocation(id) {
-  const answer = prompt("Escribe FINAL para mantener el local visible hasta que termine el periodo pagado, o AHORA para retirarlo inmediatamente.", "FINAL");
-  if (answer == null) return;
-  const normalized = answer.trim().toUpperCase();
-  if (!["FINAL", "AHORA"].includes(normalized)) return alert("Escribe FINAL o AHORA.");
-  try {
-    await commerceResponse(await fetch(`/api/commercial/locations/${id}/subscription`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "stop", mode: normalized === "AHORA" ? "now" : "period_end" }),
-    }));
-    await renderCommerceLocations();
+    if (!result.url) throw new Error("Stripe no ha devuelto la página de pago");
+    window.location.assign(result.url);
   } catch (error) { alert(error.message); }
 }
 
@@ -1202,6 +1169,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   const menu = document.getElementById("menu");
   const content = document.getElementById("content");
   const items = menuItems[role] || [];
+  const returnsFromStripe = role === "comercio"
+    && new URLSearchParams(window.location.search).has("stripe_checkout");
 
   items.forEach((item, index) => {
     const li = document.createElement("li");
@@ -1211,8 +1180,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     menu.appendChild(li);
 
     // Mostrar primera sección automáticamente
-    if (index === 0) renderSection(item);
+    if (index === 0 && !returnsFromStripe) renderSection(item);
   });
+  if (returnsFromStripe) renderSection("Mi establecimiento");
 });
 
 // Función auxiliar

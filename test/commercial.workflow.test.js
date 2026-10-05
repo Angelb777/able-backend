@@ -24,6 +24,7 @@ const {
   MIN_COMMERCIAL_REWARD_STEPCOINS,
   assertCommercialRewardStepcoins,
 } = require('../api/services/rewardPolicy');
+const stripeMapSubscriptions = require('../api/services/stripeMapSubscriptions');
 
 test('commercial rewards require at least 5,000 Stepcoins', () => {
   assert.equal(MIN_COMMERCIAL_REWARD_STEPCOINS, 5000);
@@ -179,6 +180,8 @@ test('commercial and legacy positioning endpoints enforce role boundaries', asyn
 
   assert.equal((await call('/api/commercial/admin/requests', 'comercio')).status, 403);
   assert.equal((await call('/api/commercial/establishment', 'admin')).status, 403);
+  assert.equal((await call('/api/commercial/locations', null, 'POST')).status, 401);
+  assert.equal((await call('/api/commercial/locations', 'cliente', 'POST')).status, 403);
   assert.equal((await call('/api/promo-contratada', null, 'POST')).status, 401);
   assert.equal((await call('/api/promo-contratada', 'cliente', 'POST')).status, 403);
   assert.equal((await call('/api/promociones-negocio', 'comercio', 'POST')).status, 403);
@@ -366,7 +369,7 @@ test('a commerce can simulate payment for a product and it enters the ledger', a
   assert.match(ledger.motivo, /Compra simulada/);
 });
 
-test('a commerce pays a location promotion atomically with Stepcoins', async (t) => {
+test.skip('legacy Stepcoin location checkout has been replaced by Stripe subscriptions', async (t) => {
   const previousSecret = process.env.JWT_SECRET;
   process.env.JWT_SECRET = 'direct-map-subscription-secret';
   const originals = {
@@ -560,10 +563,116 @@ test('a commerce pays a location promotion atomically with Stepcoins', async (t)
   assert.equal(debitCount, 1);
 });
 
+test('a commerce opens Stripe Checkout with authoritative recurring prices', async (t) => {
+  const previous = {
+    jwt: process.env.JWT_SECRET,
+    stripeKey: process.env.STRIPE_SECRET_KEY,
+    baseUrl: process.env.APP_BASE_URL,
+  };
+  process.env.JWT_SECRET = 'stripe-map-checkout-secret';
+  process.env.STRIPE_SECRET_KEY = 'rk_test_checkout';
+  process.env.APP_BASE_URL = 'https://able73.com';
+  const originals = {
+    userFindById: User.findById,
+    establishmentFindOne: Establishment.findOne,
+    planUpdateOne: MapPlan.updateOne,
+    planFind: MapPlan.find,
+    planFindOne: MapPlan.findOne,
+    subscriptionFindOne: PromocionComprada.findOne,
+  };
+  t.after(() => {
+    for (const [key, value] of Object.entries({
+      JWT_SECRET: previous.jwt,
+      STRIPE_SECRET_KEY: previous.stripeKey,
+      APP_BASE_URL: previous.baseUrl,
+    })) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+    User.findById = originals.userFindById;
+    Establishment.findOne = originals.establishmentFindOne;
+    MapPlan.updateOne = originals.planUpdateOne;
+    MapPlan.find = originals.planFind;
+    MapPlan.findOne = originals.planFindOne;
+    PromocionComprada.findOne = originals.subscriptionFindOne;
+    stripeMapSubscriptions.setStripeClientForTests(null);
+  });
+
+  const ownerId = new mongoose.Types.ObjectId();
+  const locationId = new mongoose.Types.ObjectId();
+  const planId = new mongoose.Types.ObjectId();
+  const owner = {
+    _id: ownerId, id: String(ownerId), role: 'comercio', firebaseUid: null,
+    email: 'commerce@example.test', nombre: 'Comercio',
+  };
+  const location = {
+    _id: locationId, ownerId, status: 'approved', archived: false,
+    publicName: 'Local Stripe', address: 'Calle Uno', logoUrl: '/logo.png',
+    lat: 41.65, lng: -0.88,
+  };
+  const plan = {
+    _id: planId, code: 'MAP_MONTHLY', title: '1 mes', durationMonths: 1,
+    priceEuros: 10, priceCents: 1000, currency: 'EUR',
+    recurringInterval: 'month', recurringIntervalCount: 1, active: true,
+  };
+  User.findById = () => ({
+    select() { return this; },
+    lean: async () => owner,
+  });
+  Establishment.findOne = async () => location;
+  MapPlan.updateOne = async () => ({});
+  MapPlan.find = () => ({ sort() { return this; }, lean: async () => [plan] });
+  MapPlan.findOne = async () => plan;
+  PromocionComprada.findOne = () => ({ lean: async () => null });
+
+  let checkoutPayload;
+  let checkoutOptions;
+  stripeMapSubscriptions.setStripeClientForTests({
+    checkout: {
+      sessions: {
+        create: async (payload, options) => {
+          checkoutPayload = payload;
+          checkoutOptions = options;
+          return { id: 'cs_test_able73', url: 'https://checkout.stripe.com/test' };
+        },
+      },
+    },
+  });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/commercial', commercialRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const token = jwt.sign({ id: String(ownerId), legacy: true }, process.env.JWT_SECRET);
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/commercial/locations/${locationId}/checkout`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ planId: String(planId), requestId: 'checkout_test_123' }),
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 201, body.error);
+  assert.equal(body.url, 'https://checkout.stripe.com/test');
+  assert.equal(checkoutPayload.mode, 'subscription');
+  assert.equal(checkoutPayload.line_items[0].price_data.unit_amount, 1000);
+  assert.equal(checkoutPayload.line_items[0].price_data.recurring.interval, 'month');
+  assert.equal(checkoutPayload.line_items[0].price_data.tax_behavior, 'inclusive');
+  assert.equal(checkoutPayload.subscription_data.metadata.establishmentId, String(locationId));
+  assert.match(checkoutPayload.success_url, /^https:\/\/able73\.com\/dashboard\.html/);
+  assert.match(checkoutOptions.idempotencyKey, /checkout_test_123$/);
+});
+
 test('the public Flutter map endpoint exposes active location and proximity data', async (t) => {
   const originalFind = PromocionComprada.find;
   let calls = 0;
-  PromocionComprada.find = () => {
+  const filters = [];
+  PromocionComprada.find = (filter) => {
+    filters.push(filter);
     calls += 1;
     if (calls === 1) return { lean: async () => [] };
     return {
@@ -599,6 +708,14 @@ test('the public Flutter map endpoint exposes active location and proximity data
   assert.match(body[0].proximityMessage, /CoffeeMax/);
   assert.equal(body[0].lat, 41.65);
   assert.equal(body[0].lng, -0.88);
+  const publicFilter = filters[1];
+  assert.equal(publicFilter.activo, true);
+  assert.equal(publicFilter.status, 'published');
+  assert.ok(publicFilter.fechaFin.$gte instanceof Date);
+  assert.deepEqual(
+    publicFilter.paymentStatus.$in,
+    ['confirmed', 'waived', 'legacy_confirmed'],
+  );
 });
 
 test('location loading survives renewal maintenance errors and reads legacy subscriptions without writing', async (t) => {

@@ -1,21 +1,20 @@
-const mongoose = require('mongoose');
 const MapPlan = require('../models/MapPlan');
-const StepcoinTransaction = require('../models/StepcoinTransaction');
 const PromocionComprada = require('../models/PromocionComprada');
-const User = require('../models/User');
 const Establishment = require('../models/Establishment');
 
 const DEFAULT_MAP_PLANS = [
   {
     code: 'MAP_MONTHLY', title: '1 mes',
-    description: 'Tu local visible en el mapa durante un mes.',
-    durationMonths: 1, priceStepcoins: 1500, referencePriceEuros: 10,
+    description: 'Suscripción mensual. Renueva automáticamente hasta que la canceles.',
+    durationMonths: 1, priceEuros: 10, priceCents: 1000,
+    currency: 'EUR', recurringInterval: 'month', recurringIntervalCount: 1,
     sortOrder: 10,
   },
   {
     code: 'MAP_YEARLY', title: '1 año',
-    description: 'Tu local visible en el mapa durante un año.',
-    durationMonths: 12, priceStepcoins: 15000, referencePriceEuros: 65,
+    description: 'Suscripción anual. Renueva automáticamente hasta que la canceles.',
+    durationMonths: 12, priceEuros: 65, priceCents: 6500,
+    currency: 'EUR', recurringInterval: 'year', recurringIntervalCount: 1,
     sortOrder: 20,
   },
 ];
@@ -32,7 +31,7 @@ async function ensureDefaultMapPlans() {
     {
       $set: plan,
       $setOnInsert: { active: true },
-      $unset: { priceEuros: '' },
+      $unset: { priceStepcoins: '', referencePriceEuros: '' },
     },
     { upsert: true, setDefaultsOnInsert: true },
   )));
@@ -56,78 +55,17 @@ async function ensureEstablishmentLocationIndexes() {
 
 async function renewExpiredMapSubscriptions() {
   const now = new Date();
+  // Stripe renueva y cobra las suscripciones reales mediante webhooks. Esta
+  // limpieza solo caduca publicaciones legacy/gratuitas; nunca intenta cobrar SC.
   const expired = await PromocionComprada.find({
     status: 'published', activo: true, fechaFin: { $lt: now },
+    stripeSubscriptionId: { $exists: false },
   }).lean();
-
-  for (const current of expired) {
-    if (!current.autoRenew || current.cancelAtPeriodEnd) {
-      await PromocionComprada.updateOne(
-        { _id: current._id, status: 'published', fechaFin: current.fechaFin },
-        { $set: { activo: false, status: 'expired' } },
-      );
-      continue;
-    }
-
-    const session = await mongoose.startSession();
-    try {
-      await session.withTransaction(async () => {
-        const fresh = await PromocionComprada.findOne({
-          _id: current._id, status: 'published', activo: true, fechaFin: current.fechaFin,
-        }).session(session);
-        if (!fresh) return;
-
-        const start = new Date(fresh.fechaFin);
-        const operationKey = `merchant_local_promotion_renewal:${fresh._id}:${start.getTime()}`;
-        const alreadyCharged = await StepcoinTransaction.findOne({ operationKey }).session(session);
-        if (alreadyCharged) return;
-
-        const price = Math.max(0, Math.round(Number(
-          fresh.originalPriceStepcoins ?? fresh.precioStepcoins
-            ?? fresh.originalPriceEuros ?? fresh.precioEuros ?? 0,
-        )));
-        const owner = await User.findOneAndUpdate(
-          { _id: fresh.comercioId, role: 'comercio', stepcoins: { $gte: price } },
-          { $inc: { stepcoins: -price } },
-          { new: true, session },
-        );
-        if (!owner) {
-          fresh.activo = false;
-          fresh.status = 'expired';
-          await fresh.save({ session });
-          return;
-        }
-
-        const end = addMonths(start, fresh.duracionMeses || 1);
-        const [transaction] = await StepcoinTransaction.create([{
-          userId: fresh.comercioId,
-          cantidad: -price,
-          tipo: 'promocion_local_comercio',
-          descripcion: `Renovación del local ${fresh.publicName || fresh.titulo || ''}`.trim(),
-          fecha: start,
-          operationKey,
-          metadata: {
-            source: 'merchant_local_promotion', action: 'renewal',
-            establishmentId: fresh.establishmentId, mapSubscriptionId: fresh._id,
-          },
-        }], { session });
-
-        fresh.fechaInicio = start;
-        fresh.fechaFin = end;
-        fresh.cancelAtPeriodEnd = false;
-        fresh.precioStepcoins = price;
-        fresh.originalPriceStepcoins = price;
-        fresh.stepcoinTransactionId = transaction._id;
-        fresh.paymentId = undefined;
-        fresh.precioEuros = undefined;
-        fresh.originalPriceEuros = undefined;
-        fresh.promotionCode = '';
-        await fresh.save({ session });
-      });
-    } finally {
-      await session.endSession();
-    }
-  }
+  if (!expired.length) return;
+  await PromocionComprada.updateMany(
+    { _id: { $in: expired.map((item) => item._id) }, status: 'published' },
+    { $set: { activo: false, status: 'expired', autoRenew: false } },
+  );
 }
 
 module.exports = {
