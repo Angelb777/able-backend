@@ -9,6 +9,7 @@ const PromocionComprada = require('../api/models/PromocionComprada');
 const { saveImage } = require('../api/utils/mediaStorage');
 
 const APPLY = process.argv.includes('--apply');
+const REFRESH_LOGOS = process.argv.includes('--refresh-logos');
 const OWNER_EMAIL = 'comercio@gmail.com';
 const LABEL_DIRECTORY = path.join(__dirname, 'assets', 'zaragoza-demo-labels');
 const DEMO_DURATION_MONTHS = 12;
@@ -102,6 +103,7 @@ async function main() {
       publicName: item.publicName,
       establishment: existing ? 'exists' : 'create',
       publication: subscription ? 'preserve-existing' : 'create-courtesy',
+      logo: existing && REFRESH_LOGOS ? 'refresh' : (existing ? 'preserve' : 'upload'),
       status: subscription?.status || '-',
       payment: subscription?.paymentStatus || '-',
       active: subscription?.activo ?? false,
@@ -126,6 +128,7 @@ async function main() {
   const end = addMonths(now, DEMO_DURATION_MONTHS);
   let createdLocations = 0;
   let createdPublications = 0;
+  let refreshedLogos = 0;
 
   for (const item of LOCATIONS) {
     let location = await Establishment.findOne({
@@ -134,7 +137,7 @@ async function main() {
       archived: { $ne: true },
     });
 
-    if (!location) {
+    if (!location || REFRESH_LOGOS) {
       const labelPath = path.join(LABEL_DIRECTORY, item.label);
       const buffer = fs.readFileSync(labelPath);
       const logoUrl = await saveImage({
@@ -143,24 +146,34 @@ async function main() {
         originalname: item.label,
       }, 'commercial/establishments/demo-zaragoza');
 
-      location = await Establishment.create({
-        ownerId: owner._id,
-        publicName: item.publicName,
-        legalName: '',
-        description: 'Comercio ciclista en Zaragoza.',
-        address: item.address,
-        city: 'Zaragoza',
-        country: 'España',
-        logoUrl,
-        lat: item.lat,
-        lng: item.lng,
-        proximityMessage: `Descubre ${item.publicName}`.slice(0, 50),
-        proximityRadiusMeters: 250,
-        status: 'approved',
-        approvedAt: now,
-        archived: false,
-      });
-      createdLocations += 1;
+      if (!location) {
+        location = await Establishment.create({
+          ownerId: owner._id,
+          publicName: item.publicName,
+          legalName: '',
+          description: 'Comercio ciclista en Zaragoza.',
+          address: item.address,
+          city: 'Zaragoza',
+          country: 'España',
+          logoUrl,
+          lat: item.lat,
+          lng: item.lng,
+          proximityMessage: `Descubre ${item.publicName}`.slice(0, 50),
+          proximityRadiusMeters: 250,
+          status: 'approved',
+          approvedAt: now,
+          archived: false,
+        });
+        createdLocations += 1;
+      } else {
+        location.logoUrl = logoUrl;
+        await location.save();
+        await PromocionComprada.updateMany(
+          { establishmentId: location._id },
+          { $set: { logoComercio: logoUrl } },
+        );
+        refreshedLogos += 1;
+      }
     }
 
     const existingPublication = await PromocionComprada.findOne({
@@ -203,6 +216,7 @@ async function main() {
     owner: OWNER_EMAIL,
     createdLocations,
     createdPublications,
+    refreshedLogos,
     courtesyUntil: end.toISOString(),
   }, null, 2));
 }

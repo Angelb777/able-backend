@@ -32,22 +32,29 @@ function Draw-CenteredText {
 }
 
 foreach ($label in $labels) {
-  $bitmap = New-Object System.Drawing.Bitmap 1200, 600
+  # La proporción coincide con el hueco blanco usado por Flutter (2,67:1).
+  # El fondo transparente deja visible el propio letrero de local.png.
+  $bitmap = New-Object System.Drawing.Bitmap 1600, 600
   $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
   $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
   $graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
-  $graphics.Clear([System.Drawing.Color]::White)
+  $graphics.Clear([System.Drawing.Color]::Transparent)
 
-  $borderPen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(46, 160, 83)), 18
-  $graphics.DrawRectangle($borderPen, 18, 18, 1163, 563)
+  $primarySize = 210
+  do {
+    $primaryFont = New-Object System.Drawing.Font 'Arial', $primarySize, ([System.Drawing.FontStyle]::Bold)
+    $primaryWidth = $graphics.MeasureString($label.Text, $primaryFont).Width
+    if ($primaryWidth -le 1480 -or $primarySize -le 120) { break }
+    $primaryFont.Dispose()
+    $primarySize -= 6
+  } while ($true)
 
-  $primaryFont = New-Object System.Drawing.Font 'Arial', 82, ([System.Drawing.FontStyle]::Bold)
-  $secondaryFont = New-Object System.Drawing.Font 'Arial', 38, ([System.Drawing.FontStyle]::Regular)
+  $secondaryFont = New-Object System.Drawing.Font 'Arial', 82, ([System.Drawing.FontStyle]::Regular)
   $primaryBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(26, 31, 39))
   $secondaryBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(46, 160, 83))
 
-  Draw-CenteredText -Graphics $graphics -Text $label.Text -Font $primaryFont -Brush $primaryBrush -CenterY 255 -CanvasWidth 1200
-  Draw-CenteredText -Graphics $graphics -Text $label.Subtitle -Font $secondaryFont -Brush $secondaryBrush -CenterY 370 -CanvasWidth 1200
+  Draw-CenteredText -Graphics $graphics -Text $label.Text -Font $primaryFont -Brush $primaryBrush -CenterY 225 -CanvasWidth 1600
+  Draw-CenteredText -Graphics $graphics -Text $label.Subtitle -Font $secondaryFont -Brush $secondaryBrush -CenterY 430 -CanvasWidth 1600
 
   $path = Join-Path $outputDirectory $label.File
   $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
@@ -56,7 +63,6 @@ foreach ($label in $labels) {
   $primaryBrush.Dispose()
   $secondaryFont.Dispose()
   $primaryFont.Dispose()
-  $borderPen.Dispose()
   $graphics.Dispose()
   $bitmap.Dispose()
 }
