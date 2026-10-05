@@ -12,7 +12,10 @@ $labels = @(
   @{ File = 'cicleria.png'; Text = 'CICLERIA'; Subtitle = 'ZARAGOZA' },
   @{ File = 'recicleta.png'; Text = 'RECICLETA'; Subtitle = 'ZARAGOZA' },
   @{ File = 'bmk-zaragoza.png'; Text = 'BMK'; Subtitle = 'ZARAGOZA STORE' },
-  @{ File = 'bicicletas-zaragoza.png'; Text = 'BICICLETAS'; Subtitle = 'ZARAGOZA' }
+  @{ File = 'bicicletas-zaragoza.png'; Text = 'BICICLETAS'; Subtitle = 'ZARAGOZA' },
+  @{ File = 'salad-boutique.png'; Text = 'SALAD BOUTIQUE'; Subtitle = 'HEALTHY FOOD' },
+  @{ File = 'baobab.png'; Text = 'BAOBAB'; Subtitle = 'VEGETARIANO' },
+  @{ File = 'elio-and-coco.png'; Text = 'ELIO & COCO'; Subtitle = 'SPECIALTY COFFEE' }
 )
 
 function Draw-CenteredText {

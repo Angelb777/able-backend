@@ -69,6 +69,30 @@ const LOCATIONS = [
     lat: 41.6733585, lng: -0.8849155,
     label: 'bicicletas-zaragoza.png',
   },
+  {
+    publicName: 'Salad Boutique',
+    address: 'C. de Gertrudis G\u00f3mez de Avellaneda, 37, 50018 Zaragoza',
+    description: 'Comida r\u00e1pida saludable, producto fresco y opciones veganas.',
+    proximityMessage: '\u00bfTe apetece una opci\u00f3n fresca y saludable?',
+    lat: 41.6690071, lng: -0.8907189,
+    label: 'salad-boutique.png',
+  },
+  {
+    publicName: 'Baobab',
+    address: 'C. del Arzobispo Apaolaza, 10, 50009 Zaragoza',
+    description: 'Cocina vegetariana con producto ecol\u00f3gico, local y de comercio justo.',
+    proximityMessage: 'Descubre la cocina vegetariana de Baobab',
+    lat: 41.6400831, lng: -0.8969591,
+    label: 'baobab.png',
+  },
+  {
+    publicName: 'Elio & Coco Specialty Coffee',
+    address: 'C. de San Lorenzo, 5, local 2, 50001 Zaragoza',
+    description: 'Caf\u00e9 de especialidad, brunch y reposter\u00eda casera con opciones veganas.',
+    proximityMessage: '\u00bfTe apetece un caf\u00e9 de especialidad?',
+    lat: 41.6529157, lng: -0.8759493,
+    label: 'elio-and-coco.png',
+  },
 ];
 
 function addMonths(date, months) {
@@ -151,14 +175,14 @@ async function main() {
           ownerId: owner._id,
           publicName: item.publicName,
           legalName: '',
-          description: 'Comercio ciclista en Zaragoza.',
+          description: item.description || 'Comercio ciclista en Zaragoza.',
           address: item.address,
           city: 'Zaragoza',
           country: 'España',
           logoUrl,
           lat: item.lat,
           lng: item.lng,
-          proximityMessage: `Descubre ${item.publicName}`.slice(0, 50),
+          proximityMessage: (item.proximityMessage || `Descubre ${item.publicName}`).slice(0, 50),
           proximityRadiusMeters: 250,
           status: 'approved',
           approvedAt: now,
@@ -221,11 +245,19 @@ async function main() {
   }, null, 2));
 }
 
-main()
-  .catch((error) => {
-    console.error(error.message);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await mongoose.disconnect();
-  });
+if (require.main === module) {
+  main()
+    .catch((error) => {
+      console.error(error.message);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await mongoose.disconnect();
+    });
+}
+
+module.exports = {
+  DEMO_DURATION_MONTHS,
+  LOCATIONS,
+  OWNER_EMAIL,
+};
