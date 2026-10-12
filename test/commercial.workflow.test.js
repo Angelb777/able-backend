@@ -189,6 +189,7 @@ test('commercial and legacy positioning endpoints enforce role boundaries', asyn
   assert.equal((await call('/api/rewards', 'cliente', 'POST')).status, 403);
   assert.equal((await call('/api/rewards/orden-catalogo', 'comercio', 'PATCH')).status, 403);
   assert.equal((await call('/api/rewards/orden-catalogo', 'admin', 'PATCH')).status, 400);
+  assert.equal((await call('/api/rewards/reward-id/admin', 'comercio', 'PATCH')).status, 403);
 });
 
 test('the legacy monetary positioning checkout is disabled', async (t) => {

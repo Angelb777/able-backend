@@ -11,7 +11,7 @@ const CommercialRequest = require("../models/CommercialRequest");
 const { recordTransition } = require("../services/commercialWorkflow");
 const { assertCommercialRewardStepcoins } = require("../services/rewardPolicy");
 const { verifyToken, checkRole } = require("../middlewares/authMiddleware");
-const { saveImage } = require("../utils/mediaStorage");
+const { saveImage, deleteMediaUrls } = require("../utils/mediaStorage");
 const adminOnly = [verifyToken, checkRole(["admin"])];
 
 const publicRewardFilter = {
@@ -325,6 +325,81 @@ router.patch("/orden-catalogo", ...adminOnly, async (req, res) => {
   } catch (err) {
     console.error("Error al ordenar el catalogo de rewards:", err);
     res.status(500).json({ error: "No se pudo guardar el orden del catalogo" });
+  }
+});
+
+// Editar un descuento o premio creado por Able. Se actualiza el mismo
+// documento para conservar compras, posicion en el catalogo y publicacion.
+router.patch("/:id/admin", ...adminOnly, uploadRewardImages, async (req, res) => {
+  let imagenesNuevas = [];
+  try {
+    const reward = await Reward.findById(req.params.id);
+    if (!reward) return res.status(404).json({ error: "Reward no encontrado" });
+    if (!reward.creadoPorAdmin) {
+      return res.status(403).json({
+        error: "Solo se pueden editar aqui los rewards creados por el Superadmin",
+      });
+    }
+
+    const tipo = String(req.body?.tipo || "");
+    const titulo = String(req.body?.titulo || "").trim();
+    const descripcion = String(req.body?.descripcion || "").trim();
+    const direccion = String(req.body?.direccion || "").trim();
+    const stepcoins = Number(req.body?.stepcoins);
+    const porcentaje = Number(req.body?.porcentaje || 0);
+    const cantidadEuros = Number(req.body?.cantidadEuros || 0);
+    const unidades = Number(req.body?.unidades);
+
+    if (!["descuento", "premio"].includes(tipo) || !titulo) {
+      return res.status(400).json({ error: "Tipo y titulo validos son obligatorios" });
+    }
+    if (!Number.isFinite(stepcoins) || stepcoins < 0) {
+      return res.status(400).json({ error: "Stepcoins no validos" });
+    }
+    if (tipo === "premio" && (!Number.isInteger(unidades) || unidades < 0)) {
+      return res.status(400).json({ error: "Unidades no validas" });
+    }
+    if (tipo === "descuento" && (
+      !Number.isFinite(porcentaje) || porcentaje < 0 || porcentaje > 100
+      || !Number.isFinite(cantidadEuros) || cantidadEuros < 0
+      || (porcentaje <= 0 && cantidadEuros <= 0)
+    )) {
+      return res.status(400).json({ error: "Descuento no valido" });
+    }
+
+    if ((req.files || []).length) {
+      imagenesNuevas = await Promise.all(
+        req.files.map((file) => saveImage(file, "rewards"))
+      );
+    }
+    const imagenesAnteriores = [...(reward.imagenes || [])];
+
+    reward.tipo = tipo;
+    reward.titulo = titulo;
+    reward.descripcion = descripcion;
+    reward.direccion = direccion;
+    reward.stepcoins = stepcoins;
+    reward.porcentaje = tipo === "descuento" ? porcentaje : 0;
+    reward.cantidadEuros = tipo === "descuento" ? cantidadEuros : 0;
+    reward.unidades = tipo === "premio" ? unidades : null;
+    if (imagenesNuevas.length) reward.imagenes = imagenesNuevas;
+
+    await reward.save();
+    if (imagenesNuevas.length) {
+      try {
+        await deleteMediaUrls(imagenesAnteriores);
+      } catch (cleanupError) {
+        console.error("Reward editado, pero fallo la limpieza de imagenes anteriores:", cleanupError);
+      }
+    }
+
+    res.json({ message: "Descuento/Premio actualizado", reward });
+  } catch (err) {
+    if (imagenesNuevas.length) {
+      try { await deleteMediaUrls(imagenesNuevas); } catch (_) { /* limpieza de mejor esfuerzo */ }
+    }
+    console.error("Error al editar reward del Superadmin:", err);
+    res.status(500).json({ error: "No se pudo editar el reward" });
   }
 });
 

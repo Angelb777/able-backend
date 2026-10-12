@@ -183,3 +183,113 @@ test('reward stock only accepts non-negative quantities', () => {
   });
   assert.equal(valid.validateSync(), undefined);
 });
+
+test('superadmin edits its reward in place and preserves catalog metadata', async (t) => {
+  const previousSecret = process.env.JWT_SECRET;
+  const originalUserFindById = User.findById;
+  const originalRewardFindById = Reward.findById;
+  process.env.JWT_SECRET = 'reward-admin-edit-test-secret';
+
+  User.findById = () => ({
+    select() { return this; },
+    lean: async () => ({ _id: 'admin', role: 'admin', firebaseUid: null }),
+  });
+  const reward = {
+    _id: 'reward-1',
+    tipo: 'premio',
+    titulo: 'Titulo anterior',
+    stepcoins: 100,
+    unidades: 4,
+    imagenes: ['/api/media/507f1f77bcf86cd799439011'],
+    creadoPorAdmin: true,
+    ordenCatalogo: 3,
+    compradores: [{ userId: 'buyer-1', validado: false }],
+    publicationStatus: 'published',
+    validado: true,
+    async save() { this.saved = true; },
+  };
+  Reward.findById = async () => reward;
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/rewards', rewardsRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    if (previousSecret == null) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousSecret;
+    User.findById = originalUserFindById;
+    Reward.findById = originalRewardFindById;
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const token = jwt.sign({ id: 'admin' }, process.env.JWT_SECRET);
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/rewards/reward-1/admin`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tipo: 'descuento',
+        titulo: '  Descuento editado  ',
+        descripcion: 'Nueva descripcion',
+        direccion: 'Madrid',
+        stepcoins: 250,
+        porcentaje: 15,
+        cantidadEuros: 0,
+      }),
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(reward.saved, true);
+  assert.equal(reward.titulo, 'Descuento editado');
+  assert.equal(reward.tipo, 'descuento');
+  assert.equal(reward.porcentaje, 15);
+  assert.equal(reward.unidades, null);
+  assert.deepEqual(reward.imagenes, ['/api/media/507f1f77bcf86cd799439011']);
+  assert.equal(reward.ordenCatalogo, 3);
+  assert.deepEqual(reward.compradores, [{ userId: 'buyer-1', validado: false }]);
+  assert.equal(reward.publicationStatus, 'published');
+});
+
+test('superadmin cannot fully edit a commerce reward', async (t) => {
+  const previousSecret = process.env.JWT_SECRET;
+  const originalUserFindById = User.findById;
+  const originalRewardFindById = Reward.findById;
+  process.env.JWT_SECRET = 'reward-commerce-edit-test-secret';
+  User.findById = () => ({
+    select() { return this; },
+    lean: async () => ({ _id: 'admin', role: 'admin', firebaseUid: null }),
+  });
+  Reward.findById = async () => ({ creadoPorAdmin: false });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/rewards', rewardsRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    if (previousSecret == null) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousSecret;
+    User.findById = originalUserFindById;
+    Reward.findById = originalRewardFindById;
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/rewards/reward-1/admin`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${jwt.sign({ id: 'admin' }, process.env.JWT_SECRET)}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ tipo: 'premio', titulo: 'Cambio', stepcoins: 1, unidades: 1 }),
+    },
+  );
+  assert.equal(response.status, 403);
+});

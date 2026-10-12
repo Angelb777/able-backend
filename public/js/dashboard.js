@@ -165,6 +165,8 @@ function bindRewardManagementActions() {
     try {
       if (action === "move") {
         await moverRewardCatalogo(id, Number(button.dataset.direction));
+      } else if (action === "edit") {
+        editarReward(id);
       } else if (action === "edit-units") {
         await editarUnidadesReward(id, Number(button.dataset.currentUnits));
       } else if (action === "delete") {
@@ -2053,6 +2055,7 @@ async function renderRewardsSection() {
   }
 
   seccion.style.display = "block";
+  rewardEditandoId = null;
 
   seccion.innerHTML = `
     <h2>Añadir Descuentos o Premios</h2>
@@ -2094,8 +2097,10 @@ async function renderRewardsSection() {
 
       <label for="imagenes">Imágenes (hasta 3):</label>
       <input type="file" id="imagenes" name="imagenes" accept="image/*" multiple required>
+      <small id="imagenesEdicionAyuda" style="display:none;">Deja este campo vacío para conservar las imágenes actuales.</small>
 
-      <button type="submit">Crear</button>
+      <button type="submit" id="rewardSubmitButton">Crear</button>
+      <button type="button" id="rewardCancelEditButton" style="display:none;">Cancelar edición</button>
     </form>
 
     <h3>${role === "admin" ? "Todos los anuncios publicados y pendientes" : "Mis Anuncios"}</h3>
@@ -2105,6 +2110,7 @@ async function renderRewardsSection() {
 
   document.getElementById("tipo").addEventListener("change", actualizarCampos);
   document.getElementById("formReward").addEventListener("submit", crearReward);
+  document.getElementById("rewardCancelEditButton").addEventListener("click", cancelarEdicionReward);
 
   actualizarCampos();
   cargarMisRewards();
@@ -2112,6 +2118,7 @@ async function renderRewardsSection() {
 
 let rewardsCatalogoAdmin = [];
 let guardandoOrdenCatalogo = false;
+let rewardEditandoId = null;
 
 function rewardEstaPublicado(reward) {
   return Boolean(reward.validado || reward.creadoPorAdmin)
@@ -2146,6 +2153,7 @@ async function crearReward(e) {
 
   const form = document.getElementById("formReward");
   const formData = new FormData(form);
+  const esEdicion = role === "admin" && Boolean(rewardEditandoId);
 
   const tipo = formData.get("tipo");
   if (tipo === "descuento") {
@@ -2154,29 +2162,74 @@ async function crearReward(e) {
 
     if (tipoDescuento === "%") {
       formData.append("porcentaje", valor);
+      formData.append("cantidadEuros", "0");
     } else {
       formData.append("cantidadEuros", valor);
+      formData.append("porcentaje", "0");
     }
   }
 
   try {
-    const res = await fetch("/api/rewards", {
-      method: "POST",
+    const res = await fetch(esEdicion ? `/api/rewards/${rewardEditandoId}/admin` : "/api/rewards", {
+      method: esEdicion ? "PATCH" : "POST",
       body: formData,
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Error al crear");
 
-    alert(role === "admin"
+    alert(esEdicion
+      ? "Descuento/Premio actualizado correctamente."
+      : role === "admin"
       ? "Descuento/Premio publicado por Superadmin."
       : "Solicitud enviada y pendiente de revisión.");
-    form.reset();
-    actualizarCampos();
+    cancelarEdicionReward();
     cargarMisRewards();
   } catch (err) {
     alert(`❌ ${err.message || "Error al crear reward"}`);
     console.error(err);
   }
+}
+
+function editarReward(id) {
+  if (role !== "admin") return;
+  const reward = rewardsCatalogoAdmin.find(item => String(item._id) === String(id));
+  if (!reward?.creadoPorAdmin) return;
+
+  const form = document.getElementById("formReward");
+  if (!form) return;
+  rewardEditandoId = String(id);
+  form.tipo.value = reward.tipo || "descuento";
+  form.titulo.value = reward.titulo || "";
+  form.descripcion.value = reward.descripcion || "";
+  form.direccion.value = reward.direccion || "";
+  form.stepcoins.value = Number(reward.stepcoins) || 0;
+  form.unidades.value = reward.unidades == null ? 0 : Number(reward.unidades);
+  if (Number(reward.porcentaje) > 0) {
+    form.tipoDescuento.value = "%";
+    form.valorDescuento.value = Number(reward.porcentaje);
+  } else {
+    form.tipoDescuento.value = "€";
+    form.valorDescuento.value = Number(reward.cantidadEuros) || 0;
+  }
+
+  form.imagenes.required = false;
+  document.getElementById("imagenesEdicionAyuda").style.display = "block";
+  document.getElementById("rewardSubmitButton").textContent = "Guardar cambios";
+  document.getElementById("rewardCancelEditButton").style.display = "inline-block";
+  actualizarCampos();
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function cancelarEdicionReward() {
+  const form = document.getElementById("formReward");
+  rewardEditandoId = null;
+  if (!form) return;
+  form.reset();
+  form.imagenes.required = true;
+  document.getElementById("imagenesEdicionAyuda").style.display = "none";
+  document.getElementById("rewardSubmitButton").textContent = "Crear";
+  document.getElementById("rewardCancelEditButton").style.display = "none";
+  actualizarCampos();
 }
 
 async function cargarMisRewards() {
@@ -2223,6 +2276,7 @@ async function cargarMisRewards() {
           <button type="button" data-reward-management-action="move" data-reward-id="${commercialEscape(r._id)}" data-direction="-1" ${posicion === 0 ? "disabled" : ""}>&#8593; Subir</button>
           <button type="button" data-reward-management-action="move" data-reward-id="${commercialEscape(r._id)}" data-direction="1" ${posicion === publicados.length - 1 ? "disabled" : ""}>&#8595; Bajar</button>
         </div>` : ""}
+        ${role === "admin" && r.creadoPorAdmin ? `<button type="button" data-reward-management-action="edit" data-reward-id="${commercialEscape(r._id)}">✏️ Editar</button>` : ""}
         ${r.tipo === 'premio' ? `<button type="button" data-reward-management-action="edit-units" data-reward-id="${commercialEscape(r._id)}" data-current-units="${r.unidades == null ? 0 : Number(r.unidades)}">Editar unidades</button>` : ""}
         <button type="button" data-reward-management-action="delete" data-reward-id="${commercialEscape(r._id)}">🗑️ Eliminar</button>
       </div>
