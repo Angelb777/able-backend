@@ -10,7 +10,7 @@ const Payment = require('../api/models/Payment');
 const StepcoinTransaction = require('../api/models/StepcoinTransaction');
 const paymentsRouter = require('../api/routes/payments');
 
-test('web and Flutter Stepcoin stores use their server-verified checkout routes', () => {
+test('Android keeps Google Play while iOS uses Stripe Checkout', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const dashboard = fs.readFileSync(path.join(__dirname, '../public/js/dashboard.js'), 'utf8');
@@ -24,8 +24,11 @@ test('web and Flutter Stepcoin stores use their server-verified checkout routes'
   );
   assert.match(dashboard, /fetch\("\/api\/payments\/stepcoins\/checkout"/);
   assert.match(flutterStore, /PlayBillingService\.instance\.buy/);
+  assert.match(flutterStore, /Platform\.isIOS/);
+  assert.match(flutterStore, /StripeStepcoinService\.createCheckout/);
   assert.match(flutterBilling, /verify-play-purchase/);
-  assert.match(flutterBilling, /verify-app-store-purchase/);
+  assert.doesNotMatch(flutterBilling, /verify-app-store-purchase/);
+  assert.match(flutterBilling, /if \(!Platform\.isAndroid\) return/);
   assert.doesNotMatch(
     dashboard,
     /classList\.contains\("boton-compra"\)[\s\S]{0,800}\/api\/stepcoins\/adjust/,

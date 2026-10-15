@@ -199,6 +199,11 @@ async function handleStripeEvent(event) {
   const stripe = stripeClient();
   const object = event.data.object;
   if (event.type === 'checkout.session.completed') {
+    if (object.mode === 'payment' && object.metadata?.purchaseType === 'stepcoins') {
+      const { fulfillStripeStepcoinCheckout } = require('./stripeStepcoinPurchases');
+      await fulfillStripeStepcoinCheckout(object);
+      return;
+    }
     if (object.mode !== 'subscription' || !object.subscription) return;
     const subscription = await stripe.subscriptions.retrieve(
       typeof object.subscription === 'string' ? object.subscription : object.subscription.id,
@@ -210,6 +215,12 @@ async function handleStripeEvent(event) {
       object.metadata?.ownerId || subscription.metadata?.ownerId,
       object.metadata?.establishmentId || subscription.metadata?.establishmentId,
     );
+    return;
+  }
+  if (event.type === 'checkout.session.async_payment_succeeded'
+      && object.metadata?.purchaseType === 'stepcoins') {
+    const { fulfillStripeStepcoinCheckout } = require('./stripeStepcoinPurchases');
+    await fulfillStripeStepcoinCheckout(object);
     return;
   }
   if (['customer.subscription.created', 'customer.subscription.updated',

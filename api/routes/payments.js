@@ -15,6 +15,17 @@ const {
   consumeProductPurchase,
 } = require('../services/googlePlayBilling');
 const appleAppStore = require('../services/appleAppStore');
+const { stripeClient } = require('../services/stripeMapSubscriptions');
+const {
+  createStripeStepcoinCheckout,
+  fulfillStripeStepcoinCheckout,
+} = require('../services/stripeStepcoinPurchases');
+const {
+  PLAY_PRODUCT_ID_BY_STEPCOINS,
+  STEPCOIN_AMOUNT_BY_APP_STORE_PRODUCT_ID,
+  STEPCOIN_AMOUNT_BY_PLAY_PRODUCT_ID,
+  stepcoinPackagesFor,
+} = require('../services/stepcoinPackages');
 
 const adminOnly = [verifyToken, checkRole(['admin'])];
 
@@ -29,60 +40,8 @@ async function monetaryHistory(userId) {
     .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
 }
 
-// Catálogo autoritativo del checkout. El cliente solo envía la cantidad
-// elegida (o el productId de Play); nunca decide el importe monetario que se
-// registra. Debe coincidir 1:1 con generarPaquetesStepcoins() en el cliente
-// Flutter (lib/roles/client/store_screen.dart).
-const STEPCOIN_PACKAGES_EUR = new Map([
-  [100, 1], [500, 4], [1000, 7], [2000, 12],
-  [5000, 25], [10000, 45], [15000, 65], [20000, 80],
-  [30000, 110], [40000, 130], [50000, 150], [60000, 180],
-  [100000, 200],
-]);
-
-// Catálogo exclusivo para comercios. Usa el mismo saldo Stepcoins, pero solo
-// ofrece los paquetes necesarios para promocionar sus locales físicos.
-const MERCHANT_STEPCOIN_PACKAGES_EUR = new Map([
-  [1500, 10],
-  [15000, 65],
-]);
-
-function stepcoinPackagesFor(role) {
-  return role === 'comercio'
-    ? MERCHANT_STEPCOIN_PACKAGES_EUR
-    : STEPCOIN_PACKAGES_EUR;
-}
-
-// Product IDs de "managed products" que hay que crear en Play Console →
-// Monetiza → Productos dentro de la app. Deben existir con estos mismos IDs
-// exactos antes de poder probar compras reales.
-const PLAY_PRODUCT_ID_BY_STEPCOINS = new Map([
-  [100, 'stepcoins_100'], [500, 'stepcoins_500'],
-  [1000, 'stepcoins_1000'], [1500, 'stepcoins_1500'],
-  [2000, 'stepcoins_2000'], [5000, 'stepcoins_5000'],
-  [10000, 'stepcoins_10000'], [15000, 'stepcoins_15000'],
-  [20000, 'stepcoins_20000'], [30000, 'stepcoins_30000'],
-  [40000, 'stepcoins_40000'], [50000, 'stepcoins_50000'],
-  [60000, 'stepcoins_60000'], [100000, 'stepcoins_100000'],
-]);
-const STEPCOIN_AMOUNT_BY_PLAY_PRODUCT_ID = new Map(
-  Array.from(PLAY_PRODUCT_ID_BY_STEPCOINS, ([stepcoins, id]) => [id, stepcoins]),
-);
-const STEPCOIN_AMOUNT_BY_APP_STORE_PRODUCT_ID = new Map([
-  ['stepcoins_100', 100],
-  ['stepcoins_500', 500],
-  ['stepcoins_1000', 1000],
-  ['stepcoins_2000', 2000],
-  ['stepcoins_5000', 5000],
-  ['stepcoins_10000', 10000],
-  ['stepcoins_15000', 15000],
-  ['stepcoins_20000', 20000],
-  ['stepcoins_30000', 30000],
-  ['stepcoins_40000', 40000],
-  ['stepcoins_50000', 50000],
-  ['stepcoins_100000', 100000],
-]);
-
+// El catálogo compartido decide tanto los importes Stripe como los productos
+// de Google Play. El cliente nunca determina el precio monetario.
 router.get(
   '/stepcoins/packages',
   verifyToken,
@@ -91,6 +50,69 @@ router.get(
     stepcoins, euros, currency: 'EUR',
     playProductId: PLAY_PRODUCT_ID_BY_STEPCOINS.get(stepcoins) || null,
   }))),
+);
+
+router.post(
+  '/stepcoins/stripe-checkout',
+  verifyToken,
+  checkRole(['cliente']),
+  async (req, res) => {
+    const cantidad = Number(req.body.cantidad);
+    const requestId = String(req.body.requestId || '').trim();
+    if (!Number.isInteger(cantidad) || stepcoinPackagesFor(req.user.role).get(cantidad) == null) {
+      return res.status(400).json({ error: 'Paquete de Stepcoins no valido' });
+    }
+    if (!/^[A-Za-z0-9._:-]{8,160}$/.test(requestId)) {
+      return res.status(400).json({ error: 'requestId de compra no valido' });
+    }
+    try {
+      const checkout = await createStripeStepcoinCheckout({
+        req,
+        userId: req.user.id,
+        role: req.user.role,
+        email: req.user.email,
+        cantidad,
+        requestId,
+      });
+      return res.status(201).json(checkout);
+    } catch (error) {
+      console.error('[STRIPE STEPCOINS] No se pudo crear Checkout:', error);
+      return res.status(error.status || 502).json({
+        error: error.status ? error.message : 'No se pudo abrir el pago seguro de Stripe',
+        ...(error.code ? { code: error.code } : {}),
+      });
+    }
+  },
+);
+
+router.get(
+  '/stepcoins/stripe-checkout/:sessionId',
+  verifyToken,
+  checkRole(['cliente']),
+  async (req, res) => {
+    const sessionId = String(req.params.sessionId || '').trim();
+    if (!/^cs_(test_|live_)?[A-Za-z0-9_]+$/.test(sessionId)) {
+      return res.status(400).json({ error: 'Sesion de Stripe no valida' });
+    }
+    try {
+      const checkout = await stripeClient().checkout.sessions.retrieve(sessionId);
+      if (String(checkout.metadata?.userId || '') !== String(req.user.id)
+          || checkout.metadata?.purchaseType !== 'stepcoins') {
+        return res.status(404).json({ error: 'Compra no encontrada' });
+      }
+      const result = await fulfillStripeStepcoinCheckout(checkout);
+      return res.json({
+        status: result.paid ? 'paid' : String(checkout.status || 'open'),
+        paymentStatus: String(checkout.payment_status || 'unpaid'),
+        ...(result.user ? { user: result.user } : {}),
+      });
+    } catch (error) {
+      console.error('[STRIPE STEPCOINS] No se pudo consultar Checkout:', error);
+      return res.status(error.status || 502).json({
+        error: error.status ? error.message : 'No se pudo comprobar el pago de Stripe',
+      });
+    }
+  },
 );
 
 // Crear un registro monetario manual. Solo Superadmin puede certificarlo.

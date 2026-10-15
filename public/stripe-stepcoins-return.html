@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pago Able73</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #080b09; color: #fff; }
+    main { width: min(420px, calc(100% - 40px)); text-align: center; padding: 32px 20px; }
+    img { width: 150px; max-width: 55vw; }
+    h1 { margin: 24px 0 10px; font-size: 24px; }
+    p { color: #b7c2ba; line-height: 1.5; }
+    a { display: inline-block; margin-top: 18px; padding: 14px 24px; border-radius: 14px;
+      background: #66c44b; color: #081006; text-decoration: none; font-weight: 800; }
+  </style>
+</head>
+<body>
+  <main>
+    <img src="/img/Logo%20Able%2073.png" alt="Able73">
+    <h1 id="title">Pago recibido</h1>
+    <p id="message">Vuelve a Able73. Tus Stepcoins apareceran al confirmar el pago.</p>
+    <a href="able73://stripe-return" id="return-link">Volver a Able73</a>
+  </main>
+  <script>
+    const cancelled = new URLSearchParams(location.search).get('result') === 'cancelled';
+    if (cancelled) {
+      document.getElementById('title').textContent = 'Pago cancelado';
+      document.getElementById('message').textContent = 'No se ha realizado ningun cargo.';
+    }
+    setTimeout(() => { location.href = 'able73://stripe-return'; }, 350);
+  </script>
+</body>
+</html>
