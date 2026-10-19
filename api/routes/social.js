@@ -15,15 +15,6 @@ const bountyService = require('../services/bountyService');
 
 const router = express.Router();
 router.use(verifyToken);
-router.use((req, res, next) => {
-  if (req.user.role === 'comercio') {
-    return res.status(403).json({
-      error: 'Las cuentas comercio no participan en la economía social de Stepcoins',
-      code: 'MERCHANT_PURCHASE_ONLY',
-    });
-  }
-  return next();
-});
 
 const TAUNT_COOLDOWN_MS = Number(process.env.TAUNT_COOLDOWN_MS) || 15 * 1000;
 const MIN_BOUNTY = Math.max(
@@ -85,6 +76,19 @@ router.get('/me', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+// El perfil propio contiene identidad y saldo necesarios para completar el
+// inicio de sesion de cualquier rol. El resto del modulo sigue reservado a
+// usuarios que participan en las funciones sociales.
+router.use((req, res, next) => {
+  if (req.user.role === 'comercio') {
+    return res.status(403).json({
+      error: 'Las cuentas comercio no participan en la economía social de Stepcoins',
+      code: 'MERCHANT_PURCHASE_ONLY',
+    });
+  }
+  return next();
 });
 
 router.put('/me/game-mode', async (req, res, next) => {

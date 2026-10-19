@@ -89,6 +89,31 @@ test('social me and users/:id expose only minimal public/self fields', async (t)
     'avatarUrl', 'hasChosenNickname', 'id', 'needsNickname', 'nickname', 'skinSeleccionada', 'stepcoins',
   ]);
   assert.doesNotMatch(JSON.stringify(self), /Nombre Real|secret@example|Dirección/);
+
+  stored.role = 'comercio';
+  const commerceToken = jwt.sign(
+    { id: String(id), role: 'comercio' },
+    process.env.JWT_SECRET,
+  );
+  const commerceHeaders = { authorization: `Bearer ${commerceToken}` };
+  const commerceProfileResponse = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/social/me`,
+    { headers: commerceHeaders },
+  );
+  assert.equal(commerceProfileResponse.status, 200);
+  const commerceProfile = await commerceProfileResponse.json();
+  assert.equal(commerceProfile.role, 'comercio');
+  assert.equal(commerceProfile.stepcoins, 321);
+
+  const commerceSocialResponse = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/social/users/search?q=test`,
+    { headers: commerceHeaders },
+  );
+  assert.equal(commerceSocialResponse.status, 403);
+  assert.equal(
+    (await commerceSocialResponse.json()).code,
+    'MERCHANT_PURCHASE_ONLY',
+  );
 });
 
 test('social relations are keyed by ObjectId, never nickname', () => {
