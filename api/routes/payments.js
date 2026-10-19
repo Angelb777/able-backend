@@ -28,6 +28,10 @@ const {
 } = require('../services/stepcoinPackages');
 
 const adminOnly = [verifyToken, checkRole(['admin'])];
+const WEB_CLIENT_STEPCOIN_AMOUNTS = [
+  100, 500, 1000, 2000, 5000, 10000,
+  15000, 20000, 30000, 40000, 50000, 60000,
+];
 
 function paymentEntry(payment) {
   return { ...payment, entryType: 'money', stepcoinsDelta: Number(payment.stepcoinsDelta || 0) };
@@ -45,11 +49,19 @@ async function monetaryHistory(userId) {
 router.get(
   '/stepcoins/packages',
   verifyToken,
-  checkRole(['comercio']),
-  (req, res) => res.json(Array.from(stepcoinPackagesFor(req.user.role), ([stepcoins, euros]) => ({
-    stepcoins, euros, currency: 'EUR',
-    playProductId: PLAY_PRODUCT_ID_BY_STEPCOINS.get(stepcoins) || null,
-  }))),
+  checkRole(['cliente', 'comercio']),
+  (req, res) => {
+    const catalog = stepcoinPackagesFor(req.user.role);
+    const amounts = req.user.role === 'cliente'
+      ? WEB_CLIENT_STEPCOIN_AMOUNTS
+      : Array.from(catalog.keys());
+    return res.json(amounts.map((stepcoins) => ({
+      stepcoins,
+      euros: catalog.get(stepcoins),
+      currency: 'EUR',
+      playProductId: PLAY_PRODUCT_ID_BY_STEPCOINS.get(stepcoins) || null,
+    })));
+  },
 );
 
 router.post(
@@ -59,6 +71,7 @@ router.post(
   async (req, res) => {
     const cantidad = Number(req.body.cantidad);
     const requestId = String(req.body.requestId || '').trim();
+    const channel = req.body.channel === 'web' ? 'web' : 'mobile';
     if (!Number.isInteger(cantidad) || stepcoinPackagesFor(req.user.role).get(cantidad) == null) {
       return res.status(400).json({ error: 'Paquete de Stepcoins no valido' });
     }
@@ -73,6 +86,7 @@ router.post(
         email: req.user.email,
         cantidad,
         requestId,
+        channel,
       });
       return res.status(201).json(checkout);
     } catch (error) {

@@ -7,7 +7,9 @@ const { stepcoinPackagesFor } = require('./stepcoinPackages');
 
 const PURCHASE_TYPE = 'stepcoins';
 
-async function createStripeStepcoinCheckout({ req, userId, role, email, cantidad, requestId }) {
+async function createStripeStepcoinCheckout({
+  req, userId, role, email, cantidad, requestId, channel = 'mobile',
+}) {
   const price = stepcoinPackagesFor(role).get(cantidad);
   if (price == null) {
     const error = new Error('Paquete de Stepcoins no valido');
@@ -22,7 +24,14 @@ async function createStripeStepcoinCheckout({ req, userId, role, email, cantidad
     role: String(role),
     stepcoins: String(cantidad),
     requestId: String(requestId),
+    checkoutChannel: channel === 'web' ? 'web' : 'mobile',
   };
+  const successUrl = channel === 'web'
+    ? `${baseUrl}/dashboard.html?stripe_stepcoins=success&session_id={CHECKOUT_SESSION_ID}`
+    : `${baseUrl}/stripe-stepcoins-return.html?result=success`;
+  const cancelUrl = channel === 'web'
+    ? `${baseUrl}/dashboard.html?stripe_stepcoins=cancelled`
+    : `${baseUrl}/stripe-stepcoins-return.html?result=cancelled`;
   const checkout = await stripeClient().checkout.sessions.create({
     mode: 'payment',
     locale: 'es',
@@ -41,8 +50,8 @@ async function createStripeStepcoinCheckout({ req, userId, role, email, cantidad
     }],
     metadata,
     payment_intent_data: { metadata },
-    success_url: `${baseUrl}/stripe-stepcoins-return.html?result=success`,
-    cancel_url: `${baseUrl}/stripe-stepcoins-return.html?result=cancelled`,
+    success_url: successUrl,
+    cancel_url: cancelUrl,
   }, {
     idempotencyKey: `stepcoins:${userId}:${requestId}`,
   });
@@ -103,12 +112,13 @@ async function fulfillStripeStepcoinCheckout(checkout) {
       ).select('stepcoins nombre nickname email');
       if (!user) throw new Error('Usuario de la compra Stripe no encontrado');
 
+      const stripeChannel = checkout.metadata?.checkoutChannel === 'web' ? 'web' : 'iOS';
       [payment] = await Payment.create([{
         userId,
         nombre: user.nombre || user.nickname || user.email || 'Usuario',
         cantidad: price,
         stepcoinsDelta: cantidad,
-        motivo: `Compra de ${cantidad} Stepcoins (Stripe iOS)`,
+        motivo: `Compra de ${cantidad} Stepcoins (Stripe ${stripeChannel})`,
         currency: 'EUR',
         fecha: new Date(),
         verified: true,
@@ -120,7 +130,7 @@ async function fulfillStripeStepcoinCheckout(checkout) {
         userId,
         cantidad,
         tipo: 'compra',
-        descripcion: `Compra de ${cantidad} Stepcoins (Stripe iOS)`,
+        descripcion: `Compra de ${cantidad} Stepcoins (Stripe ${stripeChannel})`,
         operationKey: `stepcoin-pack:${providerReference}`,
         metadata: {
           paymentId: payment._id,

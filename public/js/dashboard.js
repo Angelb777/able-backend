@@ -1144,6 +1144,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     alert("Error al obtener datos actualizados del usuario");
   }
 
+  await handleStepcoinStripeReturn();
+
   const menuItems = {
     cliente: [
       "Inicio",
@@ -1583,14 +1585,17 @@ async function renderInicio() {
 
   let profile = {};
   let socialProfile = {};
+  let stepcoinPackages = [];
   try {
-    const [profileResponse, socialResponse] = await Promise.all([
+    const [profileResponse, socialResponse, packagesResponse] = await Promise.all([
       fetch(`/api/user/data?userId=${encodeURIComponent(userId)}`),
-      fetch("/api/social/me")
+      fetch("/api/social/me"),
+      fetch("/api/payments/stepcoins/packages")
     ]);
     if (!profileResponse.ok) throw new Error("No se pudieron cargar los datos personales");
     profile = await profileResponse.json();
     if (socialResponse.ok) socialProfile = await socialResponse.json();
+    if (packagesResponse.ok) stepcoinPackages = await packagesResponse.json();
   } catch (error) {
     console.error("Error cargando el perfil compartido con Flutter:", error);
   }
@@ -1634,7 +1639,7 @@ async function renderInicio() {
           <div><span class="user-eyebrow">Tienda</span><h3 id="stepcoinStoreTitle">Recarga tus Stepcoins</h3></div>
           <p>Elige el pack que mejor encaje contigo.</p>
         </div>
-        <div class="stepcoin-grid">${generarPaquetesStepcoins()}</div>
+        <div class="stepcoin-grid">${generarPaquetesStepcoins(stepcoinPackages)}</div>
       </section>
 
       <section class="user-home-section user-account-section" aria-labelledby="accountTitle">
@@ -1674,17 +1679,15 @@ async function renderInicio() {
         boton.disabled = true;
         boton.textContent = "Procesando…";
         const requestId = `${user._id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        const res = await fetch("/api/payments/stepcoins/checkout", {
+        const res = await fetch("/api/payments/stepcoins/stripe-checkout", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cantidad, requestId })
+          body: JSON.stringify({ cantidad, requestId, channel: "web" })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Error al procesar el pago");
-        alert("✅ ¡Compra realizada con éxito!");
-        user.stepcoins = Number(data.user.stepcoins);
-        localStorage.setItem("user", JSON.stringify(user));
-        renderInicio();
+        if (!data.url) throw new Error("Stripe no ha devuelto una URL de pago");
+        window.location.assign(data.url);
       } catch (err) {
         console.error("❌ Error al comprar stepcoins:", err);
         alert("❌ Hubo un problema al procesar tu compra.");
@@ -1744,32 +1747,65 @@ async function guardarPerfilUsuario(event) {
   }
 }
 
-function generarPaquetesStepcoins() {
-  const paquetes = [
-    { cantidad: 100, precio: 1 },
-    { cantidad: 500, precio: 4 },
-    { cantidad: 1000, precio: 7 },
-    { cantidad: 2000, precio: 12 },
-    { cantidad: 5000, precio: 25 },
-    { cantidad: 10000, precio: 45 },
-    { cantidad: 15000, precio: 65 },
-    { cantidad: 20000, precio: 80 },
-    { cantidad: 30000, precio: 110 },
-    { cantidad: 40000, precio: 130 },
-    { cantidad: 50000, precio: 150 },
-    { cantidad: 60000, precio: 180 },
-  ];
-
+function generarPaquetesStepcoins(paquetes) {
+  if (!Array.isArray(paquetes) || paquetes.length === 0) {
+    return '<p class="user-home-loading">No se pudieron cargar los paquetes disponibles.</p>';
+  }
   return paquetes.map(p =>
     `<div class="stepcoin-card">
       <span class="stepcoin-pack-label">Pack Stepcoins</span>
-      <h3>${formatStepcoins(p.cantidad)}</h3>
-      <p><strong>${p.precio} €</strong></p>
-      <button class="boton-compra" data-cantidad="${p.cantidad}" data-precio="${p.precio}">
+      <h3>${formatStepcoins(p.stepcoins)}</h3>
+      <p><strong>${Number(p.euros).toFixed(2)} €</strong></p>
+      <button class="boton-compra" data-cantidad="${Number(p.stepcoins)}">
         Comprar pack
       </button>
     </div>`
   ).join("");
+}
+
+async function handleStepcoinStripeReturn() {
+  const params = new URLSearchParams(window.location.search);
+  const result = params.get("stripe_stepcoins");
+  if (!result) return;
+
+  const cleanReturnUrl = () => {
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete("stripe_stepcoins");
+    cleanUrl.searchParams.delete("session_id");
+    window.history.replaceState({}, "", cleanUrl);
+  };
+
+  if (result === "cancelled") {
+    cleanReturnUrl();
+    alert("Pago cancelado. No se ha realizado ningún cargo.");
+    return;
+  }
+
+  const sessionId = params.get("session_id");
+  if (result !== "success" || !sessionId) {
+    cleanReturnUrl();
+    alert("No se ha podido comprobar el pago de Stripe.");
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `/api/payments/stepcoins/stripe-checkout/${encodeURIComponent(sessionId)}`
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "No se pudo comprobar el pago");
+    if (data.status !== "paid" || !data.user) {
+      alert("El pago sigue pendiente. El saldo se actualizará cuando Stripe lo confirme.");
+      return;
+    }
+    user.stepcoins = Number(data.user.stepcoins);
+    localStorage.setItem("user", JSON.stringify(user));
+    cleanReturnUrl();
+    alert("Pago confirmado. Los Stepcoins ya están disponibles en tu cuenta.");
+  } catch (error) {
+    console.error("Error comprobando el pago de Stepcoins en Stripe:", error);
+    alert(error.message || "No se pudo comprobar el pago de Stripe.");
+  }
 }
 
 async function renderMisPagos() {

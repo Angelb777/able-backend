@@ -12,6 +12,12 @@ const paymentSchema = new mongoose.Schema({
   fecha: { type: Date, default: Date.now }, // ⬅️ esto genera una fecha válida
   verified: { type: Boolean, default: false },
   verifiedAt: { type: Date },
+  status: {
+    type: String,
+    enum: ['confirmed', 'refunded', 'revoked'],
+    default: 'confirmed',
+  },
+  refundedAt: Date,
   source: {
     type: String,
     enum: ['admin_manual', 'payment_provider', 'platform_checkout'],

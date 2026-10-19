@@ -22,7 +22,11 @@ test('Android keeps Google Play while iOS uses Stripe Checkout', () => {
     path.join(__dirname, '../../ablee/lib/services/play_billing_service.dart'),
     'utf8',
   );
-  assert.match(dashboard, /fetch\("\/api\/payments\/stepcoins\/checkout"/);
+  assert.match(dashboard, /fetch\("\/api\/payments\/stepcoins\/stripe-checkout"/);
+  assert.match(dashboard, /channel:\s*"web"/);
+  assert.match(dashboard, /window\.location\.assign\(data\.url\)/);
+  assert.match(dashboard, /stripe-checkout\/\$\{encodeURIComponent\(sessionId\)\}/);
+  assert.match(dashboard, /data\.status !== "paid"/);
   assert.match(flutterStore, /PlayBillingService\.instance\.buy/);
   assert.match(flutterStore, /Platform\.isIOS/);
   assert.match(flutterStore, /StripeStepcoinService\.createCheckout/);
@@ -189,6 +193,21 @@ test('Stepcoin checkout rejects unauthenticated and non-catalog purchases', asyn
     body: JSON.stringify({ cantidad: 999999, requestId: 'purchase-test-002' }),
   });
   assert.equal(invalid.status, 400);
+
+  const packagesResponse = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/payments/stepcoins/packages`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  assert.equal(packagesResponse.status, 200);
+  const packages = await packagesResponse.json();
+  assert.deepEqual(
+    packages.map((item) => [item.stepcoins, item.euros]),
+    [
+      [100, 1], [500, 4], [1000, 7], [2000, 12],
+      [5000, 25], [10000, 45], [15000, 65], [20000, 80],
+      [30000, 110], [40000, 130], [50000, 150], [60000, 180],
+    ],
+  );
 });
 
 test('payment history contains only monetary Payment records', async (t) => {

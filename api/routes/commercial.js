@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const multer = require('multer');
 const mongoose = require('mongoose');
 const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
@@ -25,6 +26,12 @@ const {
   addOneYear, recordTransition,
 } = require('../services/commercialWorkflow');
 const { assertCommercialRewardStepcoins } = require('../services/rewardPolicy');
+const appleAppStore = require('../services/appleAppStore');
+const googlePlayBilling = require('../services/googlePlayBilling');
+const {
+  MAP_STORE_PRODUCTS, mapStoreProduct, storeProviderReference,
+} = require('../services/mapStoreProducts');
+const mapStorePurchaseService = require('../services/mapStorePurchaseService');
 
 const router = express.Router();
 const commerceOnly = [verifyToken, checkRole(['comercio'])];
@@ -155,6 +162,72 @@ router.get('/specifications', ...commerceOrAdmin, (_req, res) => {
   res.json(specifications());
 });
 
+// App Store Server Notifications V2. Apple firma el payload completo; no se
+// confía en identificadores enviados sin verificar.
+router.post('/store-notifications/apple', async (req, res) => {
+  try {
+    const notification = await appleAppStore.verifyAppStoreNotification(
+      req.body?.signedPayload,
+    );
+    const signedTransaction = notification?.data?.signedTransactionInfo;
+    if (!signedTransaction) return res.sendStatus(200);
+    const verified = await appleAppStore.verifyAppStoreTransaction(signedTransaction);
+    const transactionId = String(verified.transaction?.transactionId || '').trim();
+    const revoked = verified.transaction?.revocationDate != null
+      || ['REFUND', 'REVOKE'].includes(String(notification.notificationType || ''));
+    if (transactionId && revoked) {
+      await mapStorePurchaseService.revokeMapPurchase(
+        `app-store:${transactionId}`,
+        'refunded',
+      );
+    }
+    return res.sendStatus(200);
+  } catch (error) {
+    console.error('[APP STORE NOTIFICATION] Notificación rechazada:', error);
+    return res.status(400).json({ error: 'Notificación de App Store no válida' });
+  }
+});
+
+// Google envía RTDN mediante una suscripción push de Pub/Sub. El token es una
+// segunda barrera además de la verificación posterior del purchaseToken.
+router.post('/store-notifications/google', async (req, res) => {
+  const expected = String(process.env.GOOGLE_PLAY_RTDN_TOKEN || '').trim();
+  const received = String(
+    req.get('X-Able-Google-Notification-Token') || req.query.token || '',
+  ).trim();
+  if (!expected) return res.status(503).json({ error: 'RTDN no configurado' });
+  const expectedBuffer = Buffer.from(expected);
+  const receivedBuffer = Buffer.from(received);
+  const validSecret = expectedBuffer.length === receivedBuffer.length
+    && crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+  if (!validSecret) return res.status(401).json({ error: 'Notificación no autorizada' });
+  try {
+    const encoded = String(req.body?.message?.data || '');
+    const notification = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+    if (notification.packageName !== googlePlayBilling.packageName) {
+      return res.status(400).json({ error: 'Paquete de Google Play no válido' });
+    }
+    const oneTime = notification.oneTimeProductNotification;
+    const voided = notification.voidedPurchaseNotification;
+    if (oneTime && !mapStoreProduct(oneTime.sku)) return res.sendStatus(200);
+    if (voided && Number(voided.productType) !== 2) return res.sendStatus(200);
+    const purchaseToken = String(
+      voided?.purchaseToken || oneTime?.purchaseToken || '',
+    ).trim();
+    const canceled = Boolean(voided) || Number(oneTime?.notificationType) === 2;
+    if (purchaseToken && canceled) {
+      await mapStorePurchaseService.revokeMapPurchase(
+        `google-play:${purchaseToken}`,
+        'refunded',
+      );
+    }
+    return res.sendStatus(200);
+  } catch (error) {
+    console.error('[GOOGLE PLAY RTDN] Notificación no válida:', error);
+    return res.status(400).json({ error: 'Notificación de Google Play no válida' });
+  }
+});
+
 function locationPayload(body) {
   return {
     legalName: String(body.legalName || '').trim(),
@@ -197,6 +270,25 @@ function assertAvailableMapPromoCode(promotion, locationId, now = new Date()) {
     const error = new Error('El código promocional no es válido para este local');
     error.status = 409;
     error.code = 'INVALID_PROMOTION_CODE';
+    throw error;
+  }
+}
+
+async function assertNoActiveLegacySubscription(ownerId, locationId) {
+  const current = await PromocionComprada.findOne({
+    comercioId: ownerId,
+    establishmentId: locationId,
+    stripeSubscriptionId: { $ne: null },
+  }).select('stripeSubscriptionId stripeSubscriptionStatus');
+  if (current?.stripeSubscriptionId
+      && !['canceled', 'unpaid', 'incomplete_expired'].includes(
+        current.stripeSubscriptionStatus,
+      )) {
+    const error = new Error(
+      'Este local mantiene una suscripciÃ³n web activa. CancÃ©lala o espera a que termine antes de comprar un periodo en la app.',
+    );
+    error.status = 409;
+    error.code = 'LEGACY_SUBSCRIPTION_ACTIVE';
     throw error;
   }
 }
@@ -399,8 +491,174 @@ router.get('/map-plans', ...commerceOnly, async (_req, res, next) => {
       priceCents: item.priceCents,
       currency: item.currency,
       recurringInterval: item.recurringInterval,
+      storeProductId: Object.values(MAP_STORE_PRODUCTS)
+        .find((product) => product.planCode === item.code)?.productId || null,
     })));
   } catch (error) { next(error); }
+});
+
+router.post('/locations/:id/validate-promotion-code', ...commerceOnly, async (req, res) => {
+  try {
+    const location = await Establishment.findOne({
+      _id: req.params.id, ownerId: req.user.id, archived: { $ne: true },
+    });
+    if (!location) return res.status(404).json({ error: 'Local no encontrado' });
+    const code = String(req.body.promotionCode || '').trim().toUpperCase();
+    if (!code) return res.status(400).json({ error: 'Introduce un código promocional' });
+    const promotion = await MapPromoCode.findOne({ code });
+    assertAvailableMapPromoCode(promotion, location._id);
+    const freeMonths = Number(promotion.freeMonths || 0);
+    const discountPercent = Number(promotion.discountPercent || 0);
+    return res.json({
+      valid: true,
+      code: promotion.code,
+      free: freeMonths > 0,
+      freeMonths,
+      discountPercent,
+      mobileSupported: freeMonths > 0,
+      message: freeMonths > 0
+        ? `${freeMonths} meses de publicación gratuita`
+        : 'Este descuento requiere una oferta configurada en App Store y Google Play',
+    });
+  } catch (error) {
+    return res.status(error.status || 400).json({
+      error: error.message,
+      ...(error.code ? { code: error.code } : {}),
+    });
+  }
+});
+
+router.post('/locations/:id/store-intent', ...commerceOnly, async (req, res) => {
+  try {
+    const location = await Establishment.findOne({
+      _id: req.params.id, ownerId: req.user.id, archived: { $ne: true },
+    });
+    if (!location) return res.status(404).json({ error: 'Local no encontrado' });
+    if (location.status !== 'approved') {
+      return res.status(409).json({
+        error: 'Able73 debe aprobar el establecimiento antes de contratar su promoción',
+        code: 'ESTABLISHMENT_NOT_APPROVED',
+      });
+    }
+    const product = mapStoreProduct(req.body.productId);
+    if (!product) return res.status(404).json({ error: 'Plan no disponible' });
+    await assertNoActiveLegacySubscription(req.user.id, location._id);
+    await ensureDefaultMapPlans();
+    const plan = await MapPlan.findOne({ code: product.planCode, active: true });
+    if (!plan) return res.status(404).json({ error: 'Plan no disponible' });
+
+    const promotionCode = String(req.body.promotionCode || '').trim().toUpperCase();
+    if (promotionCode) {
+      const promotion = await MapPromoCode.findOne({ code: promotionCode });
+      assertAvailableMapPromoCode(promotion, location._id);
+      if (Number(promotion.freeMonths) > 0) {
+        const subscription = await publishFreeMapPromotion({
+          location, ownerId: req.user.id, plan, promotion,
+        });
+        return res.status(201).json({ free: true, subscription });
+      }
+      return res.status(409).json({
+        error: 'Este descuento todavía no tiene una oferta equivalente en Apple y Google',
+        code: 'STORE_PROMOTION_NOT_CONFIGURED',
+      });
+    }
+    return res.json({ free: false, product });
+  } catch (error) {
+    return res.status(error.status || 400).json({
+      error: error.message,
+      ...(error.code ? { code: error.code } : {}),
+    });
+  }
+});
+
+router.post('/locations/:id/verify-store-purchase', ...commerceOnly, async (req, res) => {
+  const platform = String(req.body.platform || '').trim();
+  const product = mapStoreProduct(req.body.productId);
+  if (!['ios', 'android'].includes(platform) || !product) {
+    return res.status(400).json({ error: 'Plataforma o producto no válido' });
+  }
+  try {
+    const location = await Establishment.findOne({
+      _id: req.params.id, ownerId: req.user.id, archived: { $ne: true },
+    });
+    if (!location) return res.status(404).json({ error: 'Local no encontrado' });
+    if (location.status !== 'approved') {
+      return res.status(409).json({
+        error: 'El local ya no está aprobado. Contacta con Able73 para revisar la compra.',
+        code: 'ESTABLISHMENT_NOT_APPROVED',
+      });
+    }
+    await assertNoActiveLegacySubscription(req.user.id, location._id);
+    const owner = await User.findById(req.user.id)
+      .select('email nombre nickname role').lean();
+    if (!owner) return res.status(404).json({ error: 'Cuenta comercio no encontrada' });
+
+    let provider;
+    let providerReference;
+    let transactionId = '';
+    let purchaseToken = '';
+    let environment = '';
+    if (platform === 'ios') {
+      if (!appleAppStore.appStoreVerificationAvailable()) {
+        return res.status(503).json({
+          error: 'La verificación de App Store no está configurada',
+          code: 'APP_STORE_NOT_CONFIGURED',
+        });
+      }
+      const purchaseID = String(req.body.purchaseId || '').trim();
+      const verified = await appleAppStore.verifyAppStoreTransaction(
+        req.body.verificationData,
+      );
+      transactionId = appleAppStore.validateAppStoreTransaction(
+        verified.transaction,
+        { productId: product.productId, purchaseID },
+      );
+      provider = 'app_store';
+      providerReference = storeProviderReference(platform, transactionId);
+      environment = String(verified.environment || '');
+    } else {
+      if (!googlePlayBilling.playBillingAvailable()) {
+        return res.status(503).json({
+          error: 'La verificación de Google Play no está configurada',
+          code: 'PLAY_BILLING_NOT_CONFIGURED',
+        });
+      }
+      purchaseToken = String(req.body.verificationData || '').trim();
+      if (!purchaseToken) return res.status(400).json({ error: 'Token de compra no válido' });
+      const googlePurchase = await googlePlayBilling.getProductPurchase(
+        product.productId,
+        purchaseToken,
+      );
+      if (Number(googlePurchase.purchaseState) !== 0) {
+        return res.status(409).json({
+          error: 'La compra todavía no está completada',
+          code: 'PURCHASE_NOT_COMPLETED',
+        });
+      }
+      transactionId = String(googlePurchase.orderId || req.body.purchaseId || '').trim();
+      provider = 'google_play';
+      providerReference = storeProviderReference(platform, purchaseToken);
+    }
+
+    const result = await mapStorePurchaseService.applyVerifiedMapPurchase({
+      owner, location, product, provider, providerReference,
+      transactionId, purchaseToken, environment,
+    });
+    if (platform === 'android') {
+      try {
+        await googlePlayBilling.consumeProductPurchase(product.productId, purchaseToken);
+      } catch (consumeError) {
+        console.error('[MAP STORE] Compra acreditada pero no consumida:', consumeError);
+      }
+    }
+    return res.status(result.duplicate ? 200 : 201).json(result);
+  } catch (error) {
+    console.error('[MAP STORE] No se pudo verificar la compra:', error);
+    return res.status(error.status || 400).json({
+      error: error.status ? error.message : 'No se pudo verificar la compra con la tienda',
+      ...(error.code ? { code: error.code } : {}),
+    });
+  }
 });
 
 router.post('/locations/:id/checkout', ...commerceOnly, async (req, res) => {
@@ -660,7 +918,7 @@ router.post('/requests', ...commerceOnly, uploadFields, async (req, res) => {
     }
     if (type === 'positioning') {
       return res.status(410).json({
-        error: 'El posicionamiento antiguo ya no admite pagos. Contrata la promoción del local con Stepcoins.',
+        error: 'El posicionamiento antiguo ya no admite pagos. Contrata la promoción desde Mi local.',
         code: 'USE_MERCHANT_LOCAL_PROMOTION',
       });
     }
@@ -808,7 +1066,7 @@ async function payableCommercialRequest(requestId, ownerId) {
   if (!request) throw Object.assign(new Error('Solicitud no encontrada'), { status: 404 });
   if (request.type === 'positioning') {
     throw Object.assign(
-      new Error('El posicionamiento antiguo ya no admite pagos. Contrata la promoción del local con Stepcoins.'),
+      new Error('El posicionamiento antiguo ya no admite pagos. Contrata la promoción desde Mi local.'),
       { status: 410, code: 'USE_MERCHANT_LOCAL_PROMOTION' },
     );
   }

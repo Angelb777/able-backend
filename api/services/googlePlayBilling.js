@@ -43,7 +43,7 @@ const credentials = loadCredentials();
 if (!credentials) {
   console.warn(
     '⚠️  Google Play Billing sin credenciales (GOOGLE_PLAY_SERVICE_ACCOUNT_JSON/PATH). ' +
-      'La verificacion de compras de Stepcoins no estara disponible.',
+      'La verificacion de compras no estara disponible.',
   );
 }
 
@@ -81,6 +81,7 @@ async function consumeProductPurchase(productId, purchaseToken) {
 }
 
 module.exports = {
+  packageName: PACKAGE_NAME,
   playBillingAvailable,
   getProductPurchase,
   consumeProductPurchase,

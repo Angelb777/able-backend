@@ -53,6 +53,50 @@ test('Stripe Stepcoin Checkout uses the authoritative price and idempotency key'
   assert.match(options.idempotencyKey, /^stepcoins:/);
 });
 
+test('web Stripe Checkout returns to the dashboard without changing the mobile return flow', async (t) => {
+  const previousKey = process.env.STRIPE_SECRET_KEY;
+  const previousBase = process.env.APP_BASE_URL;
+  process.env.STRIPE_SECRET_KEY = 'sk_test_stepcoins_web';
+  process.env.APP_BASE_URL = 'https://able73.com';
+  const requests = [];
+  stripeMap.setStripeClientForTests({
+    checkout: {
+      sessions: {
+        create: async (body) => {
+          requests.push(body);
+          return { id: `cs_test_${requests.length}`, url: 'https://checkout.stripe.com/test' };
+        },
+      },
+    },
+  });
+  t.after(() => {
+    if (previousKey == null) delete process.env.STRIPE_SECRET_KEY;
+    else process.env.STRIPE_SECRET_KEY = previousKey;
+    if (previousBase == null) delete process.env.APP_BASE_URL;
+    else process.env.APP_BASE_URL = previousBase;
+    stripeMap.setStripeClientForTests(null);
+  });
+
+  const base = {
+    req: {}, userId: new mongoose.Types.ObjectId(), role: 'cliente',
+    email: 'buyer@example.test', cantidad: 500,
+  };
+  await stripeStepcoins.createStripeStepcoinCheckout({
+    ...base, requestId: 'web-purchase-001', channel: 'web',
+  });
+  await stripeStepcoins.createStripeStepcoinCheckout({
+    ...base, requestId: 'mobile-purchase-001', channel: 'mobile',
+  });
+
+  assert.match(requests[0].success_url, /dashboard\.html\?stripe_stepcoins=success/);
+  assert.match(requests[0].success_url, /session_id=\{CHECKOUT_SESSION_ID\}$/);
+  assert.match(requests[0].cancel_url, /dashboard\.html\?stripe_stepcoins=cancelled$/);
+  assert.equal(requests[0].metadata.checkoutChannel, 'web');
+  assert.match(requests[1].success_url, /stripe-stepcoins-return\.html\?result=success$/);
+  assert.match(requests[1].cancel_url, /stripe-stepcoins-return\.html\?result=cancelled$/);
+  assert.equal(requests[1].metadata.checkoutChannel, 'mobile');
+});
+
 test('a paid Stripe Checkout credits Stepcoins exactly once', async (t) => {
   const originals = {
     startSession: mongoose.startSession,
@@ -116,6 +160,7 @@ test('a paid Stripe Checkout credits Stepcoins exactly once', async (t) => {
       purchaseType: 'stepcoins',
       userId: String(userId),
       stepcoins: '500',
+      checkoutChannel: 'web',
     },
   };
 
@@ -128,6 +173,7 @@ test('a paid Stripe Checkout credits Stepcoins exactly once', async (t) => {
   assert.equal(increments, 1);
   assert.equal(storedPayment.source, 'payment_provider');
   assert.equal(storedPayment.providerReference, 'stripe:checkout:cs_live_stepcoins_001');
+  assert.match(storedPayment.motivo, /Stripe web/);
   assert.equal(storedTransaction.metadata.stripePaymentIntentId, 'pi_live_stepcoins_001');
 });
 

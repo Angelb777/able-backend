@@ -88,7 +88,10 @@ async function verifyAppStoreTransaction(signedTransaction) {
   throw lastError || new Error('Apple rechazo la transaccion');
 }
 
-function validateAppStoreTransaction(transaction, { productId, purchaseID }) {
+function validateAppStoreTransaction(
+  transaction,
+  { productId, purchaseID, allowedTypes = ['Consumable'] },
+) {
   const transactionId = String(transaction?.transactionId || '').trim();
   if (!/^\d+$/.test(transactionId)) {
     throw Object.assign(new Error('transactionId de App Store no valido'), { status: 400 });
@@ -102,8 +105,8 @@ function validateAppStoreTransaction(transaction, { productId, purchaseID }) {
   if (transaction.productId !== productId) {
     throw Object.assign(new Error('El producto no coincide con la transaccion'), { status: 400 });
   }
-  if (transaction.type !== 'Consumable' || Number(transaction.quantity) !== 1) {
-    throw Object.assign(new Error('La transaccion no es un consumible valido'), { status: 400 });
+  if (!allowedTypes.includes(transaction.type) || Number(transaction.quantity) !== 1) {
+    throw Object.assign(new Error('El tipo de transaccion de App Store no es valido'), { status: 400 });
   }
   if (transaction.revocationDate != null) {
     throw Object.assign(new Error('La compra fue revocada por App Store'), { status: 409 });
@@ -114,8 +117,27 @@ function validateAppStoreTransaction(transaction, { productId, purchaseID }) {
   return transactionId;
 }
 
+async function verifyAppStoreNotification(signedPayload) {
+  const value = String(signedPayload || '').trim();
+  if (!value) throw new Error('La notificacion firmada de App Store esta vacia');
+  const configured = state();
+  if (!configured.verifiers.length) {
+    throw configured.error || new Error('App Store no esta configurado');
+  }
+  let lastError;
+  for (const candidate of configured.verifiers) {
+    try {
+      return await candidate.verifier.verifyAndDecodeNotification(value);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('Apple rechazo la notificacion');
+}
+
 module.exports = {
   appStoreVerificationAvailable,
   verifyAppStoreTransaction,
+  verifyAppStoreNotification,
   validateAppStoreTransaction,
 };

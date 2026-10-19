@@ -6,7 +6,7 @@ const DEFAULT_MAP_PLANS = [
   {
     code: 'MAP_MONTHLY', title: '1 mes',
     description: 'Suscripción mensual. Renueva automáticamente hasta que la canceles.',
-    durationMonths: 1, priceEuros: 10, priceCents: 1000,
+    durationMonths: 1, priceEuros: 9.99, priceCents: 999,
     currency: 'EUR', recurringInterval: 'month', recurringIntervalCount: 1,
     sortOrder: 10,
   },

@@ -316,6 +316,10 @@ mongoose.connect(uri)
     console.log(`   Host: ${conn.host}`);
     console.log(`   DB:   ${conn.name}`);
     await require('./api/services/mapSubscriptions').ensureEstablishmentLocationIndexes();
+    // La unicidad de providerReference es la barrera definitiva frente a dos
+    // verificaciones simultÃ¡neas de la misma compra. No se abre el puerto
+    // hasta que Mongo haya creado/validado ese Ã­ndice.
+    await require('./api/models/MapPromotionPurchase').init();
     require('./api/services/bountyService').startExpiryWorker();
 
     // ⬇️⬇️⬇️  USAR server.listen (no app.listen)  ⬇️⬇️⬇️

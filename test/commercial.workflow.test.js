@@ -281,7 +281,7 @@ test('the legacy monetary positioning checkout is disabled', async (t) => {
 
   assert.equal(response.status, 410);
   assert.equal(body.code, 'USE_MERCHANT_LOCAL_PROMOTION');
-  assert.match(body.error, /Stepcoins/);
+  assert.match(body.error, /Mi local/);
   assert.equal(request.status, 'pending_payment');
   assert.equal(request.paymentStatus, 'pending');
   assert.equal(positioningWrites, 0);
