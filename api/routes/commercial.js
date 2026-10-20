@@ -45,15 +45,26 @@ const upload = multer({
       'image/png', 'image/jpeg', 'image/webp', 'image/gif',
       'application/pdf', 'application/zip', 'application/x-zip-compressed',
     ]);
-    cb(allowed.has(file.mimetype) ? null : new Error('Formato de material no permitido'),
-      allowed.has(file.mimetype));
+    // Algunos selectores Android envían imágenes válidas como octet-stream.
+    // La firma binaria se valida después en mediaStorage antes de guardarlas.
+    const genericWithKnownExtension = file.mimetype === 'application/octet-stream'
+      && /\.(png|jpe?g|webp|gif|pdf|zip)$/i.test(file.originalname || '');
+    const accepted = allowed.has(file.mimetype) || genericWithKnownExtension;
+    const message = file.fieldname === 'logo'
+      ? 'El logo debe ser una imagen PNG, JPG, WebP o GIF de hasta 20 MB'
+      : 'El archivo debe ser PNG, JPG, WebP, GIF, PDF o ZIP y ocupar menos de 20 MB';
+    cb(accepted ? null : new Error(message), accepted);
   },
 });
 
 function uploadFields(req, res, next) {
   upload.fields([{ name: 'logo', maxCount: 1 }, { name: 'materials', maxCount: 10 }])(
     req, res, (error) => error
-      ? res.status(400).json({ error: error.message })
+      ? res.status(400).json({
+        error: error.code === 'LIMIT_FILE_SIZE'
+          ? 'El archivo supera el máximo permitido de 20 MB'
+          : error.message,
+      })
       : next()
   );
 }
@@ -534,12 +545,6 @@ router.post('/locations/:id/store-intent', ...commerceOnly, async (req, res) => 
       _id: req.params.id, ownerId: req.user.id, archived: { $ne: true },
     });
     if (!location) return res.status(404).json({ error: 'Local no encontrado' });
-    if (location.status !== 'approved') {
-      return res.status(409).json({
-        error: 'Able73 debe aprobar el establecimiento antes de contratar su promoción',
-        code: 'ESTABLISHMENT_NOT_APPROVED',
-      });
-    }
     const product = mapStoreProduct(req.body.productId);
     if (!product) return res.status(404).json({ error: 'Plan no disponible' });
     await assertNoActiveLegacySubscription(req.user.id, location._id);
@@ -582,12 +587,6 @@ router.post('/locations/:id/verify-store-purchase', ...commerceOnly, async (req,
       _id: req.params.id, ownerId: req.user.id, archived: { $ne: true },
     });
     if (!location) return res.status(404).json({ error: 'Local no encontrado' });
-    if (location.status !== 'approved') {
-      return res.status(409).json({
-        error: 'El local ya no está aprobado. Contacta con Able73 para revisar la compra.',
-        code: 'ESTABLISHMENT_NOT_APPROVED',
-      });
-    }
     await assertNoActiveLegacySubscription(req.user.id, location._id);
     const owner = await User.findById(req.user.id)
       .select('email nombre nickname role').lean();
@@ -671,12 +670,6 @@ router.post('/locations/:id/checkout', ...commerceOnly, async (req, res) => {
       _id: req.params.id, ownerId: req.user.id, archived: { $ne: true },
     });
     if (!location) return res.status(404).json({ error: 'Local no encontrado' });
-    if (location.status !== 'approved') {
-      return res.status(409).json({
-        error: 'Able73 debe aprobar el establecimiento antes de contratar su promoción',
-        code: 'ESTABLISHMENT_NOT_APPROVED',
-      });
-    }
 
     await ensureDefaultMapPlans();
     const plan = await MapPlan.findOne({ _id: req.body.planId, active: true });
@@ -876,7 +869,7 @@ router.put('/establishment', ...commerceOnly, uploadFields, async (req, res) => 
         description: String(req.body.description || '').trim(), address,
         city: String(req.body.city || '').trim(), country: String(req.body.country || '').trim(),
         phone: String(req.body.phone || '').trim(), website: String(req.body.website || '').trim(),
-        logoUrl, lat, lng, status: 'pending_review', reviewNotes: '',
+        logoUrl, lat, lng, status: 'approved', reviewNotes: '',
       } },
       { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
     );
@@ -932,7 +925,10 @@ router.post('/requests', ...commerceOnly, uploadFields, async (req, res) => {
       return res.status(400).json({ error: 'Modalidad no válida para este tipo de solicitud' });
     }
 
-    const establishment = await Establishment.findOne({ ownerId: req.user.id });
+    const establishment = await Establishment.findOne({
+      ownerId: req.user.id,
+      archived: { $ne: true },
+    });
     if (!establishment) {
       return res.status(409).json({ error: 'Primero debes completar Mi establecimiento' });
     }

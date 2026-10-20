@@ -564,7 +564,7 @@ test.skip('legacy Stepcoin location checkout has been replaced by Stripe subscri
   assert.equal(debitCount, 1);
 });
 
-test('a commerce opens Stripe Checkout with authoritative recurring prices', async (t) => {
+test('a commerce can pay and publish without prior establishment approval', async (t) => {
   const previous = {
     jwt: process.env.JWT_SECRET,
     stripeKey: process.env.STRIPE_SECRET_KEY,
@@ -607,7 +607,7 @@ test('a commerce opens Stripe Checkout with authoritative recurring prices', asy
     email: 'commerce@example.test', nombre: 'Comercio',
   };
   const location = {
-    _id: locationId, ownerId, status: 'approved', archived: false,
+    _id: locationId, ownerId, status: 'pending_review', archived: false,
     publicName: 'Local Stripe', address: 'Calle Uno', logoUrl: '/logo.png',
     lat: 41.65, lng: -0.88,
   };
